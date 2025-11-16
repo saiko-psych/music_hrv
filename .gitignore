@@ -30,3 +30,6 @@ build/
 # uv workspace metadata
 .python-version
 .uv/
+
+# Local agent instructions
+AGENTS.md

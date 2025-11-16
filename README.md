@@ -14,7 +14,7 @@ Python-based pipeline for ingesting HRV Logger and VNS Analyse exports, cleaning
 - `docs/` – project specification and HRV Logger manual.
 - `tests/` – pytest suite plus `tests/fixtures/` for lightweight synthetic CSV snippets.
 
-Refer to `AGENTS.md` for contributor guidelines and coding standards.
+Refer to `docs/CONTRIBUTING.md` for contributor guidelines, coding standards, and review expectations.
 
 ## Getting Started
 ```bash
@@ -26,6 +26,11 @@ uv run pytest
 
 ## Version Control
 Repository initialised with git (`main` branch). Add your GitHub remote (e.g., `git remote add origin git@github.com:<org>/music_hrv.git`) and push the baseline once secrets are configured. The `.gitignore` prevents raw/test data and build artefacts from leaving your machine; keep participant files anonymised.
+
+## Documentation
+- `docs/CONTRIBUTING.md` — contributor workflow, coding standards, and review expectations.
+- `docs/HRV_project_spec.md` — pipeline specification, terminology, and study assumptions.
+- `docs/manual_HRV_logger.md` — HRV Logger reference for ingestion and QA workflows.
 
 ## Next Steps
 1. Implement IO loaders for HRV Logger RR + Events and VNS exports.
