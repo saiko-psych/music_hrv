@@ -1,0 +1,29 @@
+# Music HRV Toolkit
+
+Python-based pipeline for ingesting HRV Logger and VNS Analyse exports, cleaning RR intervals, segmenting sessions, and producing per-participant + group metrics powered by `neurokit2`. The project targets both command-line users and a future GUI for researchers with no coding background.
+
+## Project Layout
+- `src/music_hrv/` – modular codebase with `io`, `cleaning`, `segments`, `metrics`, `gui`, and `reports` packages.
+- `config/pipeline.yml` – default configuration for directories, section mappings, cleaning thresholds, and QC gates.
+- `data/raw/` and `data/processed/` – local-only input/output folders (ignored by git). Drop anonymised recordings under `data/raw` and inspect results under `data/processed`.
+- `local_test_data/` – stash sensitive vendor-provided or large validation files here; directory is ignored so nothing leaks to GitHub.
+- `docs/` – project specification and HRV Logger manual.
+- `tests/` – pytest suite plus `tests/fixtures/` for lightweight synthetic CSV snippets.
+
+Refer to `AGENTS.md` for contributor guidelines and coding standards.
+
+## Getting Started
+```bash
+uv sync --group dev      # install runtime + dev dependencies (Python 3.11)
+uv run music-hrv --dry-run
+uv run pytest
+```
+`music-hrv --dry-run` validates configs/paths. Omit `--dry-run` once ingestion and analysis modules are implemented. Use `uv run python -m music_hrv.cli --help` to explore extra flags.
+
+## Version Control
+Repository initialised with git (`main` branch). Add your GitHub remote (e.g., `git remote add origin git@github.com:<org>/music_hrv.git`) and push the baseline once secrets are configured. The `.gitignore` prevents raw/test data and build artefacts from leaving your machine; keep participant files anonymised.
+
+## Next Steps
+1. Implement IO loaders for HRV Logger RR + Events and VNS exports.
+2. Build RR cleaning + QC utilities aligned with `config/pipeline.yml` thresholds.
+3. Wire segmentation + metrics modules into the CLI, then add GUI/reporting surfaces.

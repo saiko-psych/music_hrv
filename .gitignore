@@ -1,0 +1,32 @@
+# Python virtual environments
+.venv/
+
+# Bytecode and cache
+__pycache__/
+*.py[cod]
+
+# Configuration overrides
+.env
+.DS_Store
+.gitconfig
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+
+# Data artifacts
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+local_test_data/
+test_data/
+tests/data/
+
+# Build outputs
+dist/
+build/
+
+# uv workspace metadata
+.python-version
+.uv/

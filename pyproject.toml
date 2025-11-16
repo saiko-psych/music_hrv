@@ -1,0 +1,28 @@
+[project]
+name = "music-hrv"
+version = "0.1.0"
+description = "HRV segmentation and analysis pipeline built on neurokit2"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "black>=24.4",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+music-hrv = "music_hrv.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

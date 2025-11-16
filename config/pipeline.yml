@@ -1,0 +1,18 @@
+# Default pipeline configuration
+inputs:
+  hrv_logger_dir: data/raw/hrv_logger
+  vns_dir: data/raw/vns_analyse
+output_dir: data/processed
+participant_id_pattern: "(?P<participant>[A-Za-z0-9]+)"
+sections:
+  baseline_start: baseline
+  task1_start: music_block_1
+  task2_start: music_block_2
+  recovery_start: recovery
+cleaning:
+  rr_min_ms: 300
+  rr_max_ms: 2200
+  sudden_change_pct: 0.2
+quality:
+  min_section_duration_s: 120
+  max_artifact_ratio: 0.1
