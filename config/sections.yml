@@ -1,0 +1,93 @@
+# Canonical description of session sections and their known aliases.
+# The GUI will surface this template so study leads can tweak section
+# names per cohort without touching code.
+version: 1
+
+# Expected lifecycle for a full recording. Parsers should tolerate
+# missing anchors (e.g., restarts) but will raise warnings.
+canonical_order:
+  - rest_pre_start
+  - rest_pre_end
+  - measurement_start
+  - pause_start
+  - pause_end
+  - measurement_end
+  - rest_post_start
+  - rest_post_end
+
+# Normalisation table. Each entry lists synonyms (case/spacing insensitive)
+# and whether it is mandatory for a typical session.
+sections:
+  rest_pre_start:
+    required: true
+    description: Start of pre-measurement rest/baseline.
+    synonyms:
+      - "ruhe[ _-]?pre[ _-]?start"
+      - "rest[ _-]?pre[ _-]?start"
+      - "start[ _-]?ruhe.*pre"
+      - "pre.*ruhe.*start"
+      - "ruhe.*beginn"
+  rest_pre_end:
+    required: true
+    description: End of pre-measurement rest/baseline.
+    synonyms:
+      - "ruhe[ _-]?pre[ _-]?end(e)?"
+      - "rest[ _-]?pre[ _-]?end"
+      - "ende[ _-]?ruhe.*pre"
+  measurement_start:
+    required: true
+    description: Start of the main measurement (often contains group-specific cues).
+    synonyms:
+      - "messung[ _-]?start"
+      - "messung.*beginn"
+      - "measurement[ _-]?start"
+      - "start[ _-]?messung"
+      - "start[ _-]?musik"
+  measurement_end:
+    required: true
+    description: End of the main measurement segment.
+    synonyms:
+      - "messung[ _-]?end(e)?"
+      - "measurement[ _-]?end"
+      - "ende[ _-]?messung"
+  pause_start:
+    required: false
+    description: Optional start of break/pause between measurement blocks.
+    synonyms:
+      - "pause[ _-]?start"
+      - "pause.*beginn"
+      - "break[ _-]?start"
+  pause_end:
+    required: false
+    description: Optional end of break/pause between measurement blocks.
+    synonyms:
+      - "pause[ _-]?end(e)?"
+      - "break[ _-]?end"
+      - "ende[ _-]?pause"
+  rest_post_start:
+    required: true
+    description: Start of post-measurement rest/baseline.
+    synonyms:
+      - "ruhe[ _-]?post[ _-]?start"
+      - "rest[ _-]?post[ _-]?start"
+      - "start[ _-]?ruhe.*post"
+      - "ruhe.*nach.*start"
+  rest_post_end:
+    required: true
+    description: End of post-measurement rest/baseline.
+    synonyms:
+      - "ruhe[ _-]?post[ _-]?end(e)?"
+      - "rest[ _-]?post[ _-]?end"
+      - "ende[ _-]?ruhe.*post"
+
+# Optional slots for cohort-specific segments that can appear between
+# measurement_start and pause_start (or anywhere as configured later).
+group_sections:
+  # Example:
+  #   music_block_a:
+  #     description: "First music exposure block"
+  #     synonyms:
+  #       - "musik[ _-]?a"
+  #       - "block[ _-]?1"
+  # Users can populate this via the GUI once group protocols are finalised.
+  {}
