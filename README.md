@@ -1,5 +1,9 @@
 # Music HRV Toolkit
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![Workflow: pytest](https://img.shields.io/badge/tests-pytest-informational.svg)](https://docs.pytest.org/)
+
 Python-based pipeline for ingesting HRV Logger and VNS Analyse exports, cleaning RR intervals, segmenting sessions, and producing per-participant + group metrics powered by `neurokit2`. The project targets both command-line users and a future GUI for researchers with no coding background.
 
 ## Project Layout
