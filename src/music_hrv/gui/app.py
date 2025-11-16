@@ -5,11 +5,23 @@ from __future__ import annotations
 import flet as ft
 
 ASCII_ART = r"""
- __  __           _             _   _ _   _    _   _ _____     _____     _ _ _   
-|  \/  | ___  ___| |_ _ __ __ _| |_(_) |_(_)  | | | |_   _|__ |_   _|_ _(_) | |_ 
-| |\/| |/ _ \/ __| __| '__/ _` | __| | __| |  | |_| | | |/ _ \  | |/ _` | | | __|
-| |  | |  __/\__ \ |_| | | (_| | |_| | |_| |  |  _  | | |  __/  | | (_| | | | |_ 
-|_|  |_|\___||___/\__|_|  \__,_|\__|_|\__|_|  |_| |_| |_| \___|  |_|\__,_|_|_|\__|
+.___.__  .______  .___          ._______  ._______
+:   |  \ : __   \ |   |___      : .___  \ :_ ____/
+|   :   ||  \____||   |   |     | :   |  ||   _/  
+|   .   ||   :  \ |   :   |     |     :  ||   |   
+|___|   ||   |___\ \      |      \_. ___/ |_. |   
+    |___||___|      \____/         :/       :/    
+                                   :        :     
+                                                  
+                                                  
+.______  .____     .___    ._______  .________    
+:      \ |    |___ |   |   : .___  \ |    ___/    
+|   .   ||    |   ||   |   | :   |  ||___    \    
+|   :   ||    :   ||   |/\ |     :  ||       /    
+|___|   ||        ||   /  \ \_. ___/ |__:___/     
+    |___||. _____/ |______/   :/        :         
+          :/                  :                   
+          :
 """
 
 NEON_GRADIENT = ft.LinearGradient(
@@ -49,7 +61,7 @@ def main(page: ft.Page) -> None:
                     text_align=ft.TextAlign.CENTER,
                 ),
                 ft.Text(
-                    "Hyperpop Hardtekk edition · RR segmentation · NeuroKit ready",
+                    "Segment RR intervals, prep NeuroKit2 metrics, stay in sync.",
                     size=16,
                     color="#04010d",
                     text_align=ft.TextAlign.CENTER,
@@ -69,9 +81,11 @@ def main(page: ft.Page) -> None:
         content=ft.Text(
             ASCII_ART.strip("\n"),
             font_family="RobotoMono",
-            size=14,
+            size=13,
+            weight=ft.FontWeight.W_500,
             color="#f6f5ff",
             text_align=ft.TextAlign.CENTER,
+            no_wrap=True,
         ),
     )
 
@@ -105,10 +119,29 @@ def main(page: ft.Page) -> None:
     )
 
     vibe_text = ft.Text(
-        "Crank the BPM, keep the data clean. Future GUI hooks will land here.",
+        "Neon-grade data prep for your sessions — more controls dropping soon.",
         size=16,
         color="#c7c6ff",
         text_align=ft.TextAlign.CENTER,
+    )
+
+    social_row = ft.Row(
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=10,
+        controls=[
+            ft.IconButton(
+                icon=ft.icons.CODE,
+                tooltip="GitHub: saiko-psych",
+                url="https://github.com/saiko-psych",
+                icon_color="#ff4dff",
+            ),
+            ft.IconButton(
+                icon=ft.icons.EMAIL,
+                tooltip="david.matischek@edu.uni-graz.at",
+                url="mailto:david.matischek@edu.uni-graz.at",
+                icon_color="#05f0ff",
+            ),
+        ],
     )
 
     page.snack_bar = ft.SnackBar(ft.Text("CLI integration coming soon — stay tuned!"))
@@ -122,6 +155,7 @@ def main(page: ft.Page) -> None:
                     vibe_text,
                     ft.Divider(height=30, color="#322259"),
                     actions,
+                    social_row,
                 ],
                 spacing=20,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
