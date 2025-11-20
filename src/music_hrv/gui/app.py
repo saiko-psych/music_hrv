@@ -29,6 +29,17 @@ ASCII_HORIZONTAL_PADDING = 160
 ASCII_MIN_WIDTH = 180
 APP_ROUTE_NAME = "music-hrv"
 DEFAULT_CLEANING_CONFIG = CleaningConfig()
+UI_SIZES = {
+    "row_height": 72,
+    "row_spacing": 10,
+    "cell_padding": 12,
+    "cell_gap": 12,
+    "group_width": 440,
+    "canonical_width": 440,
+    "input_height": 56,
+    "heading_size": 16,
+    "label_size": 13,
+}
 
 
 def load_ascii_art(name: str) -> str:
@@ -361,9 +372,10 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
     folder_input = ft.TextField(
         value=str(controller.current_dir or DATA_HRV_LOGGER_DIR),
         label="Folder path",
-        width=500,
-        height=54,
+        width=520,
+        height=UI_SIZES["input_height"],
         filled=True,
+        text_size=UI_SIZES["label_size"],
         content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
     )
     table_heading = ft.Text(
@@ -376,24 +388,7 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
         size=12,
         color=ft.colors.GREY_500,
     )
-    table = ft.DataTable(
-        columns=[
-            ft.DataColumn(ft.Text("Participant")),
-            ft.DataColumn(ft.Text("Beats (raw)")),
-            ft.DataColumn(ft.Text("Beats (clean)")),
-            ft.DataColumn(ft.Text("Artifacts")),
-            ft.DataColumn(ft.Text("Duration")),
-            ft.DataColumn(ft.Text("Events")),
-            ft.DataColumn(ft.Text("Missing")),
-            ft.DataColumn(ft.Text("Group")),
-        ],
-        rows=[],
-        column_spacing=16,
-        heading_row_height=52,
-        data_row_min_height=72,
-        horizontal_margin=8,
-        divider_thickness=0.6,
-    )
+    participant_rows = ft.Column(spacing=UI_SIZES["row_spacing"], expand=True)
     event_panel = ft.Container(
         content=ft.Text(
             "Select a participant to inspect events.",
@@ -421,55 +416,83 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
         ]
 
     def rebuild_table() -> None:
-        rows: list[ft.DataRow] = []
+        participant_rows.controls.clear()
         group_options = [
             ft.dropdown.Option(key=group_key, text=template.label)
             for group_key, template in controller.available_groups()
         ]
-        for summary in controller.sorted_summaries():
-            pid = summary.participant_id
-            missing = controller.missing_sections(pid)
-            group_value = controller.group_assignments.get(pid, controller.default_group_key)
+
+        if not controller.summaries:
+            participant_rows.controls.append(
+                ft.Text(
+                    "No participants loaded. Scan a folder to see data.",
+                    color=ft.colors.GREY_500,
+                )
+            )
+        else:
+            header = ft.Row(
+                [
+                    ft.Container(ft.Text("Participant", weight=ft.FontWeight.W_600), width=140),
+                    ft.Container(ft.Text("Beats (raw)", weight=ft.FontWeight.W_600), width=110),
+                    ft.Container(ft.Text("Beats (clean)", weight=ft.FontWeight.W_600), width=110),
+                    ft.Container(ft.Text("Artifacts", weight=ft.FontWeight.W_600), width=90),
+                    ft.Container(ft.Text("Duration", weight=ft.FontWeight.W_600), width=110),
+                    ft.Container(ft.Text("Events", weight=ft.FontWeight.W_600), width=80),
+                    ft.Container(ft.Text("Missing", weight=ft.FontWeight.W_600), width=90),
+                    ft.Container(ft.Text("Group", weight=ft.FontWeight.W_600)),
+                ],
+                spacing=UI_SIZES["cell_gap"],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            participant_rows.controls.append(header)
 
             def _make_group_dropdown(participant: str, value: str) -> ft.Dropdown:
                 return ft.Dropdown(
                     value=value,
-                    width=420,
-                    height=52,
+                    width=UI_SIZES["group_width"],
+                    height=UI_SIZES["input_height"],
                     options=group_options,
                     on_change=lambda e, participant=participant: handle_group_change(
                         participant, e.data
                     ),
                 )
 
-            rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(pid)),
-                        ft.DataCell(ft.Text(str(summary.total_beats))),
-                        ft.DataCell(ft.Text(str(summary.retained_beats))),
-                        ft.DataCell(ft.Text(f"{summary.artifact_ratio * 100:.1f}%")),
-                        ft.DataCell(ft.Text(f"{summary.duration_s / 60:.1f} min")),
-                        ft.DataCell(ft.Text(str(summary.events_detected))),
-                        ft.DataCell(
-                            ft.Text(
-                                "✓" if not missing else f"{len(missing)} missing",
-                                color=ft.colors.GREEN_400
-                                if not missing
-                                else ft.colors.AMBER_400,
-                            )
-                        ),
-                        ft.DataCell(_make_group_dropdown(pid, group_value)),
-                    ],
-                    selected=controller.selected_participant == pid,
-                    on_select_changed=lambda e, participant=pid: handle_row_select(
-                        participant
+            for summary in controller.sorted_summaries():
+                pid = summary.participant_id
+                missing = controller.missing_sections(pid)
+                group_value = controller.group_assignments.get(pid, controller.default_group_key)
+
+                row = ft.Container(
+                    padding=UI_SIZES["cell_padding"],
+                    bgcolor=ft.colors.with_opacity(0.05, ft.colors.WHITE),
+                    border_radius=6,
+                    height=UI_SIZES["row_height"] + 8,
+                    content=ft.Row(
+                        [
+                            ft.Container(ft.Text(pid), width=140),
+                            ft.Container(ft.Text(str(summary.total_beats)), width=110),
+                            ft.Container(ft.Text(str(summary.retained_beats)), width=110),
+                            ft.Container(ft.Text(f"{summary.artifact_ratio * 100:.1f}%"), width=90),
+                            ft.Container(ft.Text(f"{summary.duration_s / 60:.1f} min"), width=110),
+                            ft.Container(ft.Text(str(summary.events_detected)), width=80),
+                            ft.Container(
+                                ft.Text(
+                                    "\u2713" if not missing else f"{len(missing)} missing",
+                                    color=ft.colors.GREEN_400 if not missing else ft.colors.AMBER_400,
+                                ),
+                                width=90,
+                            ),
+                            ft.Container(_make_group_dropdown(pid, group_value), expand=1),
+                        ],
+                        spacing=UI_SIZES["cell_gap"],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
+                    on_click=lambda e, participant=pid: handle_row_select(participant),
                 )
-            )
-        table.rows = rows
-        if table.page:
-            table.update()
+                participant_rows.controls.append(row)
+
+        if participant_rows.page:
+            participant_rows.update()
 
     def rebuild_group_editor() -> None:
         nonlocal selected_group_key
