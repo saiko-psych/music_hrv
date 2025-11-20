@@ -852,7 +852,12 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                     size=12,
                     color=ft.colors.GREY_500,
                 ),
-                ft.Column(event_rows_controls, spacing=6),
+                ft.ListView(
+                    controls=event_rows_controls,
+                    spacing=6,
+                    auto_scroll=False,
+                    height=UI_SIZES["row_height"] * min(8, len(event_rows_controls) + 1),
+                ),
             ],
             spacing=10,
         )

@@ -65,13 +65,8 @@ def summarize_recording(
     normalizer = normalizer or SectionNormalizer.from_yaml()
     event_statuses: list[EventStatus] = []
     present_sections: set[str] = set()
-    seen_keys: set[str] = set()
     for marker in recording.events:
         canonical = normalizer.normalize(marker.label)
-        dedup_key = canonical or marker.label.strip().lower()
-        if dedup_key in seen_keys:
-            continue
-        seen_keys.add(dedup_key)
         event_statuses.append(EventStatus(raw_label=marker.label, canonical=canonical))
         if canonical:
             present_sections.add(canonical)
