@@ -17,6 +17,7 @@ class EventStatus:
 
     raw_label: str
     canonical: str | None
+    count: int = 1
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class PreparationSummary:
     artifact_ratio: float
     duration_s: float
     events_detected: int
+    duplicate_events: int
     rr_min_ms: float
     rr_max_ms: float
     rr_mean_ms: float
@@ -63,13 +65,19 @@ def summarize_recording(
     cleaned, stats = clean_rr_intervals(recording.rr_intervals, config)
     rr_stats = rr_summary(cleaned or recording.rr_intervals)
     normalizer = normalizer or SectionNormalizer.from_yaml()
-    event_statuses: list[EventStatus] = []
+    by_label: dict[str, EventStatus] = {}
     present_sections: set[str] = set()
     for marker in recording.events:
+        key = marker.label.strip().lower()
         canonical = normalizer.normalize(marker.label)
-        event_statuses.append(EventStatus(raw_label=marker.label, canonical=canonical))
+        if key in by_label:
+            by_label[key].count += 1
+        else:
+            by_label[key] = EventStatus(raw_label=marker.label, canonical=canonical)
         if canonical:
             present_sections.add(canonical)
+    event_statuses = list(by_label.values())
+    duplicate_events = max(0, len(recording.events) - len(event_statuses))
     return PreparationSummary(
         participant_id=recording.participant_id,
         total_beats=stats.total_samples,
@@ -77,7 +85,8 @@ def summarize_recording(
         removed_beats=stats.removed_samples,
         artifact_ratio=stats.artifact_ratio,
         duration_s=rr_stats["duration_s"],
-        events_detected=len(recording.events),
+        events_detected=len(event_statuses),
+        duplicate_events=duplicate_events,
         rr_min_ms=rr_stats["min"],
         rr_max_ms=rr_stats["max"],
         rr_mean_ms=rr_stats["mean"],

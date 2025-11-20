@@ -492,7 +492,13 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                             ft.Container(ft.Text(str(summary.retained_beats)), width=110),
                             ft.Container(ft.Text(f"{summary.artifact_ratio * 100:.1f}%"), width=90),
                             ft.Container(ft.Text(f"{summary.duration_s / 60:.1f} min"), width=110),
-                            ft.Container(ft.Text(str(summary.events_detected)), width=80),
+                            ft.Container(
+                                ft.Text(
+                                    str(summary.events_detected)
+                                    + (f" (+{summary.duplicate_events} dup)" if summary.duplicate_events else "")
+                                ),
+                                width=110,
+                            ),
                             ft.Container(
                                 ft.Text(
                                     "\u2713" if not missing else f"{len(missing)} missing",
@@ -803,7 +809,18 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                     height=UI_SIZES["row_height"] + 8,
                     content=ft.Row(
                         [
-                            ft.Container(ft.Text(str(idx + 1)), width=30),
+                            ft.Container(
+                                ft.Row(
+                                    [
+                                        ft.Text(str(idx + 1)),
+                                        ft.Text(f"x{event.count}", color=ft.colors.AMBER_300)
+                                        if event.count > 1
+                                        else ft.Text(""),
+                                    ],
+                                    spacing=4,
+                                ),
+                                width=50,
+                            ),
                             ft.Container(
                                 ft.TextField(
                                     value=event.raw_label,
