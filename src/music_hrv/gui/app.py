@@ -389,8 +389,7 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
         rows=[],
         column_spacing=28,
         heading_row_height=72,
-        data_row_min_height=96,
-        data_row_height=96,
+        data_row_min_height=120,
     )
     event_panel = ft.Container(
         content=ft.Text(
@@ -431,11 +430,11 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
 
             def _make_group_dropdown(participant: str, value: str) -> ft.Dropdown:
                 return ft.Container(
-                    width=680,
+                    width=760,
                     content=ft.Dropdown(
                         value=value,
-                        width=660,
-                        height=64,
+                        width=740,
+                        height=70,
                         options=group_options,
                         on_change=lambda e, participant=participant: handle_group_change(
                             participant, e.data
@@ -680,7 +679,7 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
         event_rows = []
         dropdown_options = canonical_dropdown_options()
         for idx, event in enumerate(summary.events):
-            desired_width = min(840, max(360, len(event.raw_label) * 10))
+            desired_width = min(920, max(420, len(event.raw_label) * 11))
             event_rows.append(
                 ft.DataRow(
                     cells=[
@@ -691,12 +690,12 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                                 content=ft.TextField(
                                     value=event.raw_label,
                                     width=desired_width,
-                                    height=64,
-                                    multiline=len(event.raw_label) > 40,
-                                    border_radius=8,
-                                    text_size=14,
-                                    content_padding=ft.padding.symmetric(vertical=10, horizontal=14),
-                                    border_color=ft.colors.with_opacity(0.25, ft.colors.WHITE),
+                                    height=72,
+                                    multiline=len(event.raw_label) > 30,
+                                    border_radius=10,
+                                    text_size=15,
+                                    content_padding=ft.padding.symmetric(vertical=12, horizontal=16),
+                                    border_color=ft.colors.with_opacity(0.3, ft.colors.WHITE),
                                     on_change=lambda e, p=pid, i=idx: handle_event_edit(
                                         p, i, e.control.value  # type: ignore[arg-type]
                                     ),
@@ -705,11 +704,11 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                         ),
                         ft.DataCell(
                             ft.Container(
-                                width=680,
+                                width=760,
                                 content=ft.Dropdown(
                                     value=event.canonical or NONE_OPTION_KEY,
-                                    width=660,
-                                    height=64,
+                                    width=740,
+                                    height=70,
                                     options=dropdown_options,
                                     on_change=lambda e, p=pid, i=idx: handle_event_canonical(
                                         p, i, e.data
@@ -811,15 +810,13 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
     choose_button = ft.FilledTonalButton(
         "Choose folder",
         icon=ft.icons.FOLDER_OPEN,
-        height=56,
+        height=64,
         on_click=launch_directory_picker,
-        disabled=page.web,
-        tooltip="Use Scan folder with a path in browser mode" if page.web else None,
     )
     manual_button = ft.ElevatedButton(
         "Scan folder",
         icon=ft.icons.SEARCH,
-        height=56,
+        height=64,
         on_click=apply_manual_folder,
     )
     refresh_button = ft.IconButton(
