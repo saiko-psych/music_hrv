@@ -375,7 +375,7 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
     folder_input = ft.TextField(
         value=str(controller.current_dir or DATA_HRV_LOGGER_DIR),
         label="Folder path",
-        width=360,
+        width=400,
         filled=True,
     )
     table_heading = ft.Text(
@@ -442,10 +442,10 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
 
             def _make_group_dropdown(participant: str, value: str) -> ft.Dropdown:
                 return ft.Container(
-                    width=320,
+                    width=380,
                     content=ft.Dropdown(
                         value=value,
-                        width=300,
+                        width=360,
                         options=group_options,
                         on_change=lambda e, participant=participant: handle_group_change(
                             participant, e.data
@@ -716,7 +716,7 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
                         ft.DataCell(
                             ft.Dropdown(
                                 value=event.canonical or NONE_OPTION_KEY,
-                                width=260,
+                                width=360,
                                 options=dropdown_options,
                                 on_change=lambda e, p=pid, i=idx: handle_event_canonical(
                                     p, i, e.data
@@ -807,12 +807,15 @@ def build_data_prep_panel(page: ft.Page) -> ft.Column:
     rebuild_group_editor()
 
     def launch_directory_picker(_: ft.ControlEvent | None = None) -> None:
+        if page.web:
+            status_text.value = "Folder picker not available in browser — paste a path and click Scan."
+            page.update()
+            return
         initial = controller.current_dir or DATA_HRV_LOGGER_DIR
         try:
             directory_picker.get_directory_path(initial_directory=str(initial))
         except Exception:
-            controller.status_message = "Directory picker not available in this view. Enter a path manually."
-            status_text.value = controller.status_message
+            status_text.value = "Folder picker failed — paste a path and click Scan."
             page.update()
 
     choose_button = ft.FilledTonalButton(
