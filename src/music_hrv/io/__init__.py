@@ -2,6 +2,7 @@
 
 from music_hrv.io.hrv_logger import (
     DEFAULT_ID_PATTERN,
+    DuplicateInfo,
     EventMarker,
     HRVLoggerRecording,
     RRInterval,
@@ -16,6 +17,7 @@ from music_hrv.io.hrv_logger import (
 
 __all__ = [
     "DEFAULT_ID_PATTERN",
+    "DuplicateInfo",
     "EventMarker",
     "HRVLoggerRecording",
     "RRInterval",

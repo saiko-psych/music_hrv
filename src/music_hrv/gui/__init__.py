@@ -1,5 +1,5 @@
-"""GUI adapters (e.g., Flet or Qt) exposing the pipeline to non-programmers."""
+"""Streamlit-based GUI exposing the pipeline to non-programmers."""
 
-from music_hrv.gui.app import main, run
+from music_hrv.gui.app import main
 
-__all__: list[str] = ["main", "run"]
+__all__: list[str] = ["main"]

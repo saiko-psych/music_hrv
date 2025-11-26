@@ -26,8 +26,10 @@ def test_load_rr_intervals_parses_numeric_values(tmp_path):
         encoding="utf-8",
     )
 
-    intervals = load_rr_intervals(rr_path)
+    intervals, duplicates, duplicate_details = load_rr_intervals(rr_path)
     assert len(intervals) == 7
+    assert duplicates == 0  # No duplicates in test fixture
+    assert len(duplicate_details) == 0  # No duplicate details
     assert intervals[0].rr_ms == 665
     assert intervals[1].rr_ms == 150  # intentionally implausible for cleaning tests
 
@@ -39,8 +41,10 @@ def test_load_recording_combines_rr_and_events(tmp_path):
         )
 
     bundle = discover_recordings(tmp_path)[0]
-    recording = load_recording(bundle)
+    recording, duplicates, duplicate_details = load_recording(bundle)
 
     assert recording.participant_id == "0001TEST"
     assert len(recording.rr_intervals) == 7
     assert len(recording.events) == 2
+    assert duplicates == 0  # No duplicates in test fixture
+    assert len(duplicate_details) == 0  # No duplicate details

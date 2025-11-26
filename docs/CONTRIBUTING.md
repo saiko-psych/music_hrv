@@ -10,10 +10,10 @@ This document explains how to work on the project, keep data protected, and publ
 - `tests/`: pytest suites plus `tests/fixtures/` with minimal CSV snippets that mimic HRV Logger and VNS exports.
 
 ## Development Workflow
-1. Create a virtual environment with `python -m venv .venv && source .venv/bin/activate`.
-2. Install dependencies via `pip install -r requirements.txt` or `uv sync --group dev` if you prefer `uv`.
-3. Run the CLI with `python -m src.cli --config config/pipeline.yml --inputs data/raw` to process test inputs.
-4. Launch the GUI prototype using `python -m src.gui.app` to verify no-code workflows.
+1. Install dependencies using `uv sync --group dev` (Python 3.11+).
+2. Run the CLI with `uv run music-hrv --dry-run` or `uv run python -m music_hrv.cli --help` to explore options.
+3. Launch the Streamlit GUI using `uv run streamlit run src/music_hrv/gui/app.py`.
+4. Run tests with `uv run pytest` or scope to specific modules (e.g., `pytest tests/segments/test_section_normalizer.py -k baseline`).
 5. Keep the sample data anonymised and store sensitive vendor dumps under `local_test_data/`.
 
 ## Coding Standards

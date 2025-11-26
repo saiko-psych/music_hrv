@@ -1,0 +1,975 @@
+"""Streamlit-based GUI for the Music HRV Toolkit."""
+
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+from pathlib import Path
+
+from music_hrv.cleaning.rr import CleaningConfig
+from music_hrv.io import DEFAULT_ID_PATTERN, load_recording, discover_recordings
+from music_hrv.prep import load_hrv_logger_preview
+from music_hrv.segments.section_normalizer import SectionNormalizer
+from music_hrv.gui.persistence import (
+    save_groups,
+    load_groups,
+    save_events,
+    load_events,
+    save_sections,
+    load_sections,
+)
+
+try:
+    import neurokit2 as nk
+    import matplotlib.pyplot as plt
+    NEUROKIT_AVAILABLE = True
+except ImportError:
+    NEUROKIT_AVAILABLE = False
+
+# Page configuration
+st.set_page_config(
+    page_title="Music HRV Toolkit",
+    page_icon="🎵",
+    layout="wide",
+)
+
+# Default canonical events for the Default Group
+DEFAULT_CANONICAL_EVENTS = {
+    "rest_pre_start": [],
+    "rest_pre_end": [],
+    "measurement_start": [],
+    "pause_start": [],
+    "pause_end": [],
+    "measurement_end": [],
+    "rest_post_start": [],
+    "rest_post_end": [],
+}
+
+# Initialize session state with persistent storage
+if "data_dir" not in st.session_state:
+    st.session_state.data_dir = None
+if "summaries" not in st.session_state:
+    st.session_state.summaries = []
+if "normalizer" not in st.session_state:
+    st.session_state.normalizer = SectionNormalizer.from_yaml()
+if "cleaning_config" not in st.session_state:
+    st.session_state.cleaning_config = CleaningConfig()
+
+# Load persisted groups and events
+if "groups" not in st.session_state:
+    loaded_groups = load_groups()
+    if not loaded_groups:
+        # Initialize Default Group with canonical events
+        st.session_state.groups = {
+            "Default": {
+                "label": "Default Group",
+                "expected_events": DEFAULT_CANONICAL_EVENTS.copy()
+            }
+        }
+    else:
+        st.session_state.groups = loaded_groups
+
+if "all_events" not in st.session_state:
+    loaded_events = load_events()
+    if not loaded_events:
+        st.session_state.all_events = DEFAULT_CANONICAL_EVENTS.copy()
+    else:
+        st.session_state.all_events = loaded_events
+
+if "participant_groups" not in st.session_state:
+    st.session_state.participant_groups = {}
+if "manual_events" not in st.session_state:
+    st.session_state.manual_events = {}
+if "event_order" not in st.session_state:
+    # Maps participant_id -> list of event names in order
+    st.session_state.event_order = {}
+
+# Load persisted sections
+if "sections" not in st.session_state:
+    loaded_sections = load_sections()
+    if not loaded_sections:
+        # Initialize default sections
+        st.session_state.sections = {
+            "rest_pre": {
+                "label": "Pre-Rest",
+                "start_event": "rest_pre_start",
+                "end_event": "rest_pre_end",
+            },
+            "measurement": {
+                "label": "Measurement",
+                "start_event": "measurement_start",
+                "end_event": "measurement_end",
+            },
+            "pause": {
+                "label": "Pause",
+                "start_event": "pause_start",
+                "end_event": "pause_end",
+            },
+            "rest_post": {
+                "label": "Post-Rest",
+                "start_event": "rest_post_start",
+                "end_event": "rest_post_end",
+            },
+        }
+    else:
+        st.session_state.sections = loaded_sections
+
+
+def save_all_config():
+    """Save all configuration to persistent storage."""
+    save_groups(st.session_state.groups)
+    save_events(st.session_state.all_events)
+    save_sections(st.session_state.sections)
+
+
+def main():
+    """Main Streamlit app."""
+    st.title("🎵 Music HRV Toolkit")
+    st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
+
+    # Sidebar for global configuration
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+
+        # Cleaning parameters
+        st.subheader("RR Cleaning Thresholds")
+        rr_min = st.number_input(
+            "Min RR (ms)",
+            min_value=200,
+            max_value=1000,
+            value=st.session_state.cleaning_config.rr_min_ms,
+            step=10,
+        )
+        rr_max = st.number_input(
+            "Max RR (ms)",
+            min_value=1000,
+            max_value=3000,
+            value=st.session_state.cleaning_config.rr_max_ms,
+            step=10,
+        )
+        sudden_change = st.slider(
+            "Sudden change threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=st.session_state.cleaning_config.sudden_change_pct,
+            step=0.05,
+            format="%.2f",
+        )
+
+        # Update config if changed
+        st.session_state.cleaning_config = CleaningConfig(
+            rr_min_ms=rr_min,
+            rr_max_ms=rr_max,
+            sudden_change_pct=sudden_change,
+        )
+
+        # Participant ID pattern
+        st.subheader("Participant ID Pattern")
+        id_pattern = st.text_input(
+            "Regex pattern",
+            value=DEFAULT_ID_PATTERN,
+            help="Regex pattern with named group 'participant'",
+        )
+
+        st.markdown("---")
+        st.markdown("**💾 Configuration saved automatically**")
+
+    # Main content tabs with Analysis tab
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📁 Data & Groups",
+        "🎭 Event Mapping",
+        "👥 Group Management",
+        "📐 Sections",
+        "📊 Analysis"
+    ])
+
+    # ================== TAB 1: Data & Groups ==================
+    with tab1:
+        st.header("Data Import & Participants")
+
+        # Data directory input
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            data_dir_input = st.text_input(
+                "Data directory path",
+                value=st.session_state.data_dir or "data/raw/hrv_logger",
+                help="Path to folder containing HRV Logger RR and Events CSV files",
+            )
+        with col2:
+            st.write("")  # Spacer
+            st.write("")  # Spacer
+            if st.button("🔄 Load Data", type="primary", use_container_width=True):
+                data_path = Path(data_dir_input).expanduser()
+                if data_path.exists():
+                    st.session_state.data_dir = str(data_path)
+                    with st.spinner("Loading recordings..."):
+                        try:
+                            summaries = load_hrv_logger_preview(
+                                data_path,
+                                pattern=id_pattern,
+                                config=st.session_state.cleaning_config,
+                                normalizer=st.session_state.normalizer,
+                            )
+                            st.session_state.summaries = summaries
+                            # Auto-assign to Default group if not assigned
+                            for summary in summaries:
+                                if summary.participant_id not in st.session_state.participant_groups:
+                                    st.session_state.participant_groups[summary.participant_id] = "Default"
+                            st.success(f"✅ Loaded {len(summaries)} participant(s)")
+                        except Exception as e:
+                            st.error(f"Error loading data: {e}")
+                else:
+                    st.error(f"Directory not found: {data_path}")
+
+        if st.session_state.summaries:
+            st.markdown("---")
+
+            # Participants overview table
+            st.subheader("📋 Participants Overview")
+
+            # Create editable dataframe
+            participants_data = []
+            for summary in st.session_state.summaries:
+                recording_dt_str = ""
+                if summary.recording_datetime:
+                    recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
+
+                participants_data.append({
+                    "Participant": summary.participant_id,
+                    "Date/Time": recording_dt_str,
+                    "Group": st.session_state.participant_groups.get(summary.participant_id, "Default"),
+                    "Total Beats": summary.total_beats,
+                    "Retained": summary.retained_beats,
+                    "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
+                    "Duration (min)": f"{summary.duration_s / 60:.1f}",
+                    "Events": summary.events_detected,
+                    "RR Range (ms)": f"{int(summary.rr_min_ms)}–{int(summary.rr_max_ms)}",
+                    "Mean RR (ms)": f"{summary.rr_mean_ms:.0f}",
+                })
+
+            df_participants = pd.DataFrame(participants_data)
+
+            # Editable dataframe
+            edited_df = st.data_editor(
+                df_participants,
+                column_config={
+                    "Group": st.column_config.SelectboxColumn(
+                        "Group",
+                        options=list(st.session_state.groups.keys()),
+                        required=True,
+                    ),
+                },
+                use_container_width=True,
+                hide_index=True,
+                key="participants_table"
+            )
+
+            # Update group assignments from edited dataframe
+            for idx, row in edited_df.iterrows():
+                participant_id = row["Participant"]
+                new_group = row["Group"]
+                st.session_state.participant_groups[participant_id] = new_group
+
+            # Download button for participants table
+            csv_participants = df_participants.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Participants CSV",
+                data=csv_participants,
+                file_name="participants_overview.csv",
+                mime="text/csv",
+            )
+
+            st.markdown("---")
+
+            # Participant selector with easier navigation
+            st.subheader("🔍 Participant Details")
+
+            col1, col2, col3 = st.columns([2, 1, 1])
+
+            with col1:
+                participant_list = [s.participant_id for s in st.session_state.summaries]
+                selected_participant = st.selectbox(
+                    "Select participant",
+                    options=participant_list,
+                    key="selected_participant_dropdown"
+                )
+
+            with col2:
+                current_idx = participant_list.index(selected_participant)
+                if st.button("⬅️ Previous", disabled=current_idx == 0):
+                    selected_participant = participant_list[current_idx - 1]
+                    st.session_state.selected_participant_dropdown = selected_participant
+                    st.rerun()
+
+            with col3:
+                if st.button("➡️ Next", disabled=current_idx == len(participant_list) - 1):
+                    selected_participant = participant_list[current_idx + 1]
+                    st.session_state.selected_participant_dropdown = selected_participant
+                    st.rerun()
+
+            if selected_participant:
+                summary = next(
+                    s for s in st.session_state.summaries
+                    if s.participant_id == selected_participant
+                )
+
+                # Metrics row
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    st.metric("Total Beats", summary.total_beats)
+                with col2:
+                    st.metric("Retained", summary.retained_beats)
+                with col3:
+                    st.metric("Artifacts", f"{summary.artifact_ratio * 100:.1f}%")
+                with col4:
+                    st.metric("Duration", f"{summary.duration_s / 60:.1f} min")
+                with col5:
+                    assigned_group = st.session_state.participant_groups.get(selected_participant, "Default")
+                    st.metric("Group", assigned_group)
+
+                # Recording date/time
+                if summary.recording_datetime:
+                    st.info(f"📅 Recording Date: {summary.recording_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+
+                # Events table with reordering capability
+                st.markdown("**Events Detected (Reorderable):**")
+
+                # Get or initialize event order for this participant
+                if selected_participant not in st.session_state.event_order:
+                    st.session_state.event_order[selected_participant] = [
+                        event.canonical or event.raw_label for event in summary.events
+                    ]
+
+                # Combine detected events with manual events
+                all_events = list(summary.events)
+                if selected_participant in st.session_state.manual_events:
+                    all_events.extend(st.session_state.manual_events[selected_participant])
+
+                events_data = []
+                for event in all_events:
+                    event_id = event.canonical or event.raw_label
+                    events_data.append({
+                        "Event ID": event_id,
+                        "Raw Label": event.raw_label,
+                        "Canonical": event.canonical or "unmatched",
+                        "Count": event.count,
+                        "First Timestamp": event.first_timestamp.strftime("%Y-%m-%d %H:%M:%S") if event.first_timestamp else "N/A",
+                    })
+
+                if events_data:
+                    df_events = pd.DataFrame(events_data)
+
+                    # Editable events table
+                    st.data_editor(
+                        df_events,
+                        use_container_width=True,
+                        hide_index=True,
+                        num_rows="dynamic",
+                        key=f"events_table_{selected_participant}"
+                    )
+
+                    # Event reordering interface
+                    st.markdown("**Reorder Events:**")
+                    current_order = st.session_state.event_order.get(selected_participant, [])
+
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        selected_event = st.selectbox(
+                            "Select event to move",
+                            options=current_order,
+                            key=f"reorder_event_{selected_participant}"
+                        )
+                    with col2:
+                        new_position = st.number_input(
+                            "New position (1-based)",
+                            min_value=1,
+                            max_value=len(current_order),
+                            value=current_order.index(selected_event) + 1 if selected_event in current_order else 1,
+                            key=f"reorder_position_{selected_participant}"
+                        )
+                        if st.button("Move Event", key=f"move_btn_{selected_participant}"):
+                            if selected_event in current_order:
+                                current_order.remove(selected_event)
+                                current_order.insert(new_position - 1, selected_event)
+                                st.session_state.event_order[selected_participant] = current_order
+                                st.success(f"Moved '{selected_event}' to position {new_position}")
+                                st.rerun()
+
+                    # Download button for events
+                    csv_events = df_events.to_csv(index=False)
+                    st.download_button(
+                        label=f"📥 Download Events for {selected_participant}",
+                        data=csv_events,
+                        file_name=f"events_{selected_participant}.csv",
+                        mime="text/csv",
+                    )
+                else:
+                    st.info("No events found for this participant")
+
+                # Show event mapping status (renamed from "section mapping")
+                st.markdown("**Event Mapping Status:**")
+
+                # Get expected events for this participant's group
+                participant_group = st.session_state.participant_groups.get(selected_participant, "Default")
+                expected_events = st.session_state.groups.get(participant_group, {}).get("expected_events", {})
+
+                if expected_events:
+                    mapping_data = []
+                    for event_name, synonyms in expected_events.items():
+                        matched = event_name in summary.present_sections
+                        mapping_data.append({
+                            "Expected Event": event_name,
+                            "Status": "✅ Found" if matched else "❌ Missing",
+                            "Synonyms": ", ".join(synonyms[:3]) + ("..." if len(synonyms) > 3 else "") if synonyms else "No synonyms",
+                        })
+
+                    df_mapping = pd.DataFrame(mapping_data)
+                    st.dataframe(df_mapping, use_container_width=True, hide_index=True)
+                else:
+                    st.info(f"No expected events defined for group '{participant_group}'. Add them in the Event Mapping tab.")
+
+    # ================== TAB 2: Event Mapping (renamed from Events) ==================
+    with tab2:
+        st.header("🎭 Event Mapping")
+        st.markdown("Define and manage all available events. These events can then be assigned to groups.")
+        st.info("ℹ️ All event matching is done in **lowercase** automatically to reduce the number of synonyms needed.")
+
+        # Create new event
+        with st.expander("➕ Create New Event"):
+            new_event_name = st.text_input("Event Name (canonical)", key="new_event_name_global")
+            new_event_synonyms = st.text_area(
+                "Synonyms (one per line, regex patterns supported)",
+                key="new_event_synonyms_global",
+                help="Enter regex patterns, one per line. All matching is lowercase. Example: ruhe[ _-]?pre[ _-]?start"
+            )
+
+            if st.button("Create Event", key="create_event_btn_global"):
+                if new_event_name and new_event_name not in st.session_state.all_events:
+                    synonyms_list = [s.strip().lower() for s in new_event_synonyms.split("\n") if s.strip()]
+                    st.session_state.all_events[new_event_name] = synonyms_list
+                    save_all_config()
+                    st.success(f"✅ Created event '{new_event_name}'")
+                    st.rerun()
+                elif new_event_name in st.session_state.all_events:
+                    st.error(f"Event '{new_event_name}' already exists")
+                else:
+                    st.error("Please enter an event name")
+
+        st.markdown("---")
+
+        # Show all events
+        st.subheader("📋 All Available Events")
+
+        if st.session_state.all_events:
+            events_list = []
+            for event_name, synonyms in st.session_state.all_events.items():
+                events_list.append({
+                    "Event Name": event_name,
+                    "Synonyms (one per line)": "\n".join(synonyms) if synonyms else "",
+                    "Used in Groups": ", ".join([
+                        gname for gname, gdata in st.session_state.groups.items()
+                        if event_name in gdata.get("expected_events", {})
+                    ]) or "None",
+                })
+
+            df_all_events = pd.DataFrame(events_list)
+
+            edited_all_events = st.data_editor(
+                df_all_events,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                key="all_events_table",
+                column_config={
+                    "Synonyms (one per line)": st.column_config.TextColumn(
+                        "Synonyms (one per line)",
+                        width="large",
+                    ),
+                }
+            )
+
+            # Save changes button
+            if st.button("💾 Save All Event Changes", key="save_all_events_btn"):
+                updated_events = {}
+                for _, row in edited_all_events.iterrows():
+                    event_name = row["Event Name"]
+                    synonyms_str = row["Synonyms (one per line)"]
+                    # Convert all synonyms to lowercase
+                    synonyms = [s.strip().lower() for s in synonyms_str.split("\n") if s.strip()]
+                    updated_events[event_name] = synonyms
+
+                st.session_state.all_events = updated_events
+                save_all_config()
+                st.success("✅ Saved all event changes")
+                st.rerun()
+
+            # Download events
+            csv_all_events = df_all_events.to_csv(index=False)
+            st.download_button(
+                label="📥 Download All Events CSV",
+                data=csv_all_events,
+                file_name="all_events.csv",
+                mime="text/csv",
+                key="download_all_events"
+            )
+        else:
+            st.info("No events defined yet. Create events above.")
+
+    # ================== TAB 3: Group Management ==================
+    with tab3:
+        st.header("👥 Group Management")
+        st.markdown("Create groups, edit/rename/delete them, and assign events from the Event Mapping tab.")
+
+        # Create new group
+        with st.expander("➕ Create New Group"):
+            new_group_name = st.text_input("Group Name (internal ID)", key="new_group_name")
+            new_group_label = st.text_input("Group Label (display name)", key="new_group_label")
+
+            if st.button("Create Group"):
+                if new_group_name and new_group_name not in st.session_state.groups:
+                    st.session_state.groups[new_group_name] = {
+                        "label": new_group_label or new_group_name,
+                        "expected_events": {}
+                    }
+                    save_all_config()
+                    st.success(f"✅ Created group '{new_group_name}'")
+                    st.rerun()
+                elif new_group_name in st.session_state.groups:
+                    st.error(f"Group '{new_group_name}' already exists")
+                else:
+                    st.error("Please enter a group name")
+
+        st.markdown("---")
+
+        # Manage existing groups
+        st.subheader("Existing Groups")
+
+        for group_name, group_data in list(st.session_state.groups.items()):
+            with st.expander(f"📂 {group_name} - {group_data['label']}", expanded=(group_name == "Default")):
+
+                # Edit group name and label
+                st.markdown("**Edit Group:**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_name = st.text_input(
+                        "Group Name (ID)",
+                        value=group_name,
+                        key=f"edit_name_{group_name}"
+                    )
+                with col2:
+                    new_label = st.text_input(
+                        "Group Label",
+                        value=group_data["label"],
+                        key=f"edit_label_{group_name}"
+                    )
+
+                if st.button(f"💾 Save Changes to {group_name}", key=f"save_group_{group_name}"):
+                    # Update group data
+                    if new_name != group_name:
+                        # Rename group
+                        st.session_state.groups[new_name] = st.session_state.groups.pop(group_name)
+                        # Update participant assignments
+                        for pid, gname in st.session_state.participant_groups.items():
+                            if gname == group_name:
+                                st.session_state.participant_groups[pid] = new_name
+                        group_name = new_name
+
+                    st.session_state.groups[group_name]["label"] = new_label
+                    save_all_config()
+                    st.success(f"✅ Saved changes to '{group_name}'")
+                    st.rerun()
+
+                st.markdown("---")
+
+                # Show group info
+                participant_count = sum(1 for g in st.session_state.participant_groups.values() if g == group_name)
+                st.markdown(f"**Participants in this group:** {participant_count}")
+
+                # Expected events for this group
+                st.markdown("**Select Expected Events:**")
+
+                expected_events = group_data.get("expected_events", {})
+
+                # Show checkboxes for all available events
+                st.markdown("*Click events to add/remove from this group:*")
+
+                # Create columns for better layout
+                num_cols = 3
+                cols = st.columns(num_cols)
+
+                available_event_names = list(st.session_state.all_events.keys())
+                for idx, event_name in enumerate(available_event_names):
+                    col_idx = idx % num_cols
+                    with cols[col_idx]:
+                        is_selected = event_name in expected_events
+                        if st.checkbox(
+                            event_name,
+                            value=is_selected,
+                            key=f"event_select_{group_name}_{event_name}"
+                        ):
+                            # Event selected - add to group if not already there
+                            if event_name not in expected_events:
+                                expected_events[event_name] = st.session_state.all_events[event_name].copy()
+                                st.session_state.groups[group_name]["expected_events"] = expected_events
+                                save_all_config()
+                        else:
+                            # Event deselected - remove from group if it's there
+                            if event_name in expected_events:
+                                del expected_events[event_name]
+                                st.session_state.groups[group_name]["expected_events"] = expected_events
+                                save_all_config()
+
+                st.markdown("---")
+
+                # Show currently selected events with synonyms
+                if expected_events:
+                    st.markdown("**Currently Selected Events:**")
+                    events_list = []
+                    for event_name, synonyms in expected_events.items():
+                        events_list.append({
+                            "Event Name": event_name,
+                            "Synonyms": ", ".join(synonyms[:3]) + ("..." if len(synonyms) > 3 else "") if synonyms else "No synonyms",
+                        })
+
+                    df_group_events = pd.DataFrame(events_list)
+                    st.dataframe(df_group_events, use_container_width=True, hide_index=True)
+
+                    # Download group events
+                    csv_group_events = df_group_events.to_csv(index=False)
+                    st.download_button(
+                        label=f"📥 Download Events for {group_name}",
+                        data=csv_group_events,
+                        file_name=f"group_events_{group_name}.csv",
+                        mime="text/csv",
+                        key=f"download_group_{group_name}"
+                    )
+                else:
+                    st.info("No events selected for this group yet. Select events above.")
+
+                # Delete group button
+                st.markdown("---")
+                if st.button(f"🗑️ Delete Group '{group_name}'", key=f"delete_group_{group_name}"):
+                    # Reassign participants to Default
+                    for pid, gname in st.session_state.participant_groups.items():
+                        if gname == group_name:
+                            st.session_state.participant_groups[pid] = "Default"
+                    del st.session_state.groups[group_name]
+                    save_all_config()
+                    st.success(f"Deleted group '{group_name}' and reassigned participants to Default")
+                    st.rerun()
+
+    # ================== TAB 4: Sections ==================
+    with tab4:
+        st.header("📐 Sections")
+        st.markdown("Define time ranges (sections) between events for analysis. Each section has a start and end event.")
+
+        # Create new section
+        with st.expander("➕ Create New Section"):
+            new_section_name = st.text_input("Section Name (internal ID)", key="new_section_name")
+            new_section_label = st.text_input("Section Label (display name)", key="new_section_label")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                available_events = list(st.session_state.all_events.keys())
+                start_event = st.selectbox(
+                    "Start Event",
+                    options=available_events,
+                    key="new_section_start"
+                )
+            with col2:
+                end_event = st.selectbox(
+                    "End Event",
+                    options=available_events,
+                    key="new_section_end"
+                )
+
+            if st.button("Create Section", key="create_section_btn"):
+                if new_section_name and new_section_name not in st.session_state.sections:
+                    st.session_state.sections[new_section_name] = {
+                        "label": new_section_label or new_section_name,
+                        "start_event": start_event,
+                        "end_event": end_event,
+                    }
+                    save_all_config()
+                    st.success(f"✅ Created section '{new_section_name}'")
+                    st.rerun()
+                elif new_section_name in st.session_state.sections:
+                    st.error(f"Section '{new_section_name}' already exists")
+                else:
+                    st.error("Please enter a section name")
+
+        st.markdown("---")
+
+        # Show all sections
+        st.subheader("📋 All Defined Sections")
+
+        if st.session_state.sections:
+            sections_list = []
+            for section_name, section_data in st.session_state.sections.items():
+                sections_list.append({
+                    "Section Name": section_name,
+                    "Label": section_data.get("label", section_name),
+                    "Start Event": section_data.get("start_event", ""),
+                    "End Event": section_data.get("end_event", ""),
+                })
+
+            df_sections = pd.DataFrame(sections_list)
+
+            available_events = list(st.session_state.all_events.keys())
+            edited_sections = st.data_editor(
+                df_sections,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                key="sections_table",
+                column_config={
+                    "Start Event": st.column_config.SelectboxColumn(
+                        "Start Event",
+                        options=available_events,
+                        required=True,
+                    ),
+                    "End Event": st.column_config.SelectboxColumn(
+                        "End Event",
+                        options=available_events,
+                        required=True,
+                    ),
+                }
+            )
+
+            # Save changes button
+            if st.button("💾 Save Section Changes", key="save_sections_btn"):
+                updated_sections = {}
+                for _, row in edited_sections.iterrows():
+                    section_name = row["Section Name"]
+                    updated_sections[section_name] = {
+                        "label": row["Label"],
+                        "start_event": row["Start Event"],
+                        "end_event": row["End Event"],
+                    }
+
+                st.session_state.sections = updated_sections
+                save_all_config()
+                st.success("✅ Saved section changes")
+                st.rerun()
+
+            # Download sections
+            csv_sections = df_sections.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Sections CSV",
+                data=csv_sections,
+                file_name="sections.csv",
+                mime="text/csv",
+                key="download_sections"
+            )
+        else:
+            st.info("No sections defined yet. Create sections above.")
+
+    # ================== TAB 5: Analysis ==================
+    with tab5:
+        st.header("📊 HRV Analysis with NeuroKit2")
+
+        if not NEUROKIT_AVAILABLE:
+            st.error("❌ NeuroKit2 is not installed. Please install it to use HRV analysis features.")
+            st.code("uv add neurokit2")
+            return
+
+        if not st.session_state.summaries:
+            st.info("📊 Load data from the 'Data & Groups' tab to perform analysis")
+        else:
+            st.markdown("Select a participant or group, choose sections, and analyze HRV metrics.")
+
+            # Selection mode
+            analysis_mode = st.radio(
+                "Analysis Mode",
+                options=["Single Participant", "Group Analysis"],
+                horizontal=True,
+            )
+
+            if analysis_mode == "Single Participant":
+                # Participant selection
+                participant_list = [s.participant_id for s in st.session_state.summaries]
+                selected_participant = st.selectbox(
+                    "Select Participant",
+                    options=participant_list,
+                    key="analysis_participant"
+                )
+
+                # Section selection
+                available_sections = list(st.session_state.sections.keys())
+                if not available_sections:
+                    st.warning("⚠️ No sections defined. Please define sections in the Sections tab first.")
+                else:
+                    selected_sections = st.multiselect(
+                        "Select Sections to Analyze",
+                        options=available_sections,
+                        default=[available_sections[0]] if available_sections else [],
+                        key="analysis_sections_single"
+                    )
+
+                    if st.button("🔬 Analyze HRV", key="analyze_single_btn"):
+                        if not selected_sections:
+                            st.error("Please select at least one section")
+                        else:
+                            with st.spinner("Analyzing HRV..."):
+                                try:
+                                    # Load the recording
+                                    data_path = Path(st.session_state.data_dir)
+                                    bundles = discover_recordings(data_path, pattern=id_pattern)
+                                    bundle = next(b for b in bundles if b.participant_id == selected_participant)
+                                    recording = load_recording(bundle)
+
+                                    # Extract RR intervals (use cleaned version)
+                                    from music_hrv.cleaning.rr import clean_rr_intervals
+                                    cleaned_rr, stats = clean_rr_intervals(
+                                        recording.rr_intervals,
+                                        st.session_state.cleaning_config
+                                    )
+
+                                    # Convert to format neurokit2 expects (milliseconds)
+                                    rr_intervals_ms = [rr.rr_ms for rr in cleaned_rr]
+
+                                    # Process with neurokit2
+                                    hrv_results = nk.hrv(rr_intervals_ms, sampling_rate=None, show=False)
+
+                                    st.success("✅ Analysis complete!")
+
+                                    # Display results
+                                    st.subheader(f"HRV Metrics for {selected_participant}")
+
+                                    # Show key metrics
+                                    if not hrv_results.empty:
+                                        metrics_to_show = {
+                                            "HRV_RMSSD": "RMSSD (ms)",
+                                            "HRV_SDNN": "SDNN (ms)",
+                                            "HRV_pNN50": "pNN50 (%)",
+                                            "HRV_HF": "HF Power",
+                                            "HRV_LF": "LF Power",
+                                            "HRV_LFHF": "LF/HF Ratio",
+                                        }
+
+                                        cols = st.columns(3)
+                                        for idx, (col_name, display_name) in enumerate(metrics_to_show.items()):
+                                            if col_name in hrv_results.columns:
+                                                value = hrv_results[col_name].iloc[0]
+                                                with cols[idx % 3]:
+                                                    st.metric(display_name, f"{value:.2f}")
+
+                                        # Full results table
+                                        st.markdown("**Full HRV Metrics:**")
+                                        st.dataframe(hrv_results.T, use_container_width=True)
+
+                                        # Download results
+                                        csv_hrv = hrv_results.to_csv(index=True)
+                                        st.download_button(
+                                            label="📥 Download HRV Results",
+                                            data=csv_hrv,
+                                            file_name=f"hrv_results_{selected_participant}.csv",
+                                            mime="text/csv",
+                                        )
+
+                                    # Visualization
+                                    st.markdown("**RR Interval Visualization:**")
+                                    fig, ax = plt.subplots(figsize=(12, 4))
+                                    ax.plot(rr_intervals_ms, marker='o', markersize=2, linestyle='-', linewidth=0.5)
+                                    ax.set_xlabel("Beat Index")
+                                    ax.set_ylabel("RR Interval (ms)")
+                                    ax.set_title(f"RR Intervals - {selected_participant}")
+                                    ax.grid(True, alpha=0.3)
+                                    st.pyplot(fig)
+
+                                except Exception as e:
+                                    st.error(f"Error during analysis: {e}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
+
+            else:  # Group Analysis
+                # Group selection
+                group_list = list(st.session_state.groups.keys())
+                selected_group = st.selectbox(
+                    "Select Group",
+                    options=group_list,
+                    key="analysis_group"
+                )
+
+                # Section selection
+                available_sections = list(st.session_state.sections.keys())
+                if not available_sections:
+                    st.warning("⚠️ No sections defined. Please define sections in the Sections tab first.")
+                else:
+                    selected_sections = st.multiselect(
+                        "Select Sections to Analyze",
+                        options=available_sections,
+                        default=[available_sections[0]] if available_sections else [],
+                        key="analysis_sections_group"
+                    )
+
+                    if st.button("🔬 Analyze Group HRV", key="analyze_group_btn"):
+                        if not selected_sections:
+                            st.error("Please select at least one section")
+                        else:
+                            # Get participants in selected group
+                            group_participants = [
+                                pid for pid, gname in st.session_state.participant_groups.items()
+                                if gname == selected_group
+                            ]
+
+                            if not group_participants:
+                                st.warning(f"No participants assigned to group '{selected_group}'")
+                            else:
+                                st.info(f"Analyzing {len(group_participants)} participants in group '{selected_group}'...")
+
+                                group_results = []
+                                data_path = Path(st.session_state.data_dir)
+                                bundles = discover_recordings(data_path, pattern=id_pattern)
+
+                                for participant_id in group_participants:
+                                    try:
+                                        bundle = next(b for b in bundles if b.participant_id == participant_id)
+                                        recording = load_recording(bundle)
+
+                                        from music_hrv.cleaning.rr import clean_rr_intervals
+                                        cleaned_rr, stats = clean_rr_intervals(
+                                            recording.rr_intervals,
+                                            st.session_state.cleaning_config
+                                        )
+
+                                        rr_intervals_ms = [rr.rr_ms for rr in cleaned_rr]
+                                        hrv_results = nk.hrv(rr_intervals_ms, sampling_rate=None, show=False)
+
+                                        if not hrv_results.empty:
+                                            result_row = {"participant_id": participant_id}
+                                            for col in hrv_results.columns:
+                                                result_row[col] = hrv_results[col].iloc[0]
+                                            group_results.append(result_row)
+
+                                    except Exception as e:
+                                        st.warning(f"Could not analyze {participant_id}: {e}")
+
+                                if group_results:
+                                    df_group_results = pd.DataFrame(group_results)
+
+                                    st.success(f"✅ Analyzed {len(group_results)} participants")
+                                    st.subheader(f"Group HRV Results - {selected_group}")
+
+                                    # Show summary statistics
+                                    st.markdown("**Summary Statistics:**")
+                                    st.dataframe(df_group_results.describe(), use_container_width=True)
+
+                                    # Full results
+                                    st.markdown("**Individual Results:**")
+                                    st.dataframe(df_group_results, use_container_width=True)
+
+                                    # Download
+                                    csv_group_hrv = df_group_results.to_csv(index=False)
+                                    st.download_button(
+                                        label="📥 Download Group HRV Results",
+                                        data=csv_group_hrv,
+                                        file_name=f"hrv_group_results_{selected_group}.csv",
+                                        mime="text/csv",
+                                    )
+                                else:
+                                    st.error("No results generated. Check error messages above.")
+
+
+if __name__ == "__main__":
+    main()

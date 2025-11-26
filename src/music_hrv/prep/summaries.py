@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from datetime import datetime
 
 from music_hrv.cleaning.rr import CleaningConfig, clean_rr_intervals, rr_summary
 from music_hrv.io.hrv_logger import HRVLoggerRecording, discover_recordings, load_recording
@@ -18,6 +18,8 @@ class EventStatus:
     raw_label: str
     canonical: str | None
     count: int = 1
+    first_timestamp: datetime | None = None
+    last_timestamp: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -25,6 +27,7 @@ class PreparationSummary:
     """Aggregate metrics for a cleaned recording."""
 
     participant_id: str
+    recording_datetime: datetime | None  # Timestamp of first event (preferably rest_pre_start)
     first_timestamp: datetime | None
     last_timestamp: datetime | None
     total_beats: int
@@ -34,6 +37,8 @@ class PreparationSummary:
     duration_s: float
     events_detected: int
     duplicate_events: int
+    duplicate_rr_intervals: int  # Count of duplicate RR intervals removed
+    duplicate_details: list  # List of DuplicateInfo objects
     rr_min_ms: float
     rr_max_ms: float
     rr_mean_ms: float
@@ -59,10 +64,15 @@ class PreparationSummary:
 def summarize_recording(
     recording: HRVLoggerRecording,
     *,
+    duplicate_rr_count: int = 0,
+    duplicate_details: list = None,
     config: CleaningConfig | None = None,
     normalizer: SectionNormalizer | None = None,
 ) -> PreparationSummary:
     """Clean one participant recording and collect descriptive stats."""
+
+    if duplicate_details is None:
+        duplicate_details = []
 
     cleaned, stats = clean_rr_intervals(recording.rr_intervals, config)
     rr_stats = rr_summary(cleaned or recording.rr_intervals)
@@ -74,17 +84,41 @@ def summarize_recording(
         canonical = normalizer.normalize(marker.label)
         if key in by_label:
             by_label[key].count += 1
+            by_label[key].last_timestamp = max(
+                (ts for ts in (by_label[key].last_timestamp, marker.timestamp) if ts), default=None
+            )
         else:
-            by_label[key] = EventStatus(raw_label=marker.label, canonical=canonical)
+            by_label[key] = EventStatus(
+                raw_label=marker.label,
+                canonical=canonical,
+                first_timestamp=marker.timestamp,
+                last_timestamp=marker.timestamp,
+            )
         if canonical:
             present_sections.add(canonical)
     event_statuses = list(by_label.values())
-    duplicate_events = max(0, len(recording.events) - len(event_statuses))
+    duplicate_events = sum(max(event.count - 1, 0) for event in event_statuses)
     timestamps = [rr.timestamp for rr in recording.rr_intervals if rr.timestamp]
     first_ts = min(timestamps) if timestamps else None
     last_ts = max(timestamps) if timestamps else None
+
+    # Find recording datetime from first event, preferably rest_pre_start
+    recording_dt = None
+    # Try to find rest_pre_start first
+    for event in event_statuses:
+        if event.canonical == "rest_pre_start" and event.first_timestamp:
+            recording_dt = event.first_timestamp
+            break
+    # Fallback to first event with timestamp
+    if not recording_dt:
+        for event in event_statuses:
+            if event.first_timestamp:
+                recording_dt = event.first_timestamp
+                break
+
     return PreparationSummary(
         participant_id=recording.participant_id,
+        recording_datetime=recording_dt,
         first_timestamp=first_ts,
         last_timestamp=last_ts,
         total_beats=stats.total_samples,
@@ -94,6 +128,8 @@ def summarize_recording(
         duration_s=rr_stats["duration_s"],
         events_detected=len(event_statuses),
         duplicate_events=duplicate_events,
+        duplicate_rr_intervals=duplicate_rr_count,
+        duplicate_details=duplicate_details,
         rr_min_ms=rr_stats["min"],
         rr_max_ms=rr_stats["max"],
         rr_mean_ms=rr_stats["mean"],
@@ -116,6 +152,14 @@ def load_hrv_logger_preview(
     normalizer = normalizer or SectionNormalizer.from_yaml()
     summaries: list[PreparationSummary] = []
     for bundle in bundles:
-        recording = load_recording(bundle)
-        summaries.append(summarize_recording(recording, config=config, normalizer=normalizer))
+        recording, duplicate_count, duplicate_details = load_recording(bundle)
+        summaries.append(
+            summarize_recording(
+                recording,
+                duplicate_rr_count=duplicate_count,
+                duplicate_details=duplicate_details,
+                config=config,
+                normalizer=normalizer,
+            )
+        )
     return summaries

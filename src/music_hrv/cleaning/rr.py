@@ -80,7 +80,11 @@ def clean_rr_intervals(
 
 
 def rr_summary(samples: Sequence[RRInterval]) -> dict[str, float]:
-    """Compute descriptive stats for a RR series."""
+    """Compute descriptive stats for a RR series.
+
+    Duration is calculated by summing all RR intervals (physiological duration).
+    Timestamps are available for validation but not used for duration calculation.
+    """
 
     if not samples:
         return {
@@ -93,12 +97,11 @@ def rr_summary(samples: Sequence[RRInterval]) -> dict[str, float]:
     min_ms = min(rr_values)
     max_ms = max(rr_values)
     mean_ms = fmean(rr_values)
-    start = samples[0].elapsed_ms
-    end = samples[-1].elapsed_ms
-    if start is None or end is None:
-        duration_s = 0.0
-    else:
-        duration_s = max(0.0, (end - start) / 1000)
+
+    # Calculate duration by summing all RR intervals
+    # This gives the actual physiological duration based on heartbeats
+    duration_s = sum(rr_values) / 1000
+
     return {
         "min": float(min_ms),
         "max": float(max_ms),

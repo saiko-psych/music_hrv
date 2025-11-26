@@ -1,0 +1,11 @@
+measurement_end: []
+measurement_start: []
+pause_end: []
+pause_start: []
+rest_post_end:
+- ende ruhe post
+rest_post_start: []
+rest_pre_end:
+- ruhe pre ende
+rest_pre_start:
+- ruhe pre start

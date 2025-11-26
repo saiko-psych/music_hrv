@@ -230,10 +230,10 @@ The project must include a **user-friendly graphical interface** suitable for us
 
 ### 6.1 General GUI Requirements
 
-- Platform: Python-based GUI (framework can be chosen later, e.g. Qt, Tkinter, Streamlit, or a small web app).
-- Must be **cross-platform** (Windows, macOS; Linux is a plus).
+- Platform: **Streamlit** web-based GUI (browser-based interface).
+- Must be **cross-platform** (Windows, macOS, Linux).
 - Simple, clear language (no technical jargon).
-- Consistent layout, fonts, and colours.
+- Consistent layout using Streamlit's native components.
 
 ### 6.2 Main GUI Screens / Views
 

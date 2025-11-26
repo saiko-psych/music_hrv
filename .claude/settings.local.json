@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run python:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(dir:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(cat:*)",
+      "Bash(python:*)",
+      "Bash(uv pip list:*)",
+      "Bash(taskkill:*)",
+      "Bash(uv run streamlit run:*)",
+      "Bash(timeout /t 10)",
+      "Bash(timeout /t 5)",
+      "Bash(del test_move_functions.py)",
+      "Bash(timeout /t:*)",
+      "Bash(uv pip install:*)",
+      "Bash(findstr:*)",
+      "Bash(del:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

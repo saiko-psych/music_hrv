@@ -21,7 +21,7 @@ Refer to `docs/CONTRIBUTING.md` for contributor guidelines, coding standards, an
 uv sync --group dev      # install runtime + dev dependencies (Python 3.11)
 uv run music-hrv --dry-run
 uv run pytest
-uv run python -m music_hrv.gui.app  # launches browser-based GUI prototype
+uv run streamlit run src/music_hrv/gui/app.py  # launches Streamlit GUI
 ```
 `music-hrv --dry-run` validates configs/paths. Omit `--dry-run` once ingestion and analysis modules are implemented. Use `uv run python -m music_hrv.cli --help` to explore extra flags.
 

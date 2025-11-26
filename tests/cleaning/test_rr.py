@@ -30,4 +30,5 @@ def test_rr_summary_reports_min_max_mean_duration():
 
     assert summary["min"] == 630.0
     assert summary["max"] == 650.0
-    assert summary["duration_s"] == (2560 - 0) / 1000
+    # Duration calculated by summing RR intervals: 650 + 640 + 630 = 1920 ms = 1.92 s
+    assert summary["duration_s"] == (650 + 640 + 630) / 1000

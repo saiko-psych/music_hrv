@@ -8,7 +8,6 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
 
 DEFAULT_ID_PATTERN = r"(?P<participant>[A-Za-z0-9]+)"
 _RR_REQUIRED_COLUMNS = ("date", "rr")
@@ -39,6 +38,17 @@ class RRInterval:
     timestamp: datetime | None
     rr_ms: int
     elapsed_ms: int | None
+
+
+@dataclass(slots=True)
+class DuplicateInfo:
+    """Information about a detected duplicate RR interval."""
+
+    original_line: int  # Line number where first occurrence was seen
+    duplicate_line: int  # Line number where duplicate was found
+    date_str: str
+    rr_str: str
+    elapsed_str: str
 
 
 @dataclass(slots=True)
@@ -136,19 +146,60 @@ def _parse_int(value: str | None) -> int | None:
         return None
 
 
-def load_rr_intervals(rr_path: Path) -> list[RRInterval]:
-    """Parse RR CSV rows."""
+def load_rr_intervals(rr_path: Path) -> tuple[list[RRInterval], int, list[DuplicateInfo]]:
+    """Parse RR CSV rows and detect exact duplicate rows.
+
+    A duplicate is defined as:
+    - Entire row is identical (date + rr + since_start values all match)
+
+    Returns:
+        tuple: (list of unique RR intervals, count of duplicates removed, list of duplicate details)
+    """
 
     intervals: list[RRInterval] = []
+    seen_rows: dict[tuple, int] = {}  # (timestamp_str, rr_str, elapsed_str) -> line number
+    duplicates_list: list[DuplicateInfo] = []
+    line_num = 0  # Track CSV line number (including header)
+
     for row in _prepare_reader(rr_path):
+        line_num += 1
+
         cleaned = _normalise_row(row)
         if not all(col in cleaned for col in _RR_REQUIRED_COLUMNS):
             continue
-        timestamp = _parse_datetime(cleaned.get("date"))
-        rr_ms = _parse_int(cleaned.get("rr"))
-        elapsed_ms = _parse_int(cleaned.get("since start") or cleaned.get("since_start"))
+
+        # Parse values
+        date_str = cleaned.get("date", "")
+        rr_str = cleaned.get("rr", "")
+        elapsed_str = cleaned.get("since start") or cleaned.get("since_start", "")
+
+        # Create fingerprint of entire row
+        row_fingerprint = (date_str, rr_str, elapsed_str)
+
+        # Check if this EXACT row was seen before
+        if row_fingerprint in seen_rows:
+            original_line = seen_rows[row_fingerprint]
+            duplicates_list.append(
+                DuplicateInfo(
+                    original_line=original_line,
+                    duplicate_line=line_num + 1,  # +1 because line 1 is header
+                    date_str=date_str,
+                    rr_str=rr_str,
+                    elapsed_str=elapsed_str,
+                )
+            )
+            continue  # Skip duplicate
+
+        seen_rows[row_fingerprint] = line_num + 1  # +1 because line 1 is header
+
+        # Now parse the actual values
+        timestamp = _parse_datetime(date_str)
+        rr_ms = _parse_int(rr_str)
+        elapsed_ms = _parse_int(elapsed_str)
+
         if rr_ms is None:
             continue
+
         intervals.append(
             RRInterval(
                 timestamp=timestamp,
@@ -156,7 +207,8 @@ def load_rr_intervals(rr_path: Path) -> list[RRInterval]:
                 elapsed_ms=elapsed_ms,
             )
         )
-    return intervals
+
+    return intervals, len(duplicates_list), duplicates_list
 
 
 def load_events(events_path: Path) -> list[EventMarker]:
@@ -188,24 +240,33 @@ def load_events(events_path: Path) -> list[EventMarker]:
     return markers
 
 
-def load_recording(bundle: RecordingBundle) -> HRVLoggerRecording:
-    """Load RR + events content for a discovered bundle."""
+def load_recording(bundle: RecordingBundle) -> tuple[HRVLoggerRecording, int, list[DuplicateInfo]]:
+    """Load RR + events content for a discovered bundle.
 
-    rr_intervals = load_rr_intervals(bundle.rr_path)
+    Returns:
+        tuple: (HRVLoggerRecording, duplicate_count, duplicate_details)
+    """
+
+    rr_intervals, duplicates, duplicate_details = load_rr_intervals(bundle.rr_path)
     events: list[EventMarker] = []
     if bundle.events_path and bundle.events_path.exists():
         events = load_events(bundle.events_path)
-    return HRVLoggerRecording(
+    recording = HRVLoggerRecording(
         participant_id=bundle.participant_id,
         rr_intervals=rr_intervals,
         events=events,
     )
+    return recording, duplicates, duplicate_details
 
 
 def load_recordings_from_directory(
     root: Path, *, pattern: str = DEFAULT_ID_PATTERN
-) -> list[HRVLoggerRecording]:
-    """Convenience helper returning fully parsed recordings."""
+) -> list[tuple[HRVLoggerRecording, int]]:
+    """Convenience helper returning fully parsed recordings.
+
+    Returns:
+        list of tuples: [(HRVLoggerRecording, duplicate_count), ...]
+    """
 
     bundles = discover_recordings(root, pattern=pattern)
     return [load_recording(bundle) for bundle in bundles]
