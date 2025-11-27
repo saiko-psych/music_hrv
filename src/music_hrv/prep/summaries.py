@@ -45,6 +45,14 @@ class PreparationSummary:
     artifact_reasons: dict[str, int]
     events: list[EventStatus]
     present_sections: set[str]
+    # Multiple file support
+    rr_file_count: int = 1  # Number of RR files for this participant
+    events_file_count: int = 0  # Number of Events files for this participant
+
+    @property
+    def has_multiple_files(self) -> bool:
+        """Check if this participant has multiple recording files."""
+        return self.rr_file_count > 1 or self.events_file_count > 1
 
     def as_row(self) -> tuple[str, ...]:
         """Return human readable values for tables."""
@@ -68,6 +76,8 @@ def summarize_recording(
     duplicate_details: list = None,
     config: CleaningConfig | None = None,
     normalizer: SectionNormalizer | None = None,
+    rr_file_count: int = 1,
+    events_file_count: int = 0,
 ) -> PreparationSummary:
     """Clean one participant recording and collect descriptive stats."""
 
@@ -136,6 +146,8 @@ def summarize_recording(
         artifact_reasons=stats.reasons,
         events=event_statuses,
         present_sections=present_sections,
+        rr_file_count=rr_file_count,
+        events_file_count=events_file_count,
     )
 
 
@@ -160,6 +172,8 @@ def load_hrv_logger_preview(
                 duplicate_details=duplicate_details,
                 config=config,
                 normalizer=normalizer,
+                rr_file_count=len(bundle.rr_paths),
+                events_file_count=len(bundle.events_paths),
             )
         )
     return summaries

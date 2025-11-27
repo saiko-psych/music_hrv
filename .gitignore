@@ -23,6 +23,15 @@ local_test_data/
 test_data/
 tests/data/
 
+# HRV data files (real participant data)
+*_RR_*.csv
+*_Events_*.csv
+!tests/fixtures/**/*_RR_*.csv
+!tests/fixtures/**/*_Events_*.csv
+
+# User config directory
+~/.music_hrv/
+
 # Build outputs
 dist/
 build/

@@ -62,11 +62,26 @@ class EventMarker:
 
 @dataclass(slots=True)
 class RecordingBundle:
-    """Paired RR + Events file for one participant."""
+    """Paired RR + Events files for one participant (supports multiple files from restarts)."""
 
     participant_id: str
-    rr_path: Path
-    events_path: Path | None = None
+    rr_paths: list[Path]  # All RR files for this participant (sorted by name/timestamp)
+    events_paths: list[Path]  # All Events files for this participant
+
+    @property
+    def rr_path(self) -> Path:
+        """First RR file (for backward compatibility)."""
+        return self.rr_paths[0] if self.rr_paths else None
+
+    @property
+    def events_path(self) -> Path | None:
+        """First Events file (for backward compatibility)."""
+        return self.events_paths[0] if self.events_paths else None
+
+    @property
+    def has_multiple_files(self) -> bool:
+        """Check if this participant has multiple RR or Events files."""
+        return len(self.rr_paths) > 1 or len(self.events_paths) > 1
 
 
 @dataclass(slots=True)
@@ -97,7 +112,11 @@ def extract_participant_id(name: str, pattern: str = DEFAULT_ID_PATTERN) -> str:
 def discover_recordings(
     root: Path, *, pattern: str = DEFAULT_ID_PATTERN
 ) -> list[RecordingBundle]:
-    """Discover RR/Events pairs under the provided root folder."""
+    """Discover RR/Events pairs under the provided root folder.
+
+    Supports multiple files per participant (e.g., from measurement restarts).
+    Files are sorted by name which typically reflects timestamp order.
+    """
 
     root = root.expanduser().resolve()
     rr_index: dict[str, list[Path]] = {}
@@ -112,14 +131,13 @@ def discover_recordings(
         events_index.setdefault(participant, []).append(events_path)
 
     bundles: list[RecordingBundle] = []
-    for participant, paths in sorted(rr_index.items()):
-        rr_path = paths[0]
-        events_candidates = events_index.get(participant) or []
+    for participant, rr_paths in sorted(rr_index.items()):
+        events_paths = events_index.get(participant) or []
         bundles.append(
             RecordingBundle(
                 participant_id=participant,
-                rr_path=rr_path,
-                events_path=events_candidates[0] if events_candidates else None,
+                rr_paths=rr_paths,  # All RR files for this participant
+                events_paths=events_paths,  # All Events files
             )
         )
     return bundles
@@ -243,20 +261,43 @@ def load_events(events_path: Path) -> list[EventMarker]:
 def load_recording(bundle: RecordingBundle) -> tuple[HRVLoggerRecording, int, list[DuplicateInfo]]:
     """Load RR + events content for a discovered bundle.
 
+    Supports multiple RR/Events files per participant (merges all files).
+    Data is sorted by timestamp after merging.
+
     Returns:
         tuple: (HRVLoggerRecording, duplicate_count, duplicate_details)
     """
 
-    rr_intervals, duplicates, duplicate_details = load_rr_intervals(bundle.rr_path)
-    events: list[EventMarker] = []
-    if bundle.events_path and bundle.events_path.exists():
-        events = load_events(bundle.events_path)
+    all_rr_intervals: list[RRInterval] = []
+    all_duplicates = 0
+    all_duplicate_details: list[DuplicateInfo] = []
+
+    # Load all RR files and merge
+    for rr_path in bundle.rr_paths:
+        rr_intervals, duplicates, duplicate_details = load_rr_intervals(rr_path)
+        all_rr_intervals.extend(rr_intervals)
+        all_duplicates += duplicates
+        all_duplicate_details.extend(duplicate_details)
+
+    # Sort RR intervals by timestamp (handles merged files from restarts)
+    all_rr_intervals.sort(key=lambda x: x.timestamp if x.timestamp else datetime.min.replace(tzinfo=None))
+
+    # Load all Events files and merge
+    all_events: list[EventMarker] = []
+    for events_path in bundle.events_paths:
+        if events_path.exists():
+            events = load_events(events_path)
+            all_events.extend(events)
+
+    # Sort events by timestamp
+    all_events.sort(key=lambda x: x.timestamp if x.timestamp else datetime.min.replace(tzinfo=None))
+
     recording = HRVLoggerRecording(
         participant_id=bundle.participant_id,
-        rr_intervals=rr_intervals,
-        events=events,
+        rr_intervals=all_rr_intervals,
+        events=all_events,
     )
-    return recording, duplicates, duplicate_details
+    return recording, all_duplicates, all_duplicate_details
 
 
 def load_recordings_from_directory(

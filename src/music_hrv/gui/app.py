@@ -298,70 +298,9 @@ def main():
     st.title("🎵 Music HRV Toolkit")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
-    # Sidebar for global configuration
+    # Minimal sidebar - just status info
     with st.sidebar:
-        st.header("⚙️ Configuration")
-
-        # Cleaning parameters with callbacks for auto-save
-        st.subheader("RR Cleaning Thresholds")
-
-        def update_cleaning_config():
-            """Callback to update cleaning config and clear cache."""
-            st.session_state.cleaning_config = CleaningConfig(
-                rr_min_ms=st.session_state.rr_min_input,
-                rr_max_ms=st.session_state.rr_max_input,
-                sudden_change_pct=st.session_state.sudden_change_input,
-            )
-            # Clear cache when config changes
-            cached_load_hrv_logger_preview.clear()
-            show_toast("Cleaning config updated", icon="info")
-
-        st.number_input(
-            "Min RR (ms)",
-            min_value=200,
-            max_value=1000,
-            value=st.session_state.cleaning_config.rr_min_ms,
-            step=10,
-            key="rr_min_input",
-            on_change=update_cleaning_config,
-        )
-        st.number_input(
-            "Max RR (ms)",
-            min_value=1000,
-            max_value=3000,
-            value=st.session_state.cleaning_config.rr_max_ms,
-            step=10,
-            key="rr_max_input",
-            on_change=update_cleaning_config,
-        )
-        st.slider(
-            "Sudden change threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=st.session_state.cleaning_config.sudden_change_pct,
-            step=0.05,
-            format="%.2f",
-            key="sudden_change_input",
-            on_change=update_cleaning_config,
-        )
-
-        # Participant ID pattern with validation
-        st.subheader("Participant ID Pattern")
-        id_pattern = st.text_input(
-            "Regex pattern",
-            value=DEFAULT_ID_PATTERN,
-            help="Regex pattern with named group 'participant'",
-            key="id_pattern_input",
-        )
-
-        # Real-time validation for regex pattern
-        pattern_error = validate_regex_pattern(id_pattern)
-        if pattern_error:
-            st.error(f"⚠️ Invalid regex: {pattern_error}")
-        elif "(?P<participant>" not in id_pattern:
-            st.warning("⚠️ Pattern should include named group '(?P<participant>...)'")
-
-        st.markdown("---")
+        st.header("🎵 Music HRV Toolkit")
 
         # Show last save time if available
         if "last_save_time" in st.session_state:
@@ -372,6 +311,9 @@ def main():
                 st.markdown("**💾 Auto-save enabled**")
         else:
             st.markdown("**💾 Auto-save enabled**")
+
+        st.markdown("---")
+        st.caption("Configure data import settings in the **Data & Groups** tab.")
 
     # Main content tabs with Analysis tab
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -385,6 +327,70 @@ def main():
     # ================== TAB 1: Data & Groups ==================
     with tab1:
         st.header("Data Import & Participants")
+
+        # Import Settings section
+        with st.expander("⚙️ Import Settings", expanded=False):
+            col_cfg1, col_cfg2 = st.columns(2)
+
+            with col_cfg1:
+                st.markdown("**Participant ID Pattern**")
+                id_pattern = st.text_input(
+                    "Regex pattern",
+                    value=DEFAULT_ID_PATTERN,
+                    help="Regex pattern with named group 'participant'. Default: 4 digits + 4 uppercase letters",
+                    key="id_pattern_input",
+                )
+
+                # Real-time validation for regex pattern
+                pattern_error = validate_regex_pattern(id_pattern)
+                if pattern_error:
+                    st.error(f"⚠️ Invalid regex: {pattern_error}")
+                elif "(?P<participant>" not in id_pattern:
+                    st.warning("⚠️ Pattern should include named group '(?P<participant>...)'")
+
+            with col_cfg2:
+                st.markdown("**RR Cleaning Thresholds**")
+
+                def update_cleaning_config():
+                    """Callback to update cleaning config and clear cache."""
+                    st.session_state.cleaning_config = CleaningConfig(
+                        rr_min_ms=st.session_state.rr_min_input,
+                        rr_max_ms=st.session_state.rr_max_input,
+                        sudden_change_pct=st.session_state.sudden_change_input,
+                    )
+                    cached_load_hrv_logger_preview.clear()
+
+                col_rr1, col_rr2 = st.columns(2)
+                with col_rr1:
+                    st.number_input(
+                        "Min RR (ms)",
+                        min_value=200,
+                        max_value=1000,
+                        value=st.session_state.cleaning_config.rr_min_ms,
+                        step=10,
+                        key="rr_min_input",
+                        on_change=update_cleaning_config,
+                    )
+                with col_rr2:
+                    st.number_input(
+                        "Max RR (ms)",
+                        min_value=1000,
+                        max_value=3000,
+                        value=st.session_state.cleaning_config.rr_max_ms,
+                        step=10,
+                        key="rr_max_input",
+                        on_change=update_cleaning_config,
+                    )
+                st.slider(
+                    "Sudden change threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=st.session_state.cleaning_config.sudden_change_pct,
+                    step=0.05,
+                    format="%.2f",
+                    key="sudden_change_input",
+                    on_change=update_cleaning_config,
+                )
 
         # Data directory input
         col1, col2 = st.columns([3, 1])
@@ -452,9 +458,15 @@ def main():
                 if summary.recording_datetime:
                     recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
 
+                # Show file counts (highlight if multiple files)
+                files_str = f"{summary.rr_file_count}RR/{summary.events_file_count}Ev"
+                if summary.has_multiple_files:
+                    files_str = f"⚠️ {files_str}"
+
                 participants_data.append({
                     "Participant": summary.participant_id,
                     "Saved": "✅" if summary.participant_id in loaded_participants else "❌",
+                    "Files": files_str,
                     "Date/Time": recording_dt_str,
                     "Group": st.session_state.participant_groups.get(summary.participant_id, "Default"),
                     "Total Beats": summary.total_beats,
@@ -485,6 +497,12 @@ def main():
                         "Saved",
                         disabled=True,
                         width="small",
+                    ),
+                    "Files": st.column_config.TextColumn(
+                        "Files",
+                        disabled=True,
+                        width="small",
+                        help="RR files / Events files. ⚠️ indicates multiple files (merged from restarts)",
                     ),
                     "Group": st.column_config.SelectboxColumn(
                         "Group",
