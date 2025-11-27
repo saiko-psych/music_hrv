@@ -7,7 +7,7 @@ import streamlit as st
 from pathlib import Path
 
 from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.io import DEFAULT_ID_PATTERN, load_recording, discover_recordings
+from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS, load_recording, discover_recordings
 from music_hrv.prep import load_hrv_logger_preview
 from music_hrv.segments.section_normalizer import SectionNormalizer
 from music_hrv.config.sections import SectionsConfig, SectionDefinition
@@ -334,12 +334,28 @@ def main():
 
             with col_cfg1:
                 st.markdown("**Participant ID Pattern**")
-                id_pattern = st.text_input(
-                    "Regex pattern",
-                    value=DEFAULT_ID_PATTERN,
-                    help="Regex pattern with named group 'participant'. Default: 4 digits + 4 uppercase letters",
-                    key="id_pattern_input",
+
+                # Predefined pattern dropdown
+                pattern_options = list(PREDEFINED_PATTERNS.keys()) + ["Custom pattern..."]
+                selected_pattern_name = st.selectbox(
+                    "Select pattern format",
+                    options=pattern_options,
+                    index=0,  # Default: 4 digits + 4 uppercase
+                    key="pattern_selector",
+                    help="Choose a predefined pattern or select 'Custom pattern...' to enter your own",
                 )
+
+                # Get the pattern based on selection
+                if selected_pattern_name == "Custom pattern...":
+                    id_pattern = st.text_input(
+                        "Custom regex pattern",
+                        value=DEFAULT_ID_PATTERN,
+                        help="Regex pattern with named group 'participant'",
+                        key="id_pattern_input",
+                    )
+                else:
+                    id_pattern = PREDEFINED_PATTERNS[selected_pattern_name]
+                    st.code(id_pattern, language=None)
 
                 # Real-time validation for regex pattern
                 pattern_error = validate_regex_pattern(id_pattern)

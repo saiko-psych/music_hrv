@@ -9,7 +9,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_ID_PATTERN = r"(?P<participant>[A-Za-z0-9]+)"
+# Pattern for participant ID: 4 digits followed by 4 uppercase letters (e.g., 0123ABCD)
+DEFAULT_ID_PATTERN = r"(?P<participant>\d{4}[A-Z]{4})"
+
+# Predefined patterns for common ID formats
+PREDEFINED_PATTERNS = {
+    "4 digits + 4 uppercase (e.g., 0123ABCD)": r"(?P<participant>\d{4}[A-Z]{4})",
+    "4 digits + 4 letters (case insensitive)": r"(?P<participant>\d{4}[A-Za-z]{4})",
+    "Any alphanumeric ID": r"(?P<participant>[A-Za-z0-9]+)",
+    "Digits only (e.g., 001, 0123)": r"(?P<participant>\d+)",
+    "Letters + digits (e.g., P001, SUB123)": r"(?P<participant>[A-Za-z]+\d+)",
+    "Underscore separated (e.g., sub_001)": r"(?P<participant>[A-Za-z]+_\d+)",
+}
 _RR_REQUIRED_COLUMNS = ("date", "rr")
 _EVENT_REQUIRED_COLUMNS = ("annotation", "timestamp")
 
