@@ -106,6 +106,18 @@ def load_sections_config(
             continue
         _register_section(str(name), node, group="group")
 
+    # Load quality markers (gap/variability events)
+    for name, node in (data.get("quality_markers") or {}).items():
+        if not isinstance(node, Mapping):
+            continue
+        _register_section(str(name), node, group="quality")
+
+    # Load music section events
+    for name, node in (data.get("music_sections") or {}).items():
+        if not isinstance(node, Mapping):
+            continue
+        _register_section(str(name), node, group="music")
+
     groups: dict[str, SectionGroup] = {}
     for name, node in (data.get("groups") or {}).items():
         if not isinstance(node, Mapping):

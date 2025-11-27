@@ -13,23 +13,24 @@ Quick reference for Claude Code working in this repository. **For detailed sessi
 
 ## Current Status (2025-11-27)
 
-**Version**: `v0.2.3-patterns`
+**Version**: `v0.3.0`
 
 **GUI**: 5-tab Streamlit app with persistent storage
-- Tab 1: Data & Groups (import with pattern selector, multi-file support, interactive Plotly plot)
-- Tab 2: Event Mapping (define events, synonyms auto-lowercase)
-- Tab 3: Group Management (create/edit/rename/delete groups)
+- Tab 1: Data & Groups (import, interactive WebGL plot, quality detection, music events)
+- Tab 2: Event Mapping (define events, synonyms auto-lowercase, timing validation)
+- Tab 3: Group Management (groups + playlist/randomization groups)
 - Tab 4: Sections (define time ranges between events)
 - Tab 5: Analysis (NeuroKit2 HRV analysis, plots, metrics)
 
-**Key Features**:
-- Interactive Plotly RR visualization with click-to-add events
-- Multiple RR/Events files per participant (auto-merge from restarts)
-- Predefined ID pattern dropdown (6 formats + custom)
-- Visible event sorting with immediate UI updates
-- Timezone-aware timestamp handling
+**Key Features (v0.3.0)**:
+- WebGL-accelerated Plotly plots (Scattergl)
+- Auto-create gap events (15s threshold) and variability events (CV threshold)
+- Music section events (separate category, playlist groups R1-R6)
+- Plot toggles: show/hide variability, gaps, music sections, music events
+- Timing validation in Event Mapping Status section
+- Multiple RR/Events files per participant (auto-merge)
 
-**Storage**: `~/.music_hrv/*.yml` (groups, events, sections persist across sessions)
+**Storage**: `~/.music_hrv/*.yml` (groups, events, sections, playlist_groups)
 
 **Status**: All tests passing (13/13), no linting errors
 
@@ -93,14 +94,26 @@ if ts.tzinfo is None:
 
 ## Version Tags
 
+- `v0.3.0` - Music events, quality detection, timing validation, WebGL plots
 - `v0.2.3-patterns` - Predefined ID patterns, multi-file detection fix
 - `v0.2.2-multi-files` - Multiple files per participant
 - `v0.2.1-sorting-fix` - Timezone handling and visible sorting
 - `v0.2.0-plotly-viz` - Interactive Plotly visualization
 
-## Known Limitations / Next Steps
+## Next Session TODOs
 
-- [ ] Missing/error data detection and handling
+### High Priority
+- [ ] Better explanations/help text in GUI (tooltips, info boxes)
+- [ ] Performance: faster app, background processing, reduce loading spinners
+- [ ] Batch processing: apply settings to all participants automatically
+- [ ] Only prompt user when issues detected
+
+### Medium Priority
+- [ ] Improve UI layout (spacing, element sizing, visual polish)
+- [ ] Plot customization (RR line color, titles, etc.) - LOW PRIORITY
+- [ ] Evaluate alternative to Plotly if performance still slow
+
+### Known Limitations
 - [ ] Section-based HRV analysis (currently analyzes whole recording)
 - [ ] VNS Analyse loader not implemented
 

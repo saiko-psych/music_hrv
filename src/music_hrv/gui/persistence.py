@@ -12,6 +12,7 @@ GROUPS_FILE = CONFIG_DIR / "groups.yml"
 EVENTS_FILE = CONFIG_DIR / "events.yml"
 SECTIONS_FILE = CONFIG_DIR / "sections.yml"
 PARTICIPANTS_FILE = CONFIG_DIR / "participants.yml"
+PLAYLIST_GROUPS_FILE = CONFIG_DIR / "playlist_groups.yml"
 
 
 def ensure_config_dir() -> None:
@@ -86,4 +87,32 @@ def load_participants() -> dict[str, Any]:
     if not PARTICIPANTS_FILE.exists():
         return {}
     with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_playlist_groups(playlist_groups: dict[str, Any]) -> None:
+    """Save playlist/randomization groups configuration to YAML.
+
+    Format:
+    {
+        "R1": {
+            "label": "Randomization 1",
+            "music_order": ["music_1", "music_3", "music_2"]
+        },
+        "R2": {
+            "label": "Randomization 2",
+            "music_order": ["music_2", "music_1", "music_3"]
+        }
+    }
+    """
+    ensure_config_dir()
+    with open(PLAYLIST_GROUPS_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(playlist_groups, f, default_flow_style=False, allow_unicode=True)
+
+
+def load_playlist_groups() -> dict[str, Any]:
+    """Load playlist/randomization groups configuration from YAML."""
+    if not PLAYLIST_GROUPS_FILE.exists():
+        return {}
+    with open(PLAYLIST_GROUPS_FILE, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}

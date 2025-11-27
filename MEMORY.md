@@ -4,6 +4,73 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-11-27 (Late Evening): Music Events, Quality Detection & Timing Validation
+
+### Version Tag: `v0.3.0`
+
+### Major Features Implemented:
+
+#### 1. WebGL Accelerated Plotting
+- Switched from `go.Scatter` to `go.Scattergl` for WebGL rendering
+- Significantly faster rendering for large RR interval datasets
+- Same functionality, better performance
+
+#### 2. Auto-Create Quality Events
+- **Gap Detection**: Creates `gap_start` and `gap_end` events for time gaps in data
+  - Default threshold: 15 seconds (justified by HRV Logger per-packet timestamps)
+  - User-configurable threshold
+- **Variability Detection**: Creates `high_variability_start` and `high_variability_end` events
+  - Uses coefficient of variation (CV) in sliding windows
+  - User-configurable CV threshold (default: 20%)
+
+#### 3. Music Section Events (Separate from Normal Events)
+- Music events stored in separate `music_events` key (not mixed with `manual` events)
+- Music events do NOT require matching to predefined events
+- Auto-generation based on:
+  - Participant's playlist/randomization group
+  - 5-minute intervals between measurement boundaries
+  - Cycling pattern (music_1 → music_2 → music_3 → repeat)
+
+#### 4. Playlist/Randomization Groups
+- New section in Tab 3 (Group Management) for managing playlist groups
+- Pre-defined R1-R6 groups (all 6 permutations of 3 music types)
+- Assign participants to playlist groups for automatic music order
+- Persisted to `~/.music_hrv/playlist_groups.yml`
+
+#### 5. Plot Visualization Toggles
+- `Show variability segments` - toggle high variability shaded regions
+- `Show time gaps` - toggle gap markers
+- `Show music sections` - toggle music section shaded regions (color-coded per music type)
+- `Show music events` - toggle music event vertical lines
+
+#### 6. Timing Validation (Moved to Event Mapping Status)
+- Validates rest periods: ≥3 min required, 5 min recommended
+- Validates measurement sections: ~90 min expected
+- Validates 5-min segment fit (warns about leftover time)
+- Collapsible "Detected Boundary Events" expander
+
+### Config Updates:
+- `config/sections.yml` - Added `quality_markers` and `music_sections` categories
+- `src/music_hrv/config/sections.py` - Loads new section types with group="quality" and group="music"
+
+### Files Modified:
+- `src/music_hrv/gui/app.py` - Major updates (~200 lines added)
+- `src/music_hrv/gui/persistence.py` - Added playlist groups persistence
+- `config/sections.yml` - Added quality_markers, music_sections
+- `src/music_hrv/config/sections.py` - Load new section types
+
+### Testing Results:
+- ✅ All 13 tests passing
+- ✅ No linting errors
+- ✅ All features verified working
+
+### User Feedback:
+- Gap threshold 15s justified by HRV Logger packet behavior
+- Music events should be separate category (not matched to predefined)
+- Timing validation belongs in event mapping status, not music generator
+
+---
+
 ## Session 2025-11-27 (Continued): Predefined Patterns & Bug Fixes
 
 ### Version Tag: `v0.2.3-patterns`

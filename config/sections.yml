@@ -80,6 +80,77 @@ sections:
       - "rest[ _-]?post[ _-]?end"
       - "ende[ _-]?ruhe.*post"
 
+# Quality markers - auto-generated events for data quality issues
+quality_markers:
+  gap_start:
+    required: false
+    description: Start of a time gap (missing data)
+    synonyms:
+      - "gap[ _-]?start"
+      - "luecke[ _-]?start"
+  gap_end:
+    required: false
+    description: End of a time gap (missing data)
+    synonyms:
+      - "gap[ _-]?end"
+      - "luecke[ _-]?end"
+  high_variability_start:
+    required: false
+    description: Start of high variability segment (potential artifact)
+    synonyms:
+      - "high[ _-]?variability[ _-]?start"
+      - "artifact[ _-]?start"
+      - "artefakt[ _-]?start"
+  high_variability_end:
+    required: false
+    description: End of high variability segment
+    synonyms:
+      - "high[ _-]?variability[ _-]?end"
+      - "artifact[ _-]?end"
+      - "artefakt[ _-]?end"
+
+# Music section events - for per-music-style analysis
+music_sections:
+  music_1_start:
+    required: false
+    description: Start of music type 1 segment
+    synonyms:
+      - "musik[ _-]?1[ _-]?start"
+      - "music[ _-]?1[ _-]?start"
+      - "music[ _-]?a[ _-]?start"
+  music_1_end:
+    required: false
+    description: End of music type 1 segment
+    synonyms:
+      - "musik[ _-]?1[ _-]?end"
+      - "music[ _-]?1[ _-]?end"
+  music_2_start:
+    required: false
+    description: Start of music type 2 segment
+    synonyms:
+      - "musik[ _-]?2[ _-]?start"
+      - "music[ _-]?2[ _-]?start"
+      - "music[ _-]?b[ _-]?start"
+  music_2_end:
+    required: false
+    description: End of music type 2 segment
+    synonyms:
+      - "musik[ _-]?2[ _-]?end"
+      - "music[ _-]?2[ _-]?end"
+  music_3_start:
+    required: false
+    description: Start of music type 3 segment
+    synonyms:
+      - "musik[ _-]?3[ _-]?start"
+      - "music[ _-]?3[ _-]?start"
+      - "music[ _-]?c[ _-]?start"
+  music_3_end:
+    required: false
+    description: End of music type 3 segment
+    synonyms:
+      - "musik[ _-]?3[ _-]?end"
+      - "music[ _-]?3[ _-]?end"
+
 # Optional slots for cohort-specific segments that can appear between
 # measurement_start and pause_start (or anywhere as configured later).
 group_sections:

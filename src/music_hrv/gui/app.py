@@ -22,6 +22,8 @@ from music_hrv.gui.persistence import (
     load_sections,
     save_participants,
     load_participants,
+    save_playlist_groups,
+    load_playlist_groups,
 )
 
 try:
@@ -33,7 +35,6 @@ except ImportError:
 
 try:
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from streamlit_plotly_events import plotly_events
     PLOTLY_AVAILABLE = True
 except ImportError:
@@ -293,6 +294,264 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
     return section_rr if section_rr else None
 
 
+def detect_quality_changepoints(rr_values: list[int], change_type: str = "var") -> dict:
+    """Detect quality changepoints in RR interval data using NeuroKit2.
+
+    Uses signal_changepoints() to find where signal properties change,
+    which can indicate measurement issues, electrode problems, etc.
+
+    Args:
+        rr_values: List of RR interval values in ms
+        change_type: Type of change to detect ("var", "mean", or "meanvar")
+
+    Returns:
+        dict with:
+            - changepoint_indices: list of indices where changes occur
+            - n_segments: number of segments detected
+            - segment_stats: list of dicts with stats per segment
+            - quality_score: 0-100 score (100 = no changepoints = stable)
+    """
+    if not NEUROKIT_AVAILABLE or len(rr_values) < 10:
+        return {
+            "changepoint_indices": [],
+            "n_segments": 1,
+            "segment_stats": [],
+            "quality_score": 100,
+        }
+
+    try:
+        import numpy as np
+        rr_array = np.array(rr_values, dtype=float)
+
+        # Detect changepoints in variance (most useful for quality issues)
+        changepoints = nk.signal_changepoints(rr_array, change=change_type, show=False)
+
+        # Calculate segment statistics
+        segment_stats = []
+        all_indices = [0] + list(changepoints) + [len(rr_array)]
+
+        for i in range(len(all_indices) - 1):
+            start_idx = all_indices[i]
+            end_idx = all_indices[i + 1]
+            segment = rr_array[start_idx:end_idx]
+
+            if len(segment) > 0:
+                segment_stats.append({
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "n_beats": len(segment),
+                    "mean_rr": float(np.mean(segment)),
+                    "std_rr": float(np.std(segment)),
+                    "cv": float(np.std(segment) / np.mean(segment)) if np.mean(segment) > 0 else 0,
+                })
+
+        # Quality score: fewer changepoints = more stable = better quality
+        # Penalize more for many changepoints
+        n_changepoints = len(changepoints)
+        if n_changepoints == 0:
+            quality_score = 100
+        elif n_changepoints <= 2:
+            quality_score = 80
+        elif n_changepoints <= 5:
+            quality_score = 60
+        else:
+            quality_score = max(20, 100 - (n_changepoints * 10))
+
+        return {
+            "changepoint_indices": list(changepoints),
+            "n_segments": len(segment_stats),
+            "segment_stats": segment_stats,
+            "quality_score": quality_score,
+        }
+    except Exception:
+        return {
+            "changepoint_indices": [],
+            "n_segments": 1,
+            "segment_stats": [],
+            "quality_score": 100,
+        }
+
+
+def get_quality_badge(quality_score: float, artifact_ratio: float) -> str:
+    """Return a quality badge emoji based on quality score and artifact ratio.
+
+    Args:
+        quality_score: 0-100 from changepoint detection
+        artifact_ratio: 0-1 ratio of removed artifacts
+
+    Returns:
+        Emoji badge: 🟢 (good), 🟡 (moderate), 🔴 (poor)
+    """
+    # Combine changepoint quality and artifact ratio
+    # Artifact ratio > 10% is concerning, > 20% is poor
+    artifact_score = 100 - (artifact_ratio * 200)  # 10% artifacts = 80, 20% = 60
+    artifact_score = max(0, min(100, artifact_score))
+
+    combined = (quality_score + artifact_score) / 2
+
+    if combined >= 75:
+        return "🟢"
+    elif combined >= 50:
+        return "🟡"
+    else:
+        return "🔴"
+
+
+def detect_time_gaps(timestamps: list, rr_values: list = None, gap_threshold_s: float = 2.0) -> dict:
+    """Detect time gaps (missing data) between consecutive RR intervals.
+
+    HRV Logger Note: Timestamps are per-packet (~1s), not per-beat. Multiple RR
+    intervals can share the same timestamp. A real gap is when the timestamp
+    difference significantly exceeds what the RR intervals would predict.
+
+    Detection method:
+    - If RR values provided: gap = (timestamp_diff - expected_rr_sum) > threshold
+    - If no RR values: gap = timestamp_diff > threshold (fallback)
+
+    Args:
+        timestamps: List of datetime timestamps for each RR interval
+        rr_values: List of RR interval values in ms (optional, improves detection)
+        gap_threshold_s: Minimum unexplained gap duration to flag (default: 2s)
+
+    Returns:
+        dict with gap details and statistics
+    """
+    import numpy as np
+
+    if len(timestamps) < 2:
+        return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
+
+    try:
+        # Convert to numpy for speed
+        valid_mask = np.array([t is not None for t in timestamps])
+        if not np.any(valid_mask):
+            return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
+
+        # Calculate timestamp differences in seconds (vectorized)
+        ts_seconds = np.array([t.timestamp() if t else np.nan for t in timestamps])
+        ts_diff = np.diff(ts_seconds)
+
+        # If RR values provided, calculate expected time vs actual
+        if rr_values is not None and len(rr_values) == len(timestamps):
+            rr_array = np.array(rr_values, dtype=float) / 1000.0  # Convert ms to seconds
+            # Expected time between consecutive beats = RR interval of the second beat
+            expected_diff = rr_array[1:]  # RR[i] is duration before beat i
+            # Gap = actual time diff - expected RR (unexplained time)
+            unexplained_time = ts_diff - expected_diff
+            gap_mask = unexplained_time > gap_threshold_s
+        else:
+            # Fallback: just use timestamp difference
+            gap_mask = ts_diff > gap_threshold_s
+            unexplained_time = ts_diff
+
+        # Extract gap indices
+        gap_indices = np.where(gap_mask)[0]
+
+        gaps = []
+        total_gap_duration = 0.0
+
+        for idx in gap_indices:
+            gap_duration = float(unexplained_time[idx]) if rr_values else float(ts_diff[idx])
+            gap_info = {
+                "start_idx": int(idx),
+                "end_idx": int(idx + 1),
+                "start_time": timestamps[idx],
+                "end_time": timestamps[idx + 1],
+                "duration_s": gap_duration,
+                "timestamp_diff_s": float(ts_diff[idx]),
+            }
+            gaps.append(gap_info)
+            total_gap_duration += gap_duration
+
+        # Calculate total recording duration
+        total_duration = ts_seconds[-1] - ts_seconds[0] if not np.isnan(ts_seconds[0]) else 0
+        gap_ratio = total_gap_duration / total_duration if total_duration > 0 else 0
+
+        return {
+            "gaps": gaps,
+            "total_gaps": len(gaps),
+            "total_gap_duration_s": total_gap_duration,
+            "gap_ratio": gap_ratio,
+        }
+    except Exception:
+        return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
+
+
+def detect_artifacts_fixpeaks(rr_values: list[int], sampling_rate: int = 1000) -> dict:
+    """Detect and optionally correct artifacts using NeuroKit2's signal_fixpeaks.
+
+    Uses the Kubios algorithm to identify ectopic beats, missed beats,
+    extra beats, and long/short intervals.
+
+    Args:
+        rr_values: List of RR interval values in ms
+        sampling_rate: Sampling rate (1000 for ms intervals)
+
+    Returns:
+        dict with:
+            - artifacts: dict with counts by type (ectopic, missed, extra, longshort)
+            - total_artifacts: total number of artifacts
+            - artifact_ratio: ratio of artifacts to total beats
+            - corrected_rr: corrected RR values (if correction was successful)
+            - correction_applied: whether correction was applied
+    """
+    if not NEUROKIT_AVAILABLE or len(rr_values) < 10:
+        return {
+            "artifacts": {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0},
+            "total_artifacts": 0,
+            "artifact_ratio": 0.0,
+            "corrected_rr": rr_values,
+            "correction_applied": False,
+        }
+
+    try:
+        import numpy as np
+
+        # Convert RR intervals to peak indices (cumulative sum)
+        rr_array = np.array(rr_values, dtype=float)
+        peak_indices = np.cumsum(rr_array).astype(int)
+        peak_indices = np.insert(peak_indices, 0, 0)  # Add starting point
+
+        # Use signal_fixpeaks with Kubios method
+        info, corrected_peaks = nk.signal_fixpeaks(
+            peak_indices,
+            sampling_rate=sampling_rate,
+            iterative=True,
+            method="Kubios",
+            show=False,
+        )
+
+        # Extract artifact counts
+        artifacts = {
+            "ectopic": len(info.get("ectopic", [])) if isinstance(info.get("ectopic"), (list, np.ndarray)) else 0,
+            "missed": len(info.get("missed", [])) if isinstance(info.get("missed"), (list, np.ndarray)) else 0,
+            "extra": len(info.get("extra", [])) if isinstance(info.get("extra"), (list, np.ndarray)) else 0,
+            "longshort": len(info.get("longshort", [])) if isinstance(info.get("longshort"), (list, np.ndarray)) else 0,
+        }
+
+        total_artifacts = sum(artifacts.values())
+        artifact_ratio = total_artifacts / len(rr_values) if rr_values else 0
+
+        # Convert corrected peaks back to RR intervals
+        corrected_rr = list(np.diff(corrected_peaks))
+
+        return {
+            "artifacts": artifacts,
+            "total_artifacts": total_artifacts,
+            "artifact_ratio": artifact_ratio,
+            "corrected_rr": corrected_rr,
+            "correction_applied": total_artifacts > 0,
+        }
+    except Exception:
+        return {
+            "artifacts": {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0},
+            "total_artifacts": 0,
+            "artifact_ratio": 0.0,
+            "corrected_rr": rr_values,
+            "correction_applied": False,
+        }
+
+
 def main():
     """Main Streamlit app."""
     st.title("🎵 Music HRV Toolkit")
@@ -482,8 +741,13 @@ def main():
                 if rr_count > 1 or ev_count > 1:
                     files_str = f"⚠️ {files_str}"
 
+                # Calculate quality badge based on artifact ratio
+                # (Simple heuristic: changepoint detection will be done on-demand in detail view)
+                quality_badge = get_quality_badge(100, summary.artifact_ratio)
+
                 participants_data.append({
                     "Participant": summary.participant_id,
+                    "Quality": quality_badge,
                     "Saved": "✅" if summary.participant_id in loaded_participants else "❌",
                     "Files": files_str,
                     "Date/Time": recording_dt_str,
@@ -511,6 +775,12 @@ def main():
                         "Participant",
                         disabled=True,
                         width="medium",
+                    ),
+                    "Quality": st.column_config.TextColumn(
+                        "Quality",
+                        disabled=True,
+                        width="small",
+                        help="🟢 Good (<5% artifacts), 🟡 Moderate (5-15%), 🔴 Poor (>15%)",
                     ),
                     "Saved": st.column_config.TextColumn(
                         "Saved",
@@ -757,7 +1027,6 @@ def main():
 
                     if cleaned_rr and PLOTLY_AVAILABLE:
                         # Prepare data for plotting with REAL timestamps
-                        # Only include RR intervals that have timestamps
                         rr_with_timestamps = [(rr.timestamp, rr.rr_ms) for rr in cleaned_rr if rr.timestamp]
 
                         # Only plot if we have timestamps
@@ -766,11 +1035,31 @@ def main():
                         else:
                             timestamps, rr_values = zip(*rr_with_timestamps)
 
+                            # Plot display options
+                            st.markdown("**Plot Options:**")
+                            col_opt1, col_opt2, col_opt3 = st.columns(3)
+                            with col_opt1:
+                                show_variability = st.checkbox("Show variability segments", value=True, key=f"show_var_{selected_participant}")
+                                show_music_sections = st.checkbox("Show music sections", value=True, key=f"show_music_sec_{selected_participant}")
+                            with col_opt2:
+                                show_gaps = st.checkbox("Show time gaps", value=True, key=f"show_gaps_{selected_participant}")
+                                show_music_events = st.checkbox("Show music events", value=False, key=f"show_music_evt_{selected_participant}")
+                            with col_opt3:
+                                gap_threshold = st.number_input(
+                                    "Gap threshold (s)",
+                                    min_value=1.0,
+                                    max_value=60.0,
+                                    value=15.0,
+                                    step=1.0,
+                                    key=f"gap_thresh_{selected_participant}",
+                                    help="HRV Logger timestamps are per-packet (~1s). 15s threshold ignores normal packet delays but catches real data loss."
+                                )
+
                             # Create Plotly figure
                             fig = go.Figure()
 
-                            # Add RR interval scatter plot (shows gaps automatically)
-                            fig.add_trace(go.Scatter(
+                            # Add RR interval scatter plot (WebGL for faster rendering)
+                            fig.add_trace(go.Scattergl(
                                 x=timestamps,
                                 y=rr_values,
                                 mode='markers+lines',
@@ -834,6 +1123,157 @@ def main():
                                         font=dict(color=color, size=10)
                                     )
 
+                            # Run quality analyses (always, for the info panel)
+                            rr_list = list(rr_values)
+                            timestamps_list = list(timestamps)
+
+                            # Changepoint detection (vectorized with numpy)
+                            changepoint_result = detect_quality_changepoints(rr_list, change_type="var")
+
+                            # Add timestamps to segment stats (vectorized)
+                            n_ts = len(timestamps_list)
+                            for seg_stats in changepoint_result["segment_stats"]:
+                                start_idx = seg_stats["start_idx"]
+                                end_idx = min(seg_stats["end_idx"], n_ts - 1)
+                                seg_stats["start_time"] = timestamps_list[start_idx] if start_idx < n_ts else None
+                                seg_stats["end_time"] = timestamps_list[end_idx] if end_idx < n_ts else None
+
+                            # Gap detection (now uses RR values for accurate detection)
+                            gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=gap_threshold)
+
+                            # Visualize variability segments if enabled
+                            if show_variability and changepoint_result["changepoint_indices"]:
+                                for seg_stats in changepoint_result["segment_stats"]:
+                                    start_idx = seg_stats["start_idx"]
+                                    end_idx = min(seg_stats["end_idx"], n_ts - 1)
+
+                                    if start_idx < n_ts and end_idx < n_ts:
+                                        cv = seg_stats.get("cv", 0)
+                                        if cv > 0.15:
+                                            fill_color = 'rgba(255, 0, 0, 0.1)'
+                                        elif cv > 0.10:
+                                            fill_color = 'rgba(255, 165, 0, 0.1)'
+                                        else:
+                                            fill_color = 'rgba(0, 255, 0, 0.05)'
+
+                                        fig.add_shape(
+                                            type="rect",
+                                            x0=timestamps_list[start_idx],
+                                            x1=timestamps_list[end_idx],
+                                            y0=y_min - 0.05 * y_range,
+                                            y1=y_max + 0.05 * y_range,
+                                            fillcolor=fill_color,
+                                            line=dict(width=0),
+                                            layer="below"
+                                        )
+
+                            # Visualize gaps if enabled
+                            if show_gaps and gap_result["gaps"]:
+                                for gap in gap_result["gaps"]:
+                                    fig.add_shape(
+                                        type="rect",
+                                        x0=gap["start_time"],
+                                        x1=gap["end_time"],
+                                        y0=y_min - 0.05 * y_range,
+                                        y1=y_max + 0.05 * y_range,
+                                        fillcolor='rgba(128, 128, 128, 0.3)',
+                                        line=dict(color='rgba(128, 128, 128, 0.8)', width=2, dash='dot'),
+                                        layer="below"
+                                    )
+                                    mid_time = gap["start_time"] + (gap["end_time"] - gap["start_time"]) / 2
+                                    fig.add_annotation(
+                                        x=mid_time,
+                                        y=y_min - 0.1 * y_range,
+                                        text=f"GAP: {gap['duration_s']:.1f}s",
+                                        showarrow=False,
+                                        font=dict(color='red', size=9),
+                                        bgcolor='rgba(255,255,255,0.8)'
+                                    )
+
+                            # Store analyses for info panel
+                            st.session_state[f"changepoints_{selected_participant}"] = changepoint_result
+                            st.session_state[f"gaps_{selected_participant}"] = gap_result
+
+                            # Visualize music sections if enabled
+                            music_events = stored_data.get('music_events', [])
+                            if show_music_sections and music_events:
+                                # Group music events by music type (pair start/end)
+                                music_colors = {
+                                    'music_1': 'rgba(65, 105, 225, 0.15)',  # Royal blue
+                                    'music_2': 'rgba(50, 205, 50, 0.15)',   # Lime green
+                                    'music_3': 'rgba(255, 140, 0, 0.15)',   # Dark orange
+                                }
+                                music_sections = {}  # {music_type: [(start, end), ...]}
+
+                                for evt in music_events:
+                                    label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
+                                    timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
+                                    if not timestamp:
+                                        continue
+
+                                    if label.endswith('_start'):
+                                        music_type = label.replace('_start', '')
+                                        if music_type not in music_sections:
+                                            music_sections[music_type] = []
+                                        music_sections[music_type].append({'start': timestamp, 'end': None})
+                                    elif label.endswith('_end'):
+                                        music_type = label.replace('_end', '')
+                                        if music_type in music_sections and music_sections[music_type]:
+                                            # Find the last section without an end
+                                            for sec in reversed(music_sections[music_type]):
+                                                if sec['end'] is None:
+                                                    sec['end'] = timestamp
+                                                    break
+
+                                # Draw music sections as shaded regions
+                                for music_type, sections in music_sections.items():
+                                    color = music_colors.get(music_type, 'rgba(128, 128, 128, 0.1)')
+                                    for sec in sections:
+                                        if sec['start'] and sec['end']:
+                                            fig.add_shape(
+                                                type="rect",
+                                                x0=sec['start'],
+                                                x1=sec['end'],
+                                                y0=y_min - 0.05 * y_range,
+                                                y1=y_max + 0.05 * y_range,
+                                                fillcolor=color,
+                                                line=dict(width=0),
+                                                layer="below"
+                                            )
+                                            # Add label at bottom
+                                            mid_time = sec['start'] + (sec['end'] - sec['start']) / 2
+                                            fig.add_annotation(
+                                                x=mid_time,
+                                                y=y_max + 0.08 * y_range,
+                                                text=music_type.replace('_', ' ').title(),
+                                                showarrow=False,
+                                                font=dict(size=8, color='gray'),
+                                            )
+
+                            # Show music event lines if enabled
+                            if show_music_events and music_events:
+                                music_line_colors = {
+                                    'music_1': '#4169E1',  # Royal blue
+                                    'music_2': '#32CD32',  # Lime green
+                                    'music_3': '#FF8C00',  # Dark orange
+                                }
+                                for evt in music_events:
+                                    label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
+                                    timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
+                                    if not timestamp:
+                                        continue
+
+                                    music_type = label.replace('_start', '').replace('_end', '')
+                                    color = music_line_colors.get(music_type, '#808080')
+
+                                    fig.add_shape(
+                                        type="line",
+                                        x0=timestamp, x1=timestamp,
+                                        y0=y_min - 0.05 * y_range, y1=y_max + 0.05 * y_range,
+                                        line=dict(color=color, width=1, dash='dot'),
+                                        opacity=0.5
+                                    )
+
                             # Update layout for interactivity
                             fig.update_layout(
                                 title=f"RR Intervals - {selected_participant} (Click to add events)",
@@ -858,7 +1298,7 @@ def main():
                                 clicked_point = selected_points[0]
                                 if 'x' in clicked_point:
                                     # Convert x value back to timestamp (make timezone-aware like original data)
-                                    from datetime import datetime, timezone
+                                    from datetime import datetime
                                     clicked_timestamp = pd.to_datetime(clicked_point['x'])
                                     # Make timezone-aware (UTC) to match original event timestamps
                                     if clicked_timestamp.tzinfo is None:
@@ -889,6 +1329,436 @@ def main():
 
                 except Exception as e:
                     st.warning(f"Could not generate RR plot: {e}")
+
+                # Show quality analysis info if available
+                changepoint_key = f"changepoints_{selected_participant}"
+                gap_key = f"gaps_{selected_participant}"
+
+                if changepoint_key in st.session_state or gap_key in st.session_state:
+                    with st.expander("📊 Signal Quality Analysis", expanded=False):
+                        # Documentation section
+                        st.markdown("""
+                        #### How Quality is Assessed
+
+                        **1. Variability Analysis (signal_changepoints)**
+                        Uses NeuroKit2's `signal_changepoints()` with the PELT algorithm to detect where
+                        signal variance changes significantly. High variance segments may indicate:
+                        - Movement artifacts
+                        - Electrode contact issues
+                        - Physiological changes (stress, exercise)
+
+                        **2. Gap Detection (Missing Data)**
+                        Identifies time gaps >2 seconds between consecutive beats, which indicate:
+                        - Recording interruptions
+                        - Bluetooth disconnections
+                        - Device errors
+
+                        ---
+                        """)
+
+                        # Gap Detection Results
+                        if gap_key in st.session_state:
+                            gap_info = st.session_state[gap_key]
+                            st.markdown("##### ⏱️ Time Gap Analysis (Missing Data)")
+
+                            col_g1, col_g2, col_g3 = st.columns(3)
+                            with col_g1:
+                                gap_badge = "🟢" if gap_info['total_gaps'] == 0 else ("🟡" if gap_info['total_gaps'] <= 2 else "🔴")
+                                st.metric("Gaps Detected", f"{gap_badge} {gap_info['total_gaps']}")
+                            with col_g2:
+                                st.metric("Total Gap Time", f"{gap_info['total_gap_duration_s']:.1f}s")
+                            with col_g3:
+                                st.metric("Gap Ratio", f"{gap_info['gap_ratio']*100:.2f}%")
+
+                            if gap_info['gaps']:
+                                st.markdown("**Gap Details:**")
+                                gap_data = []
+                                for i, gap in enumerate(gap_info['gaps']):
+                                    start_str = gap['start_time'].strftime('%H:%M:%S') if gap.get('start_time') else "?"
+                                    end_str = gap['end_time'].strftime('%H:%M:%S') if gap.get('end_time') else "?"
+                                    gap_data.append({
+                                        "Gap #": i + 1,
+                                        "Start Time": start_str,
+                                        "End Time": end_str,
+                                        "Duration (s)": f"{gap['duration_s']:.1f}",
+                                        "Beat Index": f"{gap['start_idx']} → {gap['end_idx']}"
+                                    })
+                                st.dataframe(pd.DataFrame(gap_data), use_container_width=True, hide_index=True)
+
+                                # Recommendations for gaps
+                                st.markdown("##### 💡 Recommendations for Gaps:")
+                                st.markdown("""
+                                **What gaps mean:**
+                                - Recording was interrupted (Bluetooth disconnect, device error, or intentional pause)
+                                - Data during the gap is lost and cannot be recovered
+
+                                **What to do:**
+                                1. **Add boundary events** - Click on the plot at the gap start/end times to mark `gap_start` and `gap_end` events
+                                2. **Define sections around gaps** - In the Sections tab, create sections that exclude gap periods
+                                3. **In Analysis** - Select only valid sections for HRV computation (gaps will be automatically excluded if you use section boundaries)
+
+                                **When to exclude entire recording:**
+                                - If gaps occur during critical measurement periods (e.g., during music listening)
+                                - If total gap time exceeds 10% of recording duration
+                                """)
+
+                                # Auto-create gap events button
+                                st.markdown("##### 🤖 Auto-Create Gap Events")
+                                col_gap_btn1, col_gap_btn2 = st.columns([1, 2])
+                                with col_gap_btn1:
+                                    if st.button("Create Gap Events", key=f"auto_gap_{selected_participant}"):
+                                        from music_hrv.prep.summaries import EventStatus
+                                        events_added = 0
+                                        for gap in gap_info['gaps']:
+                                            # Create gap_start event
+                                            if gap.get('start_time'):
+                                                gap_start_event = EventStatus(
+                                                    raw_label="gap_start",
+                                                    canonical="gap_start",
+                                                    first_timestamp=gap['start_time'],
+                                                    last_timestamp=gap['start_time']
+                                                )
+                                                st.session_state.participant_events[selected_participant]['manual'].append(gap_start_event)
+                                                events_added += 1
+
+                                            # Create gap_end event
+                                            if gap.get('end_time'):
+                                                gap_end_event = EventStatus(
+                                                    raw_label="gap_end",
+                                                    canonical="gap_end",
+                                                    first_timestamp=gap['end_time'],
+                                                    last_timestamp=gap['end_time']
+                                                )
+                                                st.session_state.participant_events[selected_participant]['manual'].append(gap_end_event)
+                                                events_added += 1
+
+                                        show_toast(f"✅ Created {events_added} gap boundary events", icon="success")
+                                        st.rerun()
+                                with col_gap_btn2:
+                                    st.caption("Creates `gap_start` and `gap_end` events for each detected gap. Use these to exclude gap periods from analysis.")
+                            else:
+                                st.success("✅ No time gaps detected - recording appears continuous")
+
+                        st.markdown("---")
+
+                        # Changepoint Results
+                        if changepoint_key in st.session_state:
+                            cp_info = st.session_state[changepoint_key]
+                            st.markdown("##### 📈 Variability Changepoint Analysis")
+
+                            col_q1, col_q2, col_q3 = st.columns(3)
+                            with col_q1:
+                                st.metric("Quality Score", f"{cp_info['quality_score']}/100")
+                            with col_q2:
+                                st.metric("Segments Detected", cp_info['n_segments'])
+                            with col_q3:
+                                st.metric("Changepoints", len(cp_info['changepoint_indices']))
+
+                            if cp_info['segment_stats']:
+                                st.markdown("**Segment Details:**")
+                                seg_data = []
+                                for i, seg in enumerate(cp_info['segment_stats']):
+                                    cv_pct = seg['cv'] * 100
+                                    quality = "🟢 Good" if cv_pct < 10 else ("🟡 Moderate" if cv_pct < 15 else "🔴 High")
+
+                                    # Format timestamps
+                                    start_str = seg.get('start_time').strftime('%H:%M:%S') if seg.get('start_time') else "?"
+                                    end_str = seg.get('end_time').strftime('%H:%M:%S') if seg.get('end_time') else "?"
+
+                                    seg_data.append({
+                                        "Segment": i + 1,
+                                        "Start Time": start_str,
+                                        "End Time": end_str,
+                                        "Beats": seg['n_beats'],
+                                        "Mean RR (ms)": f"{seg['mean_rr']:.0f}",
+                                        "Std (ms)": f"{seg['std_rr']:.1f}",
+                                        "CV (%)": f"{cv_pct:.1f}",
+                                        "Quality": quality
+                                    })
+                                st.dataframe(pd.DataFrame(seg_data), use_container_width=True, hide_index=True)
+
+                                # Check for high variability segments
+                                high_var_segments = [s for s in cp_info['segment_stats'] if s['cv'] > 0.15]
+                                if high_var_segments:
+                                    st.markdown("##### 💡 Recommendations for High Variability:")
+                                    st.markdown("""
+                                    **What high variability (CV > 15%) may indicate:**
+                                    - Movement artifacts (participant moved during recording)
+                                    - Electrode contact issues (sensor shifted or loose)
+                                    - Physiological response (stress, deep breathing, posture change)
+                                    - Ectopic beats or arrhythmia
+
+                                    **What to do:**
+                                    1. **Check timing** - Does the high variability segment align with an expected event (e.g., task start)?
+                                    2. **Add boundary events** - If it's artifact, mark `artifact_start` and `artifact_end` events
+                                    3. **Use artifact correction** - In Analysis tab, enable "Apply artifact correction" to use the Kubios algorithm
+                                    4. **Exclude if severe** - If CV > 25%, consider excluding that segment from analysis
+
+                                    **When variability is expected:**
+                                    - During music listening (emotional response)
+                                    - During stress induction tasks
+                                    - During breathing exercises
+                                    """)
+
+                                    # Auto-create variability boundary events
+                                    st.markdown("##### 🤖 Auto-Create Variability Events")
+                                    col_var_thresh, col_var_btn, col_var_desc = st.columns([1, 1, 2])
+                                    with col_var_thresh:
+                                        cv_threshold = st.number_input(
+                                            "CV threshold (%)",
+                                            min_value=5.0,
+                                            max_value=50.0,
+                                            value=15.0,
+                                            step=1.0,
+                                            key=f"cv_thresh_{selected_participant}",
+                                            help="Create boundary events for segments with CV above this threshold"
+                                        )
+                                    with col_var_btn:
+                                        if st.button("Create Variability Events", key=f"auto_var_{selected_participant}"):
+                                            from music_hrv.prep.summaries import EventStatus
+                                            events_added = 0
+                                            cv_thresh_decimal = cv_threshold / 100.0
+
+                                            for seg in cp_info['segment_stats']:
+                                                if seg['cv'] > cv_thresh_decimal:
+                                                    # Create high_variability_start event
+                                                    if seg.get('start_time'):
+                                                        var_start_event = EventStatus(
+                                                            raw_label="high_variability_start",
+                                                            canonical="high_variability_start",
+                                                            first_timestamp=seg['start_time'],
+                                                            last_timestamp=seg['start_time']
+                                                        )
+                                                        st.session_state.participant_events[selected_participant]['manual'].append(var_start_event)
+                                                        events_added += 1
+
+                                                    # Create high_variability_end event
+                                                    if seg.get('end_time'):
+                                                        var_end_event = EventStatus(
+                                                            raw_label="high_variability_end",
+                                                            canonical="high_variability_end",
+                                                            first_timestamp=seg['end_time'],
+                                                            last_timestamp=seg['end_time']
+                                                        )
+                                                        st.session_state.participant_events[selected_participant]['manual'].append(var_end_event)
+                                                        events_added += 1
+
+                                            if events_added > 0:
+                                                show_toast(f"✅ Created {events_added} variability boundary events", icon="success")
+                                            else:
+                                                show_toast("ℹ️ No segments above threshold", icon="info")
+                                            st.rerun()
+                                    with col_var_desc:
+                                        st.caption(f"Creates `high_variability_start` and `high_variability_end` events for segments with CV > {cv_threshold:.0f}%")
+
+                        st.caption("""
+                        **Legend**:
+                        - **CV (Coefficient of Variation)** = Std / Mean × 100. Lower = more stable.
+                        - 🟢 Good: CV < 10% | 🟡 Moderate: 10-15% | 🔴 High: > 15%
+                        - **Gray regions** on plot = time gaps (missing data)
+                        - **Colored regions** = variability segments (green=stable, orange=moderate, red=high)
+                        """)
+
+                # Music Change Event Generator
+                with st.expander("🎵 Generate Music Change Events", expanded=False):
+                    st.markdown("""
+                    **Auto-generate music section boundaries** based on timing intervals and playlist group.
+
+                    Music changes every 5 minutes in a cycling pattern based on the participant's randomization group.
+                    """)
+
+                    # Get existing events to find measurement boundaries
+                    stored_data = st.session_state.participant_events[selected_participant]
+                    all_current_events = stored_data.get('events', []) + stored_data.get('manual', [])
+
+                    # Find all relevant boundary events for music generation
+                    boundary_events = {}
+                    for evt in all_current_events:
+                        canonical = evt.canonical if hasattr(evt, 'canonical') else None
+                        if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end']:
+                            if evt.first_timestamp:
+                                boundary_events[canonical] = evt.first_timestamp
+
+                    st.markdown("**Music Change Settings:**")
+
+                    # Initialize playlist groups if needed
+                    if "playlist_groups" not in st.session_state:
+                        st.session_state.playlist_groups = {}
+                    if "participant_playlists" not in st.session_state:
+                        st.session_state.participant_playlists = {}
+
+                    # Playlist group selection for this participant
+                    playlist_options = ["(None - use custom order)"] + list(st.session_state.playlist_groups.keys())
+                    current_playlist = st.session_state.participant_playlists.get(selected_participant, "(None - use custom order)")
+                    if current_playlist not in playlist_options:
+                        current_playlist = "(None - use custom order)"
+
+                    selected_playlist = st.selectbox(
+                        "Playlist Group (Randomization)",
+                        options=playlist_options,
+                        index=playlist_options.index(current_playlist) if current_playlist in playlist_options else 0,
+                        key=f"playlist_select_{selected_participant}",
+                        help="Select the randomization group for this participant"
+                    )
+
+                    # Save playlist assignment
+                    if selected_playlist != "(None - use custom order)":
+                        if st.session_state.participant_playlists.get(selected_participant) != selected_playlist:
+                            st.session_state.participant_playlists[selected_participant] = selected_playlist
+                        playlist_data = st.session_state.playlist_groups.get(selected_playlist, {})
+                        music_label_list = playlist_data.get("music_order", ["music_1", "music_2", "music_3"])
+                        st.success(f"Using **{selected_playlist}** music order: {' → '.join(music_label_list)}")
+                    else:
+                        if selected_participant in st.session_state.participant_playlists:
+                            del st.session_state.participant_playlists[selected_participant]
+
+                        # Custom order input
+                        col_m1, col_m2 = st.columns(2)
+                        with col_m1:
+                            music_interval_min = st.number_input(
+                                "Interval (minutes)",
+                                min_value=1,
+                                max_value=30,
+                                value=5,
+                                step=1,
+                                key=f"music_interval_{selected_participant}",
+                                help="How often the music changes (in minutes)"
+                            )
+                        with col_m2:
+                            music_labels = st.text_area(
+                                "Music type labels (one per line)",
+                                value="music_1\nmusic_2\nmusic_3",
+                                height=100,
+                                key=f"music_labels_{selected_participant}",
+                                help="Custom labels for each music type"
+                            )
+
+                        # Parse music labels
+                        music_label_list = [line.strip() for line in music_labels.strip().split('\n') if line.strip()]
+                        if not music_label_list:
+                            music_label_list = ["music_1", "music_2", "music_3"]
+
+                    # Always show interval setting when using playlist group
+                    if selected_playlist != "(None - use custom order)":
+                        music_interval_min = st.number_input(
+                            "Interval (minutes)",
+                            min_value=1,
+                            max_value=30,
+                            value=5,
+                            step=1,
+                            key=f"music_interval_pl_{selected_participant}",
+                            help="How often the music changes (in minutes)"
+                        )
+
+                    st.markdown("**Preview:**")
+                    st.write(f"Music cycle: {' → '.join(music_label_list)} → (repeat)")
+
+                    # Generate button
+                    if st.button("🎵 Generate Music Events", key=f"gen_music_{selected_participant}"):
+                        from music_hrv.prep.summaries import EventStatus
+                        from datetime import timedelta
+
+                        events_added = 0
+                        interval_seconds = music_interval_min * 60
+                        num_music_types = len(music_label_list)
+
+                        # Initialize music_events list if not present
+                        if 'music_events' not in st.session_state.participant_events[selected_participant]:
+                            st.session_state.participant_events[selected_participant]['music_events'] = []
+                        # Clear existing music events before generating new ones
+                        st.session_state.participant_events[selected_participant]['music_events'] = []
+
+                        # Generate for pre-pause period (measurement_start to pause_start)
+                        if 'measurement_start' in boundary_events:
+                            start_time = boundary_events['measurement_start']
+                            end_time = boundary_events.get('pause_start') or boundary_events.get('measurement_end')
+
+                            if end_time:
+                                current_time = start_time
+                                music_idx = 0
+
+                                while current_time < end_time:
+                                    # Create music section start event
+                                    label = music_label_list[music_idx % num_music_types]
+                                    event_label = f"{label}_start"
+
+                                    new_event = EventStatus(
+                                        raw_label=event_label,
+                                        canonical=event_label,
+                                        first_timestamp=current_time,
+                                        last_timestamp=current_time
+                                    )
+                                    st.session_state.participant_events[selected_participant]['music_events'].append(new_event)
+                                    events_added += 1
+
+                                    # Calculate end time for this music segment
+                                    segment_end = current_time + timedelta(seconds=interval_seconds)
+                                    if segment_end > end_time:
+                                        segment_end = end_time
+
+                                    # Create music section end event
+                                    end_event = EventStatus(
+                                        raw_label=f"{label}_end",
+                                        canonical=f"{label}_end",
+                                        first_timestamp=segment_end,
+                                        last_timestamp=segment_end
+                                    )
+                                    st.session_state.participant_events[selected_participant]['music_events'].append(end_event)
+                                    events_added += 1
+
+                                    current_time = segment_end
+                                    music_idx += 1
+
+                        # Generate for post-pause period (pause_end to measurement_end)
+                        if 'pause_end' in boundary_events and 'measurement_end' in boundary_events:
+                            start_time = boundary_events['pause_end']
+                            end_time = boundary_events['measurement_end']
+
+                            current_time = start_time
+                            music_idx = 0  # Reset cycle after pause
+
+                            while current_time < end_time:
+                                label = music_label_list[music_idx % num_music_types]
+                                event_label = f"{label}_start"
+
+                                new_event = EventStatus(
+                                    raw_label=event_label,
+                                    canonical=event_label,
+                                    first_timestamp=current_time,
+                                    last_timestamp=current_time
+                                )
+                                st.session_state.participant_events[selected_participant]['music_events'].append(new_event)
+                                events_added += 1
+
+                                segment_end = current_time + timedelta(seconds=interval_seconds)
+                                if segment_end > end_time:
+                                    segment_end = end_time
+
+                                end_event = EventStatus(
+                                    raw_label=f"{label}_end",
+                                    canonical=f"{label}_end",
+                                    first_timestamp=segment_end,
+                                    last_timestamp=segment_end
+                                )
+                                st.session_state.participant_events[selected_participant]['music_events'].append(end_event)
+                                events_added += 1
+
+                                current_time = segment_end
+                                music_idx += 1
+
+                        if events_added > 0:
+                            show_toast(f"✅ Created {events_added} music section events", icon="success")
+                        else:
+                            show_toast("⚠️ No events created - check boundary events", icon="warning")
+                        st.rerun()
+
+                    st.caption("""
+                    **How it works:**
+                    1. Uses the participant's playlist group to determine music order
+                    2. Finds `measurement_start`, `pause_start`, `pause_end`, `measurement_end` events
+                    3. Creates music section events every 5 minutes between these boundaries
+                    4. Restarts cycle after the pause
+                    """)
 
                 st.markdown("---")
 
@@ -959,8 +1829,6 @@ def main():
                     st.caption("Edit event details, match to canonical events, or delete events")
 
                     if all_events:
-                        # Track if any changes were made
-                        changes_made = False
                         events_to_delete = []
 
                         for idx, event in enumerate(all_events):
@@ -1087,7 +1955,6 @@ def main():
                                     # Delete button
                                     if st.button("🗑️", key=f"delete_{selected_participant}_{idx}", help="Delete this event"):
                                         events_to_delete.append(idx)
-                                        changes_made = True
 
                                 st.divider()
 
@@ -1244,11 +2111,93 @@ def main():
                 else:
                     st.info(f"No expected events defined for group '{participant_group}'. Add them in the Event Mapping tab.")
 
+                # Timing validation section
+                st.markdown("---")
+                st.markdown("##### ⏱️ Timing Validation")
+
+                # Find boundary events from current events
+                boundary_events = {}
+                for evt in current_events:
+                    canonical = evt.canonical if hasattr(evt, 'canonical') else None
+                    if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end',
+                                    'rest_pre_start', 'rest_pre_end', 'rest_post_start', 'rest_post_end']:
+                        if evt.first_timestamp:
+                            boundary_events[canonical] = evt.first_timestamp
+
+                if boundary_events:
+                    # Show detected boundaries
+                    with st.expander("Detected Boundary Events", expanded=False):
+                        for name, ts in sorted(boundary_events.items(), key=lambda x: x[1] if x[1] else ""):
+                            st.write(f"- {name}: {ts.strftime('%H:%M:%S') if ts else 'N/A'}")
+
+                    # Calculate and validate durations
+                    validation_issues = []
+                    validation_ok = []
+
+                    # Rest Pre duration (should be 3-5 min)
+                    if 'rest_pre_start' in boundary_events and 'rest_pre_end' in boundary_events:
+                        rest_pre_dur = (boundary_events['rest_pre_end'] - boundary_events['rest_pre_start']).total_seconds() / 60
+                        if rest_pre_dur < 3:
+                            validation_issues.append(f"⚠️ Rest Pre: {rest_pre_dur:.1f} min (should be ≥3 min)")
+                        elif rest_pre_dur < 5:
+                            validation_ok.append(f"🟡 Rest Pre: {rest_pre_dur:.1f} min (OK, but 5 min recommended)")
+                        else:
+                            validation_ok.append(f"✅ Rest Pre: {rest_pre_dur:.1f} min")
+
+                    # Rest Post duration (should be 3-5 min)
+                    if 'rest_post_start' in boundary_events and 'rest_post_end' in boundary_events:
+                        rest_post_dur = (boundary_events['rest_post_end'] - boundary_events['rest_post_start']).total_seconds() / 60
+                        if rest_post_dur < 3:
+                            validation_issues.append(f"⚠️ Rest Post: {rest_post_dur:.1f} min (should be ≥3 min)")
+                        elif rest_post_dur < 5:
+                            validation_ok.append(f"🟡 Rest Post: {rest_post_dur:.1f} min (OK, but 5 min recommended)")
+                        else:
+                            validation_ok.append(f"✅ Rest Post: {rest_post_dur:.1f} min")
+
+                    # Pre-pause measurement (should be ~90 min / 1.5 hours)
+                    if 'measurement_start' in boundary_events and 'pause_start' in boundary_events:
+                        pre_pause_dur = (boundary_events['pause_start'] - boundary_events['measurement_start']).total_seconds() / 60
+                        expected_segments = int(pre_pause_dur / 5)
+                        if abs(pre_pause_dur - 90) > 10:
+                            validation_issues.append(f"⚠️ Pre-pause measurement: {pre_pause_dur:.1f} min (expected ~90 min)")
+                        else:
+                            validation_ok.append(f"✅ Pre-pause measurement: {pre_pause_dur:.1f} min ({expected_segments} × 5-min segments)")
+
+                        # Check if 5-min intervals fit evenly
+                        remainder = pre_pause_dur % 5
+                        if remainder > 0.5 and remainder < 4.5:
+                            validation_issues.append(f"⚠️ Pre-pause: {remainder:.1f} min leftover after 5-min segments")
+
+                    # Post-pause measurement (should be ~90 min / 1.5 hours)
+                    if 'pause_end' in boundary_events and 'measurement_end' in boundary_events:
+                        post_pause_dur = (boundary_events['measurement_end'] - boundary_events['pause_end']).total_seconds() / 60
+                        expected_segments = int(post_pause_dur / 5)
+                        if abs(post_pause_dur - 90) > 10:
+                            validation_issues.append(f"⚠️ Post-pause measurement: {post_pause_dur:.1f} min (expected ~90 min)")
+                        else:
+                            validation_ok.append(f"✅ Post-pause measurement: {post_pause_dur:.1f} min ({expected_segments} × 5-min segments)")
+
+                        # Check if 5-min intervals fit evenly
+                        remainder = post_pause_dur % 5
+                        if remainder > 0.5 and remainder < 4.5:
+                            validation_issues.append(f"⚠️ Post-pause: {remainder:.1f} min leftover after 5-min segments")
+
+                    # Display validation results
+                    for msg in validation_ok:
+                        st.write(msg)
+                    for msg in validation_issues:
+                        st.warning(msg)
+
+                    if not validation_ok and not validation_issues:
+                        st.info("Waiting for more boundary events to validate timing...")
+                else:
+                    st.info("No boundary events found yet. Events will be validated once measurement boundaries are detected.")
+
                 # Save participant button
                 st.markdown("---")
                 col_save, col_status = st.columns([1, 2])
                 with col_save:
-                    def save_participant_data():
+                    def save_participant_to_disk():
                         """Save participant events to disk."""
                         # Get the current recording with updated events
                         stored_data = st.session_state.participant_events[selected_participant]
@@ -1289,7 +2238,7 @@ def main():
 
                     st.button("💾 Save Participant Data",
                              key=f"save_{selected_participant}",
-                             on_click=save_participant_data,
+                             on_click=save_participant_to_disk,
                              help="Save all event changes for this participant",
                              type="primary")
 
@@ -1737,6 +2686,134 @@ def main():
                     type="secondary",
                 )
 
+        # ================== Playlist/Randomization Groups ==================
+        st.markdown("---")
+        st.header("🎵 Playlist Groups (Music Randomization)")
+        st.markdown("""
+        Define music order for each randomization group. Participants assigned to a playlist group
+        will have music events generated in the specified order.
+        """)
+
+        # Initialize playlist groups in session state
+        if "playlist_groups" not in st.session_state:
+            loaded_playlist = load_playlist_groups()
+            if loaded_playlist:
+                st.session_state.playlist_groups = loaded_playlist
+            else:
+                # Default playlist groups
+                st.session_state.playlist_groups = {
+                    "R1": {
+                        "label": "Randomization 1",
+                        "music_order": ["music_1", "music_2", "music_3"]
+                    },
+                    "R2": {
+                        "label": "Randomization 2",
+                        "music_order": ["music_1", "music_3", "music_2"]
+                    },
+                    "R3": {
+                        "label": "Randomization 3",
+                        "music_order": ["music_2", "music_1", "music_3"]
+                    },
+                    "R4": {
+                        "label": "Randomization 4",
+                        "music_order": ["music_2", "music_3", "music_1"]
+                    },
+                    "R5": {
+                        "label": "Randomization 5",
+                        "music_order": ["music_3", "music_1", "music_2"]
+                    },
+                    "R6": {
+                        "label": "Randomization 6",
+                        "music_order": ["music_3", "music_2", "music_1"]
+                    },
+                }
+
+        # Initialize participant playlist assignments
+        if "participant_playlists" not in st.session_state:
+            st.session_state.participant_playlists = {}
+
+        # Create new playlist group
+        with st.expander("➕ Create New Playlist Group"):
+            new_playlist_name = st.text_input("Playlist Group ID (e.g., R7)", key="new_playlist_name")
+            new_playlist_label = st.text_input("Playlist Group Label", key="new_playlist_label")
+            new_playlist_order = st.text_input(
+                "Music Order (comma-separated, e.g., music_2, music_1, music_3)",
+                key="new_playlist_order"
+            )
+
+            def create_playlist_group():
+                if new_playlist_name and new_playlist_name not in st.session_state.playlist_groups:
+                    order_list = [m.strip() for m in new_playlist_order.split(",") if m.strip()]
+                    if not order_list:
+                        order_list = ["music_1", "music_2", "music_3"]
+                    st.session_state.playlist_groups[new_playlist_name] = {
+                        "label": new_playlist_label or new_playlist_name,
+                        "music_order": order_list
+                    }
+                    save_playlist_groups(st.session_state.playlist_groups)
+                    show_toast(f"Created playlist group '{new_playlist_name}'", icon="success")
+                elif new_playlist_name in st.session_state.playlist_groups:
+                    show_toast(f"Playlist group '{new_playlist_name}' already exists", icon="error")
+
+            st.button("Create Playlist Group", key="create_playlist_btn", on_click=create_playlist_group)
+
+        # Show existing playlist groups
+        st.subheader("Existing Playlist Groups")
+
+        for playlist_name, playlist_data in list(st.session_state.playlist_groups.items()):
+            with st.expander(f"🎵 {playlist_name} - {playlist_data['label']}"):
+                st.markdown(f"**Music Order:** {' → '.join(playlist_data['music_order'])} → (repeat)")
+
+                # Edit music order
+                new_order = st.text_input(
+                    "Edit Music Order (comma-separated)",
+                    value=", ".join(playlist_data['music_order']),
+                    key=f"edit_order_{playlist_name}"
+                )
+
+                col_pl1, col_pl2 = st.columns(2)
+                with col_pl1:
+                    def save_playlist_order(pl_name, new_ord):
+                        order_list = [m.strip() for m in new_ord.split(",") if m.strip()]
+                        if order_list:
+                            st.session_state.playlist_groups[pl_name]["music_order"] = order_list
+                            save_playlist_groups(st.session_state.playlist_groups)
+                            show_toast(f"Updated '{pl_name}' music order", icon="success")
+
+                    st.button(
+                        "💾 Save Order",
+                        key=f"save_playlist_{playlist_name}",
+                        on_click=save_playlist_order,
+                        args=(playlist_name, new_order)
+                    )
+
+                with col_pl2:
+                    def delete_playlist(pl_name):
+                        del st.session_state.playlist_groups[pl_name]
+                        # Clear participant assignments
+                        for pid in list(st.session_state.participant_playlists.keys()):
+                            if st.session_state.participant_playlists.get(pid) == pl_name:
+                                del st.session_state.participant_playlists[pid]
+                        save_playlist_groups(st.session_state.playlist_groups)
+                        show_toast(f"Deleted playlist group '{pl_name}'", icon="success")
+
+                    st.button(
+                        "🗑️ Delete",
+                        key=f"delete_playlist_{playlist_name}",
+                        on_click=delete_playlist,
+                        args=(playlist_name,)
+                    )
+
+                # Show participants in this playlist group
+                participants_in_group = [
+                    pid for pid, pl in st.session_state.participant_playlists.items()
+                    if pl == playlist_name
+                ]
+                if participants_in_group:
+                    st.markdown(f"**Participants:** {', '.join(participants_in_group)}")
+                else:
+                    st.caption("No participants assigned yet")
+
         # Info about auto-save at bottom
         st.markdown("---")
         st.info("💡 **All changes save automatically** when you modify group settings, select events, or assign participants.")
@@ -1939,6 +3016,22 @@ def main():
                         key="analysis_sections_single"
                     )
 
+                    # Artifact correction options
+                    with st.expander("🔧 Artifact Correction (signal_fixpeaks)", expanded=False):
+                        st.markdown("""
+                        Uses NeuroKit2's `signal_fixpeaks()` with the **Kubios algorithm** to detect and correct:
+                        - **Ectopic beats** (premature/delayed beats)
+                        - **Missed beats** (undetected R-peaks)
+                        - **Extra beats** (false positive detections)
+                        - **Long/short intervals** (physiologically implausible)
+                        """)
+                        apply_artifact_correction = st.checkbox(
+                            "Apply artifact correction before HRV analysis",
+                            value=False,
+                            key="apply_artifact_correction",
+                            help="Recommended for data with known quality issues"
+                        )
+
                     if st.button("🔬 Analyze HRV", key="analyze_single_btn", type="primary"):
                         if not selected_sections:
                             st.error("Please select at least one section")
@@ -1981,6 +3074,17 @@ def main():
 
                                             if cleaned_section_rr:
                                                 rr_ms = [rr.rr_ms for rr in cleaned_section_rr]
+
+                                                # Apply artifact correction if enabled
+                                                artifact_info = None
+                                                if apply_artifact_correction:
+                                                    st.write("    🔧 Applying artifact correction...")
+                                                    artifact_result = detect_artifacts_fixpeaks(rr_ms)
+                                                    if artifact_result["correction_applied"]:
+                                                        rr_ms = artifact_result["corrected_rr"]
+                                                        artifact_info = artifact_result
+                                                        st.write(f"    ✓ Corrected {artifact_result['total_artifacts']} artifacts")
+
                                                 combined_rr.extend(rr_ms)
 
                                                 # Calculate HRV metrics
@@ -1994,6 +3098,7 @@ def main():
                                                     "rr_intervals": rr_ms,
                                                     "n_beats": len(rr_ms),
                                                     "label": section_def.get("label", section_name),
+                                                    "artifact_info": artifact_info,
                                                 }
                                         else:
                                             st.write(f"  ⚠️ Could not find events for section '{section_name}'")
@@ -2038,8 +3143,24 @@ def main():
                             hrv_results = result_data["hrv_results"]
                             rr_intervals = result_data["rr_intervals"]
                             n_beats = result_data["n_beats"]
+                            artifact_info = result_data.get("artifact_info")
 
                             with st.expander(f"📈 {section_label} ({n_beats} beats)", expanded=True):
+                                # Show artifact correction info if applied
+                                if artifact_info:
+                                    st.info(f"🔧 **Artifact Correction Applied**: {artifact_info['total_artifacts']} artifacts corrected "
+                                           f"({artifact_info['artifact_ratio']*100:.1f}% of beats)")
+                                    art = artifact_info['artifacts']
+                                    col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+                                    with col_a1:
+                                        st.metric("Ectopic", art['ectopic'])
+                                    with col_a2:
+                                        st.metric("Missed", art['missed'])
+                                    with col_a3:
+                                        st.metric("Extra", art['extra'])
+                                    with col_a4:
+                                        st.metric("Long/Short", art['longshort'])
+
                                 # Key metrics
                                 if not hrv_results.empty:
                                     metrics_to_show = {
