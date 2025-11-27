@@ -4,6 +4,38 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-11-27 (Continued): Predefined Patterns & Bug Fixes
+
+### Version Tag: `v0.2.3-patterns`
+
+### Features Added:
+
+#### 1. Predefined ID Pattern Selector
+- Dropdown with 6 preset patterns + custom option
+- Default: `\d{4}[A-Z]{4}` (4 digits + 4 uppercase letters, e.g., 0123ABCD)
+- Other presets: case-insensitive, digits only, letters+digits, underscore-separated
+- Pattern displayed as code block when using presets
+- Custom pattern input for advanced users
+
+#### 2. Fixed Multi-File Detection
+- Changed default pattern from generic `[A-Za-z0-9]+` to specific `\d{4}[A-Z]{4}`
+- Now correctly groups multiple files for same participant
+- Files column shows `⚠️ 2RR/2Ev` when multiple files detected
+
+#### 3. Bug Fixes
+- Fixed `AttributeError: 'PreparationSummary' object has no attribute 'rr_file_count'`
+- Added `getattr()` fallback for old cached summaries without file count fields
+
+### Files Modified:
+- `src/music_hrv/io/hrv_logger.py` - Added `PREDEFINED_PATTERNS` dict
+- `src/music_hrv/io/__init__.py` - Exported `PREDEFINED_PATTERNS`
+- `src/music_hrv/gui/app.py` - Added pattern selector dropdown
+
+### Testing Note:
+**IMPORTANT**: Always run `uv run pytest` and test imports before delivering code changes!
+
+---
+
 ## Session 2025-11-27 (Evening): Interactive Plotly & Multi-File Support
 
 ### Version Tags Created:
