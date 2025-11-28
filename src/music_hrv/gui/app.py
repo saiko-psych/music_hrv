@@ -286,53 +286,35 @@ def cached_quality_analysis(rr_values_tuple, timestamps_tuple):
 
 
 @st.cache_data(show_spinner=False, ttl=300)
-def cached_build_base_plot(timestamps_tuple, rr_values_tuple, participant_id: str):
-    """Cache the base Plotly figure with just RR data trace.
+def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str, downsample_threshold: int = 5000):
+    """Cache processed plot data (NOT the figure - that's slow to serialize).
 
-    This is the expensive part - creating the WebGL scatter plot.
-    Overlays (events, gaps, etc.) are added separately and quickly.
+    Downsamples data if too many points for faster rendering.
+    Returns the data needed to build the plot quickly.
     """
-    if not PLOTLY_AVAILABLE:
-        return None
-
     timestamps = list(timestamps_tuple)
     rr_values = list(rr_values_tuple)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scattergl(
-        x=timestamps,
-        y=rr_values,
-        mode='markers+lines',
-        name='RR Intervals',
-        marker=dict(size=3, color='blue'),
-        line=dict(width=1, color='blue'),
-        hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
-    ))
+    # Downsample if too many points (keeps every Nth point)
+    n_points = len(timestamps)
+    if n_points > downsample_threshold:
+        step = n_points // downsample_threshold
+        timestamps = timestamps[::step]
+        rr_values = rr_values[::step]
 
     y_min = min(rr_values)
     y_max = max(rr_values)
     y_range = y_max - y_min
 
-    # Store range info for overlays
-    fig.update_layout(
-        title=f"RR Intervals - {participant_id} (Click to add events)",
-        xaxis=dict(
-            title="Time",
-            tickformat='%H:%M:%S',
-            hoverformat='%H:%M:%S'
-        ),
-        yaxis=dict(title="RR Interval (ms)"),
-        hovermode='closest',
-        height=600,
-        showlegend=True,
-        legend=dict(x=1.02, y=1, xanchor='left', yanchor='top')
-    )
-
     return {
-        'fig_json': fig.to_json(),
+        'timestamps': timestamps,
+        'rr_values': rr_values,
         'y_min': y_min,
         'y_max': y_max,
-        'y_range': y_range
+        'y_range': y_range,
+        'n_original': n_points,
+        'n_displayed': len(timestamps),
+        'participant_id': participant_id
     }
 
 
@@ -1475,7 +1457,8 @@ def main():
                         st.markdown("**Plot Options:**")
                         col_opt1, col_opt2, col_opt3 = st.columns(3)
                         with col_opt1:
-                            show_variability = st.checkbox("Show variability segments", value=True, key=f"show_var_{selected_participant}")
+                            show_variability = st.checkbox("Show variability segments", value=False, key=f"show_var_{selected_participant}",
+                                                          help="Variability analysis is computationally intensive. Enable only when needed.")
                             show_music_sections = st.checkbox("Show music sections", value=True, key=f"show_music_sec_{selected_participant}")
                         with col_opt2:
                             show_gaps = st.checkbox("Show time gaps", value=True, key=f"show_gaps_{selected_participant}")
@@ -1491,19 +1474,43 @@ def main():
                                 help="HRV Logger timestamps are per-packet (~1s). 15s threshold ignores normal packet delays but catches real data loss."
                             )
 
-                        # Use CACHED base plot (the expensive WebGL trace)
-                        import json
-                        base_plot_data = cached_build_base_plot(
+                        # Get CACHED plot data (downsampled if needed)
+                        plot_data = cached_get_plot_data(
                             tuple(timestamps),
                             tuple(rr_values),
                             selected_participant
                         )
 
-                        # Rebuild figure from cached JSON (FAST)
-                        fig = go.Figure(json.loads(base_plot_data['fig_json']))
-                        y_min = base_plot_data['y_min']
-                        y_max = base_plot_data['y_max']
-                        y_range = base_plot_data['y_range']
+                        # Show downsampling info if applicable
+                        if plot_data['n_displayed'] < plot_data['n_original']:
+                            st.caption(f"Showing {plot_data['n_displayed']:,} of {plot_data['n_original']:,} points for faster rendering")
+
+                        # Build figure directly (faster than JSON serialization)
+                        fig = go.Figure()
+                        fig.add_trace(go.Scattergl(
+                            x=plot_data['timestamps'],
+                            y=plot_data['rr_values'],
+                            mode='markers+lines',
+                            name='RR Intervals',
+                            marker=dict(size=3, color='blue'),
+                            line=dict(width=1, color='blue'),
+                            hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
+                        ))
+
+                        y_min = plot_data['y_min']
+                        y_max = plot_data['y_max']
+                        y_range = plot_data['y_range']
+
+                        # Set layout
+                        fig.update_layout(
+                            title=f"RR Intervals - {selected_participant}",
+                            xaxis=dict(title="Time", tickformat='%H:%M:%S', hoverformat='%H:%M:%S'),
+                            yaxis=dict(title="RR Interval (ms)"),
+                            hovermode='closest',
+                            height=600,
+                            showlegend=True,
+                            legend=dict(x=1.02, y=1, xanchor='left', yanchor='top')
+                        )
 
                         # Get events from session state
                         stored_data = st.session_state.participant_events[selected_participant]
@@ -1556,19 +1563,21 @@ def main():
                                     font=dict(color=color, size=10)
                                 )
 
-                        # Run quality analyses using CACHED function
+                        # Prepare data for quality analyses (only run if needed)
                         rr_list = list(rr_values)
                         timestamps_list = list(timestamps)
-
-                        # Use cached quality analysis
-                        changepoint_result = cached_quality_analysis(tuple(rr_values), tuple(timestamps))
-
-                        # Gap detection (now uses RR values for accurate detection)
-                        gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=gap_threshold)
                         n_ts = len(timestamps_list)
 
+                        # Gap detection is fast - always run for visualization
+                        gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=gap_threshold)
+
+                        # Changepoint analysis is SLOW (~1s) - only run if variability view is enabled
+                        changepoint_result = None
+                        if show_variability:
+                            changepoint_result = cached_quality_analysis(tuple(rr_values), tuple(timestamps))
+
                         # Visualize variability segments if enabled
-                        if show_variability and changepoint_result["changepoint_indices"]:
+                        if show_variability and changepoint_result and changepoint_result["changepoint_indices"]:
                             for seg_stats in changepoint_result["segment_stats"]:
                                 start_idx = seg_stats["start_idx"]
                                 end_idx = min(seg_stats["end_idx"], n_ts - 1)
@@ -1616,8 +1625,9 @@ def main():
                                     bgcolor='rgba(255,255,255,0.8)'
                                 )
 
-                        # Store analyses for info panel
-                        st.session_state[f"changepoints_{selected_participant}"] = changepoint_result
+                        # Store analyses for info panel (only if computed)
+                        if changepoint_result:
+                            st.session_state[f"changepoints_{selected_participant}"] = changepoint_result
                         st.session_state[f"gaps_{selected_participant}"] = gap_result
 
                         # Visualize music sections if enabled
