@@ -285,6 +285,57 @@ def cached_quality_analysis(rr_values_tuple, timestamps_tuple):
     return result
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_build_base_plot(timestamps_tuple, rr_values_tuple, participant_id: str):
+    """Cache the base Plotly figure with just RR data trace.
+
+    This is the expensive part - creating the WebGL scatter plot.
+    Overlays (events, gaps, etc.) are added separately and quickly.
+    """
+    if not PLOTLY_AVAILABLE:
+        return None
+
+    timestamps = list(timestamps_tuple)
+    rr_values = list(rr_values_tuple)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(
+        x=timestamps,
+        y=rr_values,
+        mode='markers+lines',
+        name='RR Intervals',
+        marker=dict(size=3, color='blue'),
+        line=dict(width=1, color='blue'),
+        hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
+    ))
+
+    y_min = min(rr_values)
+    y_max = max(rr_values)
+    y_range = y_max - y_min
+
+    # Store range info for overlays
+    fig.update_layout(
+        title=f"RR Intervals - {participant_id} (Click to add events)",
+        xaxis=dict(
+            title="Time",
+            tickformat='%H:%M:%S',
+            hoverformat='%H:%M:%S'
+        ),
+        yaxis=dict(title="RR Interval (ms)"),
+        hovermode='closest',
+        height=600,
+        showlegend=True,
+        legend=dict(x=1.02, y=1, xanchor='left', yanchor='top')
+    )
+
+    return {
+        'fig_json': fig.to_json(),
+        'y_min': y_min,
+        'y_max': y_max,
+        'y_range': y_range
+    }
+
+
 def show_toast(message, icon="success"):
     """Show a toast notification with auto-dismiss."""
     if icon == "success":
@@ -1420,7 +1471,7 @@ def main():
                         # Unpack cached data (list of (timestamp, rr_ms) tuples)
                         timestamps, rr_values = zip(*rr_with_timestamps)
 
-                        # Plot display options
+                        # Plot display options - use st.columns for compact layout
                         st.markdown("**Plot Options:**")
                         col_opt1, col_opt2, col_opt3 = st.columns(3)
                         with col_opt1:
@@ -1440,19 +1491,19 @@ def main():
                                 help="HRV Logger timestamps are per-packet (~1s). 15s threshold ignores normal packet delays but catches real data loss."
                             )
 
-                        # Create Plotly figure
-                        fig = go.Figure()
+                        # Use CACHED base plot (the expensive WebGL trace)
+                        import json
+                        base_plot_data = cached_build_base_plot(
+                            tuple(timestamps),
+                            tuple(rr_values),
+                            selected_participant
+                        )
 
-                        # Add RR interval scatter plot (WebGL for faster rendering)
-                        fig.add_trace(go.Scattergl(
-                            x=timestamps,
-                            y=rr_values,
-                            mode='markers+lines',
-                            name='RR Intervals',
-                            marker=dict(size=3, color='blue'),
-                            line=dict(width=1, color='blue'),
-                            hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
-                        ))
+                        # Rebuild figure from cached JSON (FAST)
+                        fig = go.Figure(json.loads(base_plot_data['fig_json']))
+                        y_min = base_plot_data['y_min']
+                        y_max = base_plot_data['y_max']
+                        y_range = base_plot_data['y_range']
 
                         # Get events from session state
                         stored_data = st.session_state.participant_events[selected_participant]
@@ -1465,7 +1516,7 @@ def main():
                             manual_list = []
                         current_events = events_list + manual_list
 
-                        # Add event markers as vertical lines
+                        # Add event markers as vertical lines (fast - just shapes)
                         distinct_colors = ['#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b',
                                          '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
                         event_by_canonical = {}
@@ -1483,10 +1534,7 @@ def main():
                                     event_by_canonical[canonical] = []
                                 event_by_canonical[canonical].append(timestamp)
 
-                        # Draw event lines using shapes (add_vline doesn't work well with datetime)
-                        y_min = min(rr_values)
-                        y_max = max(rr_values)
-                        y_range = y_max - y_min
+                        # Draw event lines using shapes (fast operation)
                         for idx, (event_name, event_times) in enumerate(event_by_canonical.items()):
                             color = distinct_colors[idx % len(distinct_colors)]
                             for event_time in event_times:
@@ -1652,22 +1700,7 @@ def main():
                                     opacity=0.5
                                 )
 
-                        # Update layout for interactivity
-                        fig.update_layout(
-                            title=f"RR Intervals - {selected_participant} (Click to add events)",
-                            xaxis=dict(
-                                title="Time",
-                                tickformat='%H:%M:%S',
-                                hoverformat='%H:%M:%S'
-                            ),
-                            yaxis=dict(title="RR Interval (ms)"),
-                            hovermode='closest',
-                            height=600,
-                            showlegend=True,
-                            legend=dict(x=1.02, y=1, xanchor='left', yanchor='top')
-                        )
-
-                        # Display interactive plot with click events
+                        # Display interactive plot with click events (layout already set in cached base plot)
                         st.info("💡 Click on the plot to add a new event at that timestamp")
                         selected_points = plotly_events(fig, click_event=True, hover_event=False, select_event=False, override_height=600)
 
