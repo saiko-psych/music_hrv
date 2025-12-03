@@ -7,7 +7,7 @@ import streamlit as st
 from pathlib import Path
 
 from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS, load_recording, discover_recordings
+from music_hrv.io import DEFAULT_ID_PATTERN, load_recording, discover_recordings
 from music_hrv.prep import load_hrv_logger_preview
 from music_hrv.segments.section_normalizer import SectionNormalizer
 from music_hrv.config.sections import SectionsConfig, SectionDefinition
@@ -19,10 +19,15 @@ from music_hrv.gui.persistence import (
     save_events,
     load_events,
     save_sections,
+    load_sections,
     save_participants,
     load_participants,
+    load_playlist_groups,
+    save_playlist_groups,
+    load_music_labels,
 )
 from music_hrv.gui.tabs.setup import render_setup_tab
+from music_hrv.gui.tabs.data import render_data_tab
 
 # Lazy import for neurokit2 and matplotlib (saves ~0.9s on startup)
 NEUROKIT_AVAILABLE = True
@@ -122,6 +127,41 @@ if "data_dir" not in st.session_state:
     st.session_state.data_dir = None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
+if "participant_events" not in st.session_state:
+    st.session_state.participant_events = {}
+if "id_pattern" not in st.session_state:
+    st.session_state.id_pattern = DEFAULT_ID_PATTERN
+if "participant_randomizations" not in st.session_state:
+    st.session_state.participant_randomizations = {}
+if "randomization_labels" not in st.session_state:
+    st.session_state.randomization_labels = {}
+# Device/recording metadata
+if "participant_devices" not in st.session_state:
+    st.session_state.participant_devices = {}  # {pid: {"device": "...", "sampling_rate": N}}
+if "default_device_settings" not in st.session_state:
+    st.session_state.default_device_settings = {
+        "recording_app": "HRV Logger",
+        "device": "Polar H10",
+        "sampling_rate": 1000  # Hz - Polar H10 native rate
+    }
+# Music item labels (e.g., music_1 -> "Brandenburg Concerto")
+if "music_labels" not in st.session_state:
+    loaded_music_labels = load_music_labels()
+    st.session_state.music_labels = loaded_music_labels if loaded_music_labels else {}
+# Load playlist groups at startup (defines valid randomization options)
+if "playlist_groups" not in st.session_state:
+    loaded_playlist = load_playlist_groups()
+    if loaded_playlist:
+        st.session_state.playlist_groups = loaded_playlist
+    else:
+        # Default playlist groups (playlist_01-05)
+        st.session_state.playlist_groups = {
+            "playlist_01": {"label": "Playlist 1", "music_order": ["music_1", "music_2", "music_3"]},
+            "playlist_02": {"label": "Playlist 2", "music_order": ["music_1", "music_3", "music_2"]},
+            "playlist_03": {"label": "Playlist 3", "music_order": ["music_2", "music_1", "music_3"]},
+            "playlist_04": {"label": "Playlist 4", "music_order": ["music_2", "music_3", "music_1"]},
+            "playlist_05": {"label": "Playlist 5", "music_order": ["music_3", "music_1", "music_2"]},
+        }
 # Note: normalizer will be created after all_events is loaded
 if "cleaning_config" not in st.session_state:
     st.session_state.cleaning_config = CleaningConfig()
@@ -152,28 +192,54 @@ if "all_events" not in st.session_state:
     else:
         st.session_state.all_events = loaded_events
 
+# Initialize sections at startup (so Analysis tab can use them before Setup is visited)
+if "sections" not in st.session_state:
+    loaded_sections = load_sections()
+    if not loaded_sections:
+        st.session_state.sections = {
+            "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_event": "rest_pre_end"},
+            "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_event": "measurement_end"},
+            "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_event": "pause_end"},
+            "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_event": "rest_post_end"},
+        }
+    else:
+        st.session_state.sections = loaded_sections
+
 # ISSUE 1 FIX: Create normalizer from GUI events only (not from sections.yml)
 if "normalizer" not in st.session_state:
     st.session_state.normalizer = create_gui_normalizer(st.session_state.all_events)
 
-# Load participant-specific data (groups, event orders, manual events)
+# Load participant-specific data (groups, randomizations, event orders, manual events)
 if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
     loaded_participants = load_participants()
     if loaded_participants:
+        # Extract randomization labels if present
+        if "_randomization_labels" in loaded_participants:
+            st.session_state.randomization_labels = loaded_participants.pop("_randomization_labels")
+
         st.session_state.participant_groups = {
             pid: data.get("group", "Default")
             for pid, data in loaded_participants.items()
+            if not pid.startswith("_")  # Skip special keys
+        }
+        st.session_state.participant_randomizations = {
+            pid: data.get("randomization", "")
+            for pid, data in loaded_participants.items()
+            if not pid.startswith("_")
         }
         st.session_state.event_order = {
             pid: data.get("event_order", [])
             for pid, data in loaded_participants.items()
+            if not pid.startswith("_")
         }
         st.session_state.manual_events = {
             pid: data.get("manual_events", [])
             for pid, data in loaded_participants.items()
+            if not pid.startswith("_")
         }
     else:
         st.session_state.participant_groups = {}
+        st.session_state.participant_randomizations = {}
         st.session_state.event_order = {}
         st.session_state.manual_events = {}
 
@@ -188,10 +254,11 @@ def save_all_config():
 
 
 def save_participant_data():
-    """Save participant-specific data (groups, event orders, manual events)."""
+    """Save participant-specific data (groups, randomizations, event orders, manual events)."""
     participants_data = {}
     all_participant_ids = set(
         list(st.session_state.participant_groups.keys()) +
+        list(st.session_state.get("participant_randomizations", {}).keys()) +
         list(st.session_state.event_order.keys()) +
         list(st.session_state.manual_events.keys())
     )
@@ -199,9 +266,14 @@ def save_participant_data():
     for pid in all_participant_ids:
         participants_data[pid] = {
             "group": st.session_state.participant_groups.get(pid, "Default"),
+            "randomization": st.session_state.get("participant_randomizations", {}).get(pid, ""),
             "event_order": st.session_state.event_order.get(pid, []),
             "manual_events": st.session_state.manual_events.get(pid, []),
         }
+
+    # Store randomization labels as a special entry
+    if st.session_state.get("randomization_labels"):
+        participants_data["_randomization_labels"] = st.session_state.randomization_labels
 
     save_participants(participants_data)
 
@@ -303,6 +375,158 @@ def cached_quality_analysis(rr_values_tuple, timestamps_tuple):
     return result
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def cached_build_participant_table(summaries_data: tuple, participant_groups: dict, participant_randomizations: dict,
+                                   group_labels: dict, randomization_labels: dict, loaded_participants_keys: tuple):
+    """Cache the participant table data to avoid rebuilding on every rerun.
+
+    Args:
+        summaries_data: Tuple of tuples (serialized from RecordingSummary objects for hashing)
+        participant_groups: Dict of participant -> group assignments
+        participant_randomizations: Dict of participant -> randomization assignments
+        group_labels: Dict of group_id -> label
+        randomization_labels: Dict of rand_value -> label
+        loaded_participants_keys: Tuple of saved participant IDs
+
+    Returns:
+        Tuple of (participants_data list, issues list)
+    """
+    # Convert tuples back to dicts for easier access
+    summaries_data = [dict(t) for t in summaries_data]
+    loaded_set = set(loaded_participants_keys)
+
+    # Build status issues
+    issues = []
+    high_artifact = sum(1 for s in summaries_data if s["artifact_ratio"] > 0.15)
+    if high_artifact:
+        issues.append(f"🔴 **{high_artifact}** participant(s) with high artifact rates (>15%)")
+
+    with_duplicates = sum(1 for s in summaries_data if s["duplicate_rr_intervals"] > 0)
+    if with_duplicates:
+        issues.append(f"⚠️ **{with_duplicates}** participant(s) with duplicate RR intervals")
+
+    with_multi_files = sum(1 for s in summaries_data
+                          if s["rr_file_count"] > 1 or s["events_file_count"] > 1)
+    if with_multi_files:
+        issues.append(f"📁 **{with_multi_files}** participant(s) with multiple files (merged)")
+
+    no_events = sum(1 for s in summaries_data if s["events_detected"] == 0)
+    if no_events:
+        issues.append(f"❓ **{no_events}** participant(s) with no events detected")
+
+    # Build participant table data
+    participants_data = []
+    for s in summaries_data:
+        recording_dt_str = s["recording_datetime_str"]
+
+        rr_count = s["rr_file_count"]
+        ev_count = s["events_file_count"]
+        files_str = f"{rr_count}RR/{ev_count}Ev"
+        if rr_count > 1 or ev_count > 1:
+            files_str = f"⚠️ {files_str}"
+
+        quality_badge = get_quality_badge(100, s["artifact_ratio"])
+
+        # Get group with label
+        group_id = participant_groups.get(s["participant_id"], "Default")
+        group_display = group_labels.get(group_id, group_id)
+
+        # Get randomization with label
+        rand_id = participant_randomizations.get(s["participant_id"], "")
+        rand_display = randomization_labels.get(rand_id, rand_id) if rand_id else ""
+
+        participants_data.append({
+            "Participant": s["participant_id"],
+            "Quality": quality_badge,
+            "Saved": "Y" if s["participant_id"] in loaded_set else "N",
+            "Files": files_str,
+            "Date/Time": recording_dt_str,
+            "Group": group_display,
+            "_group_id": group_id,  # Hidden: actual group ID for saving
+            "Randomization": rand_display,
+            "_rand_id": rand_id,  # Hidden: actual rand ID for saving
+            "Total Beats": s["total_beats"],
+            "Retained": s["retained_beats"],
+            "Duplicates": s["duplicate_rr_intervals"],
+            "Artifacts (%)": f"{s['artifact_ratio'] * 100:.1f}",
+            "Duration (min)": f"{s['duration_s'] / 60:.1f}",
+            "Events": s["events_detected"],
+            "Total Events": s["events_detected"] + s["duplicate_events"],
+            "Duplicate Events": s["duplicate_events"],
+            "RR Range (ms)": f"{int(s['rr_min_ms'])}-{int(s['rr_max_ms'])}",
+            "Mean RR (ms)": f"{s['rr_mean_ms']:.0f}",
+        })
+
+    return participants_data, issues
+
+
+def serialize_summaries_for_cache():
+    """Serialize summaries to a hashable tuple for caching (CACHED in session_state)."""
+    if not st.session_state.summaries:
+        return ()
+
+    # Check if we already have cached serialization
+    summaries = st.session_state.summaries
+    cache_key = f"{len(summaries)}:{summaries[0].participant_id if summaries else ''}:{summaries[-1].participant_id if summaries else ''}"
+
+    if st.session_state.get("_serialized_summaries_cache_key") == cache_key:
+        return st.session_state._serialized_summaries
+
+    # Build serialized data (only when summaries change)
+    result = []
+    for s in summaries:
+        recording_dt_str = ""
+        if s.recording_datetime:
+            recording_dt_str = s.recording_datetime.strftime("%Y-%m-%d %H:%M")
+        result.append({
+            "participant_id": s.participant_id,
+            "artifact_ratio": s.artifact_ratio,
+            "duplicate_rr_intervals": s.duplicate_rr_intervals,
+            "rr_file_count": getattr(s, 'rr_file_count', 1),
+            "events_file_count": getattr(s, 'events_file_count', 1 if s.events_detected > 0 else 0),
+            "events_detected": s.events_detected,
+            "total_beats": s.total_beats,
+            "retained_beats": s.retained_beats,
+            "duration_s": s.duration_s,
+            "duplicate_events": s.duplicate_events,
+            "rr_min_ms": s.rr_min_ms,
+            "rr_max_ms": s.rr_max_ms,
+            "rr_mean_ms": s.rr_mean_ms,
+            "recording_datetime_str": recording_dt_str,
+        })
+
+    # Cache it
+    serialized = tuple(tuple(sorted(d.items())) for d in result)
+    st.session_state._serialized_summaries = serialized
+    st.session_state._serialized_summaries_cache_key = cache_key
+    return serialized
+
+
+def get_participant_list():
+    """Get cached list of participant IDs (O(1) after first call per summaries change)."""
+    if not st.session_state.summaries:
+        return []
+    # Use a simple cache key based on number of summaries and first/last IDs
+    summaries = st.session_state.summaries
+    cache_key = f"{len(summaries)}:{summaries[0].participant_id if summaries else ''}:{summaries[-1].participant_id if summaries else ''}"
+    if st.session_state.get("_participant_list_cache_key") != cache_key:
+        st.session_state._participant_list = [s.participant_id for s in summaries]
+        st.session_state._participant_list_cache_key = cache_key
+    return st.session_state._participant_list
+
+
+def get_summary_dict():
+    """Get cached dict mapping participant_id to summary (O(1) lookup after first call)."""
+    if not st.session_state.summaries:
+        return {}
+    summaries = st.session_state.summaries
+    cache_key = f"{len(summaries)}:{summaries[0].participant_id if summaries else ''}:{summaries[-1].participant_id if summaries else ''}"
+    if st.session_state.get("_summary_dict_cache_key") != cache_key:
+        st.session_state._summary_dict = {s.participant_id: s for s in summaries}
+        st.session_state._summary_dict_cache_key = cache_key
+    return st.session_state._summary_dict
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str, downsample_threshold: int = 5000):
     """Cache processed plot data (NOT the figure - that's slow to serialize).
@@ -334,6 +558,411 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
         'n_displayed': len(timestamps),
         'participant_id': participant_id
     }
+
+
+@st.fragment
+def render_participant_table_fragment():
+    """Fragment for participant table - prevents re-render when expanders change.
+
+    IMPORTANT: This must be defined at module level for Streamlit to cache it properly.
+    """
+    if not st.session_state.summaries:
+        return
+
+    # Participants overview table
+    st.subheader("📋 Participants Overview")
+
+    # Build group labels dict (group_id -> label)
+    group_labels = {gid: gdata.get("label", gid) for gid, gdata in st.session_state.groups.items()}
+
+    # Build randomization labels from playlist_groups (primary source)
+    # Merge with any custom labels in randomization_labels (fallback for non-playlist values)
+    randomization_labels = {}
+    for pl_id, pl_data in st.session_state.get("playlist_groups", {}).items():
+        randomization_labels[pl_id] = pl_data.get("label", pl_id)
+    # Add any custom labels not in playlist_groups
+    for rand_id, label in st.session_state.get("randomization_labels", {}).items():
+        if rand_id not in randomization_labels:
+            randomization_labels[rand_id] = label
+
+    # Use CACHED participant table building (avoids expensive loops on every rerun)
+    loaded_participants = cached_load_participants()
+    participants_data, issues = cached_build_participant_table(
+        serialize_summaries_for_cache(),
+        dict(st.session_state.participant_groups),
+        dict(st.session_state.participant_randomizations),
+        group_labels,
+        randomization_labels,
+        tuple(loaded_participants.keys())
+    )
+
+    total_participants = len(st.session_state.summaries)
+
+    # Display status summary (pre-computed in cached function)
+    if issues:
+        with st.container():
+            st.markdown("**⚠️ Issues Detected:**")
+            for issue in issues:
+                st.markdown(f"- {issue}")
+            st.markdown("---")
+    else:
+        st.success(f"✅ All {total_participants} participants look good! No issues detected.")
+
+    # Cache DataFrame creation (avoid rebuilding on every rerun)
+    df_cache_key = f"df_{len(participants_data)}_{participants_data[0]['Participant'] if participants_data else ''}"
+    if st.session_state.get("_df_participants_cache_key") != df_cache_key:
+        st.session_state._df_participants = pd.DataFrame(participants_data)
+        st.session_state._df_participants_cache_key = df_cache_key
+    df_participants = st.session_state._df_participants
+
+    # Build label -> ID lookup for saving
+    label_to_group_id = {gdata.get("label", gid): gid for gid, gdata in st.session_state.groups.items()}
+    group_label_options = list(label_to_group_id.keys())
+
+    # Editable dataframe with better column config
+    edited_df = st.data_editor(
+        df_participants,
+        column_config={
+            "Participant": st.column_config.TextColumn(
+                "Participant",
+                disabled=True,
+                width="medium",
+            ),
+            "Quality": st.column_config.TextColumn(
+                "Quality",
+                disabled=True,
+                width="small",
+                help="Good (<5% artifacts), Moderate (5-15%), Poor (>15%)",
+            ),
+            "Saved": st.column_config.TextColumn(
+                "Saved",
+                disabled=True,
+                width="small",
+            ),
+            "Files": st.column_config.TextColumn(
+                "Files",
+                disabled=True,
+                width="small",
+                help="RR files / Events files. Indicates multiple files (merged from restarts)",
+            ),
+            "Group": st.column_config.SelectboxColumn(
+                "Group",
+                options=group_label_options,
+                required=True,
+                help="Assign participant to a group (changes save automatically)",
+                width="medium",
+            ),
+            "_group_id": None,  # Hide this column
+            "Randomization": st.column_config.TextColumn(
+                "Randomization",
+                help="Randomization group (e.g., R1, R2). Edit labels in 'Manage Labels' below.",
+                width="small",
+                disabled=True,  # Make read-only since we show labels
+            ),
+            "_rand_id": None,  # Hide this column
+            "Total Beats": st.column_config.NumberColumn(
+                "Total Beats",
+                disabled=True,
+                format="%d",
+            ),
+            "Retained": st.column_config.NumberColumn(
+                "Retained",
+                disabled=True,
+                format="%d",
+            ),
+            "Artifacts (%)": st.column_config.TextColumn(
+                "Artifacts (%)",
+                disabled=True,
+                width="small",
+            ),
+            "Total Events": st.column_config.NumberColumn(
+                "Total Events",
+                disabled=True,
+                format="%d",
+                help="Total number of events detected",
+            ),
+            "Duplicate Events": st.column_config.NumberColumn(
+                "Duplicate Events",
+                disabled=True,
+                format="%d",
+                help="Number of duplicate event occurrences",
+            ),
+        },
+        use_container_width=True,
+        hide_index=True,
+        key="participants_table",
+        disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates", "Artifacts (%)", "Duration (min)", "Events", "Total Events", "Duplicate Events", "RR Range (ms)", "Mean RR (ms)"]
+    )
+
+    # Auto-save group assignments when changed (map label back to group ID)
+    edited_groups = dict(zip(edited_df["Participant"], edited_df["Group"]))
+    groups_changed = False
+    for pid, new_group_label in edited_groups.items():
+        # Map label back to group ID (fall back to label if not found)
+        new_group_id = label_to_group_id.get(new_group_label, new_group_label)
+        if st.session_state.participant_groups.get(pid) != new_group_id:
+            st.session_state.participant_groups[pid] = new_group_id
+            groups_changed = True
+
+    # Auto-save randomization assignments when changed
+    edited_randomizations = dict(zip(edited_df["Participant"], edited_df["Randomization"]))
+    randomizations_changed = False
+    for pid, new_rand in edited_randomizations.items():
+        current_rand = st.session_state.participant_randomizations.get(pid, "")
+        if current_rand != new_rand:
+            st.session_state.participant_randomizations[pid] = new_rand
+            randomizations_changed = True
+
+    # Auto-save if changes detected
+    if groups_changed or randomizations_changed:
+        save_participant_data()
+        cached_load_participants.clear()
+        if groups_changed and randomizations_changed:
+            show_toast("Group and randomization assignments saved", icon="success")
+        elif groups_changed:
+            show_toast("Group assignments saved", icon="success")
+        else:
+            show_toast("Randomization assignments saved", icon="success")
+
+    # Cache duplicate detection (only changes when data is reloaded)
+    dup_cache_key = f"dup_{len(participants_data)}"
+    if st.session_state.get("_high_duplicates_cache_key") != dup_cache_key:
+        st.session_state._high_duplicates = [
+            (p["Participant"], p["Duplicates"])
+            for p in participants_data if p["Duplicates"] > 0
+        ]
+        st.session_state._high_duplicates_cache_key = dup_cache_key
+    high_duplicates = st.session_state._high_duplicates
+
+    if high_duplicates:
+        st.warning(
+            f"⚠️ **Duplicate RR intervals detected!** "
+            f"{len(high_duplicates)} participant(s) have duplicate RR intervals that were removed. "
+            f"Check the 'Duplicates' column for details."
+        )
+        with st.expander("Show participants with duplicates"):
+            for pid, dup_count in high_duplicates:
+                st.text(f"• {pid}: {dup_count} duplicates removed")
+
+    # CSV Import Section (recommended for bulk assignments)
+    with st.expander("Import Assignments from CSV (Recommended)", expanded=False):
+        st.markdown("""
+        **Import group and randomization assignments** from your study's master CSV file.
+
+        Default column names: `code` (participant ID), `group`, `playlist` (randomization)
+        """)
+
+        uploaded_file = st.file_uploader("Upload CSV file", type=["csv"], key="assignment_csv_upload")
+
+        if uploaded_file is not None:
+            try:
+                import_df = pd.read_csv(uploaded_file)
+                columns = list(import_df.columns)
+                st.write(f"Found {len(import_df)} rows. Columns: {columns}")
+
+                # Smart defaults: look for common column names
+                def find_default(options, defaults):
+                    for d in defaults:
+                        for col in options:
+                            if col.lower() == d.lower():
+                                return col
+                    return ""
+
+                default_id = find_default(columns, ["code", "id", "participant", "participant_id", "subject"])
+                default_group = find_default(columns, ["group", "condition", "gruppe"])
+                default_rand = find_default(columns, ["playlist", "randomization", "randomisation", "rand"])
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    id_options = [""] + columns
+                    id_idx = id_options.index(default_id) if default_id in id_options else 0
+                    id_col = st.selectbox(
+                        "Participant ID column",
+                        options=id_options,
+                        index=id_idx,
+                        key="import_id_col"
+                    )
+                with col2:
+                    group_options = ["(skip)"] + columns
+                    group_idx = group_options.index(default_group) if default_group in group_options else 0
+                    group_col = st.selectbox(
+                        "Group column",
+                        options=group_options,
+                        index=group_idx,
+                        key="import_group_col"
+                    )
+                with col3:
+                    rand_options = ["(skip)"] + columns
+                    rand_idx = rand_options.index(default_rand) if default_rand in rand_options else 0
+                    rand_col = st.selectbox(
+                        "Randomization column",
+                        options=rand_options,
+                        index=rand_idx,
+                        key="import_rand_col"
+                    )
+
+                use_group = group_col and group_col != "(skip)"
+                use_rand = rand_col and rand_col != "(skip)"
+
+                if id_col and (use_group or use_rand):
+                    # Preview matches
+                    participant_ids = set(get_participant_list())
+                    import_ids = set(import_df[id_col].astype(str))
+                    matches = participant_ids & import_ids
+                    missing = participant_ids - import_ids
+
+                    st.success(f"Matching participants: **{len(matches)}** / {len(participant_ids)}")
+                    if missing:
+                        st.warning(f"Not found in CSV: {', '.join(sorted(missing)[:5])}{'...' if len(missing) > 5 else ''}")
+
+                    # Show preview
+                    if matches:
+                        preview_data = []
+                        for _, row in import_df.head(5).iterrows():
+                            pid = str(row[id_col])
+                            if pid in participant_ids:
+                                preview_data.append({
+                                    "ID": pid,
+                                    "Group": str(row[group_col]) if use_group and pd.notna(row[group_col]) else "-",
+                                    "Randomization": str(row[rand_col]) if use_rand and pd.notna(row[rand_col]) else "-"
+                                })
+                        if preview_data:
+                            st.write("Preview (first matches):")
+                            st.dataframe(pd.DataFrame(preview_data), hide_index=True)
+
+                    if st.button("Apply Assignments", type="primary", key="apply_csv_import"):
+                        applied_groups = 0
+                        applied_rands = 0
+                        for _, row in import_df.iterrows():
+                            pid = str(row[id_col])
+                            if pid in participant_ids:
+                                if use_group and pd.notna(row[group_col]):
+                                    new_group = str(row[group_col])
+                                    # Create group if it doesn't exist
+                                    if new_group not in st.session_state.groups:
+                                        st.session_state.groups[new_group] = {
+                                            "label": new_group,
+                                            "expected_events": {},
+                                            "selected_sections": []
+                                        }
+                                    st.session_state.participant_groups[pid] = new_group
+                                    applied_groups += 1
+                                if use_rand and pd.notna(row[rand_col]):
+                                    new_rand = str(row[rand_col])
+                                    # Auto-create playlist group if it doesn't exist
+                                    if new_rand and new_rand not in st.session_state.playlist_groups:
+                                        st.session_state.playlist_groups[new_rand] = {
+                                            "label": new_rand,
+                                            "music_order": ["music_1", "music_2", "music_3"]
+                                        }
+                                    st.session_state.participant_randomizations[pid] = new_rand
+                                    applied_rands += 1
+
+                        # Save playlist groups if new ones were created
+                        save_playlist_groups(st.session_state.playlist_groups)
+
+                        # Save and clear all caches to force table rebuild
+                        save_participant_data()
+                        cached_load_participants.clear()
+                        cached_build_participant_table.clear()
+                        # Clear the DataFrame cache too
+                        if "_df_participants_cache_key" in st.session_state:
+                            del st.session_state._df_participants_cache_key
+
+                        show_toast(f"Applied {applied_groups} group and {applied_rands} randomization assignments", icon="success")
+                        st.rerun()
+                elif id_col:
+                    st.info("Select at least one column to import (Group or Randomization)")
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+
+    # Manage Labels Section
+    with st.expander("Manage Group & Randomization Labels", expanded=False):
+        st.markdown("Add display labels for your groups and randomization conditions.")
+
+        col_labels1, col_labels2 = st.columns(2)
+
+        with col_labels1:
+            st.markdown("**Group Labels**")
+            # Show all groups with their labels
+            groups_changed = False
+            for group_name in list(st.session_state.groups.keys()):
+                group_data = st.session_state.groups[group_name]
+                current_label = group_data.get("label", group_name)
+                new_label = st.text_input(
+                    f"{group_name}",
+                    value=current_label,
+                    key=f"group_label_{group_name}",
+                    label_visibility="visible"
+                )
+                if new_label != current_label:
+                    st.session_state.groups[group_name]["label"] = new_label
+                    groups_changed = True
+
+            if groups_changed:
+                auto_save_config()
+                show_toast("Group labels saved", icon="success")
+
+        with col_labels2:
+            st.markdown("**Randomization Labels**")
+
+            # Get all unique randomization values
+            unique_randomizations = set(st.session_state.participant_randomizations.values())
+            unique_randomizations.discard("")  # Remove empty string
+
+            # Get playlist group IDs
+            playlist_ids = set(st.session_state.get("playlist_groups", {}).keys())
+
+            if unique_randomizations:
+                # Show playlist-based randomizations (read-only, from Setup)
+                playlist_values = sorted(unique_randomizations & playlist_ids)
+                custom_values = sorted(unique_randomizations - playlist_ids)
+
+                if playlist_values:
+                    st.caption("From Playlist Groups (edit in Setup > Groups):")
+                    for rand_value in playlist_values:
+                        pl_label = st.session_state.playlist_groups.get(rand_value, {}).get("label", rand_value)
+                        st.text_input(
+                            f"{rand_value}",
+                            value=pl_label,
+                            key=f"rand_label_ro_{rand_value}",
+                            disabled=True,
+                            label_visibility="visible"
+                        )
+
+                if custom_values:
+                    st.caption("Custom values (editable):")
+                    rand_changed = False
+                    for rand_value in custom_values:
+                        current_label = st.session_state.get("randomization_labels", {}).get(rand_value, rand_value)
+                        new_label = st.text_input(
+                            f"{rand_value}",
+                            value=current_label,
+                            key=f"rand_label_{rand_value}",
+                            label_visibility="visible"
+                        )
+                        if new_label != current_label:
+                            if "randomization_labels" not in st.session_state:
+                                st.session_state.randomization_labels = {}
+                            st.session_state.randomization_labels[rand_value] = new_label
+                            rand_changed = True
+
+                    if rand_changed:
+                        save_participant_data()
+                        show_toast("Randomization labels saved", icon="success")
+            else:
+                st.caption("No randomization values assigned yet.")
+
+    # Download button (save is now automatic)
+    csv_participants = df_participants.to_csv(index=False)
+    st.download_button(
+        label="Download Participants CSV",
+        data=csv_participants,
+        file_name="participants_overview.csv",
+        mime="text/csv",
+        use_container_width=False,
+    )
+    st.caption("Group and randomization assignments save automatically when changed in the table.")
 
 
 def show_toast(message, icon="success"):
@@ -902,725 +1531,187 @@ def main():
     st.title("🎵 Music HRV Toolkit")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
-    # Minimal sidebar - just status info
+    # Sidebar navigation using buttons (fast - only renders active page)
+    # Initialize active page
+    if "active_page" not in st.session_state:
+        st.session_state.active_page = "Data"
+
+    # CSS for compact sidebar navigation
+    st.markdown("""
+    <style>
+    /* Compact sidebar navigation */
+    section[data-testid="stSidebar"] .stButton button {
+        margin: 0;
+        padding: 0.4rem 0.8rem;
+    }
+    section[data-testid="stSidebar"] > div {
+        padding-top: 1rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     with st.sidebar:
-        st.header("🎵 Music HRV Toolkit")
+        # Navigation buttons - no emojis
+        pages = ["Data", "Participants", "Setup", "Analysis"]
+
+        for page_id in pages:
+            # Highlight active page with primary button
+            if st.session_state.active_page == page_id:
+                st.button(page_id, key=f"nav_{page_id}", use_container_width=True, type="primary")
+            else:
+                if st.button(page_id, key=f"nav_{page_id}", use_container_width=True, type="secondary"):
+                    st.session_state.active_page = page_id
+                    st.rerun()
+
+        st.markdown("---")
+
+        # Show status in sidebar
+        if st.session_state.summaries:
+            st.caption(f"{len(st.session_state.summaries)} participants loaded")
+        else:
+            st.caption("No data loaded")
 
         # Show last save time if available
         if "last_save_time" in st.session_state:
             elapsed = time.time() - st.session_state.last_save_time
             if elapsed < 3:
-                st.success("💾 Saved ✓")
-            else:
-                st.markdown("**💾 Auto-save enabled**")
-        else:
-            st.markdown("**💾 Auto-save enabled**")
-
-        st.markdown("---")
-        st.caption("Configure settings in the tabs below.")
+                st.success("Saved")
 
         # Debug: Show script execution time
-        if "last_render_time" in st.session_state:
-            st.caption(f"⏱️ Last render: {st.session_state.last_render_time:.0f}ms")
-
-    # Main content tabs (4-tab structure)
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Data",
-        "Participants",
-        "Setup",
-        "Analysis"
-    ])
-
-    # ================== TAB: DATA ==================
-    with tab1:
-        st.header("Data Import")
-
-        # Quick help section
-        with st.expander("❓ Quick Help - Getting Started", expanded=False):
-            st.markdown("""
-            ### Workflow Overview
-
-            1. **Import Data**: Select your HRV Logger data folder below. The app will automatically
-               detect all RR interval and event files.
-
-            2. **Assign Groups**: Use the participant table to assign each participant to a study group.
-               Groups define which events are expected for each participant.
-
-            3. **Review Events**: Click on a participant to see their RR interval plot and events.
-               You can add manual events by clicking on the plot.
-
-            4. **Quality Check**: The app automatically detects gaps in data and high variability segments.
-               Use the "Batch Processing" section to detect issues across all participants at once.
-
-            5. **Music Events**: If your study involves music interventions, assign participants to
-               playlist groups and generate music section events automatically.
-
-            ---
-
-            **Key Terms:**
-            - **RR Interval**: Time between consecutive heartbeats (in milliseconds)
-            - **Canonical Event**: Standardized event name (e.g., `measurement_start`)
-            - **Synonym**: Alternative label that maps to a canonical event
-            - **Gap**: Period where data is missing (>15s between timestamps by default)
-            - **CV (Coefficient of Variation)**: Measure of RR interval variability (std/mean)
-            """)
-
-        # Import Settings section
-        with st.expander("⚙️ Import Settings", expanded=False):
-            col_cfg1, col_cfg2 = st.columns(2)
-
-            with col_cfg1:
-                st.markdown("**Participant ID Pattern**")
-
-                # Predefined pattern dropdown
-                pattern_options = list(PREDEFINED_PATTERNS.keys()) + ["Custom pattern..."]
-                selected_pattern_name = st.selectbox(
-                    "Select pattern format",
-                    options=pattern_options,
-                    index=0,  # Default: 4 digits + 4 uppercase
-                    key="pattern_selector",
-                    help="Choose a predefined pattern or select 'Custom pattern...' to enter your own",
-                )
-
-                # Get the pattern based on selection
-                if selected_pattern_name == "Custom pattern...":
-                    id_pattern = st.text_input(
-                        "Custom regex pattern",
-                        value=DEFAULT_ID_PATTERN,
-                        help="Regex pattern with named group 'participant'",
-                        key="id_pattern_input",
-                    )
-                else:
-                    id_pattern = PREDEFINED_PATTERNS[selected_pattern_name]
-                    st.code(id_pattern, language=None)
-
-                # Real-time validation for regex pattern
-                pattern_error = validate_regex_pattern(id_pattern)
-                if pattern_error:
-                    st.error(f"⚠️ Invalid regex: {pattern_error}")
-                elif "(?P<participant>" not in id_pattern:
-                    st.warning("⚠️ Pattern should include named group '(?P<participant>...)'")
-
-            with col_cfg2:
-                st.markdown("**RR Cleaning Thresholds**")
-
-                def update_cleaning_config():
-                    """Callback to update cleaning config and clear cache."""
-                    st.session_state.cleaning_config = CleaningConfig(
-                        rr_min_ms=st.session_state.rr_min_input,
-                        rr_max_ms=st.session_state.rr_max_input,
-                        sudden_change_pct=st.session_state.sudden_change_input,
-                    )
-                    cached_load_hrv_logger_preview.clear()
-
-                col_rr1, col_rr2 = st.columns(2)
-                with col_rr1:
-                    st.number_input(
-                        "Min RR (ms)",
-                        min_value=200,
-                        max_value=1000,
-                        value=st.session_state.cleaning_config.rr_min_ms,
-                        step=10,
-                        key="rr_min_input",
-                        on_change=update_cleaning_config,
-                    )
-                with col_rr2:
-                    st.number_input(
-                        "Max RR (ms)",
-                        min_value=1000,
-                        max_value=3000,
-                        value=st.session_state.cleaning_config.rr_max_ms,
-                        step=10,
-                        key="rr_max_input",
-                        on_change=update_cleaning_config,
-                    )
-                st.slider(
-                    "Sudden change threshold",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=st.session_state.cleaning_config.sudden_change_pct,
-                    step=0.05,
-                    format="%.2f",
-                    key="sudden_change_input",
-                    on_change=update_cleaning_config,
-                )
-
-        # Data directory input
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            data_dir_input = st.text_input(
-                "Data directory path",
-                value=st.session_state.data_dir or "data/raw/hrv_logger",
-                help="Path to folder containing HRV Logger RR and Events CSV files",
-            )
-        with col2:
-            st.write("")  # Spacer
-            st.write("")  # Spacer
-            if st.button("🔄 Load Data", type="primary", use_container_width=True):
-                data_path = Path(data_dir_input).expanduser()
-                if data_path.exists():
-                    st.session_state.data_dir = str(data_path)
-
-                    # Use status context for multi-step feedback
-                    with st.status("Loading recordings...", expanded=True) as status:
-                        try:
-                            st.write("🔍 Discovering recordings...")
-
-                            # Use cached version for faster loading
-                            config_dict = {
-                                "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
-                                "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
-                                "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct,
-                            }
-                            # ISSUE 1 FIX: Pass GUI events to cached function
-                            summaries = cached_load_hrv_logger_preview(
-                                str(data_path),
-                                pattern=id_pattern,
-                                config_dict=config_dict,
-                                gui_events_dict=st.session_state.all_events,
-                            )
-
-                            st.write(f"📊 Processing {len(summaries)} participant(s)...")
-                            st.session_state.summaries = summaries
-
-                            # Auto-assign to Default group if not assigned
-                            for summary in summaries:
-                                if summary.participant_id not in st.session_state.participant_groups:
-                                    st.session_state.participant_groups[summary.participant_id] = "Default"
-
-                            status.update(label=f"✅ Loaded {len(summaries)} participant(s)", state="complete")
-                            show_toast(f"Loaded {len(summaries)} participant(s)", icon="success")
-                        except Exception as e:
-                            status.update(label="❌ Error loading data", state="error")
-                            st.error(f"Error loading data: {e}")
-                else:
-                    st.error(f"Directory not found: {data_path}")
-
-        if st.session_state.summaries:
-            st.markdown("---")
-
-            # Participants overview table
-            st.subheader("📋 Participants Overview")
-
-            # Smart status summary - only show issues if they exist
-            issues = []
-            total_participants = len(st.session_state.summaries)
-
-            # Check for high artifact rates
-            high_artifact = [s for s in st.session_state.summaries if s.artifact_ratio > 0.15]
-            if high_artifact:
-                issues.append(f"🔴 **{len(high_artifact)}** participant(s) with high artifact rates (>15%)")
-
-            # Check for duplicates
-            with_duplicates = [s for s in st.session_state.summaries if s.duplicate_rr_intervals > 0]
-            if with_duplicates:
-                issues.append(f"⚠️ **{len(with_duplicates)}** participant(s) with duplicate RR intervals")
-
-            # Check for multiple files
-            with_multi_files = [s for s in st.session_state.summaries
-                               if getattr(s, 'rr_file_count', 1) > 1 or getattr(s, 'events_file_count', 0) > 1]
-            if with_multi_files:
-                issues.append(f"📁 **{len(with_multi_files)}** participant(s) with multiple files (merged)")
-
-            # Check for missing events (participants with no events)
-            no_events = [s for s in st.session_state.summaries if s.events_detected == 0]
-            if no_events:
-                issues.append(f"❓ **{len(no_events)}** participant(s) with no events detected")
-
-            # Display status summary
-            if issues:
-                with st.container():
-                    st.markdown("**⚠️ Issues Detected:**")
-                    for issue in issues:
-                        st.markdown(f"- {issue}")
-                    st.markdown("---")
-            else:
-                st.success(f"✅ All {total_participants} participants look good! No issues detected.")
-
-            # Create editable dataframe
-            participants_data = []
-            loaded_participants = cached_load_participants()
-
-            for summary in st.session_state.summaries:
-                recording_dt_str = ""
-                if summary.recording_datetime:
-                    recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
-
-                # Show file counts (highlight if multiple files)
-                # Handle old cached summaries that don't have file count fields
-                rr_count = getattr(summary, 'rr_file_count', 1)
-                ev_count = getattr(summary, 'events_file_count', 1 if summary.events_detected > 0 else 0)
-                files_str = f"{rr_count}RR/{ev_count}Ev"
-                if rr_count > 1 or ev_count > 1:
-                    files_str = f"⚠️ {files_str}"
-
-                # Calculate quality badge based on artifact ratio
-                # (Simple heuristic: changepoint detection will be done on-demand in detail view)
-                quality_badge = get_quality_badge(100, summary.artifact_ratio)
-
-                participants_data.append({
-                    "Participant": summary.participant_id,
-                    "Quality": quality_badge,
-                    "Saved": "✅" if summary.participant_id in loaded_participants else "❌",
-                    "Files": files_str,
-                    "Date/Time": recording_dt_str,
-                    "Group": st.session_state.participant_groups.get(summary.participant_id, "Default"),
-                    "Total Beats": summary.total_beats,
-                    "Retained": summary.retained_beats,
-                    "Duplicates": summary.duplicate_rr_intervals,
-                    "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
-                    "Duration (min)": f"{summary.duration_s / 60:.1f}",
-                    "Events": summary.events_detected,
-                    # ISSUE 1 FIX: Total Events = events_detected + duplicate_events (raw count)
-                    "Total Events": summary.events_detected + summary.duplicate_events,
-                    "Duplicate Events": summary.duplicate_events,
-                    "RR Range (ms)": f"{int(summary.rr_min_ms)}–{int(summary.rr_max_ms)}",
-                    "Mean RR (ms)": f"{summary.rr_mean_ms:.0f}",
-                })
-
-            df_participants = pd.DataFrame(participants_data)
-
-            # Editable dataframe with better column config
-            edited_df = st.data_editor(
-                df_participants,
-                column_config={
-                    "Participant": st.column_config.TextColumn(
-                        "Participant",
-                        disabled=True,
-                        width="medium",
-                    ),
-                    "Quality": st.column_config.TextColumn(
-                        "Quality",
-                        disabled=True,
-                        width="small",
-                        help="🟢 Good (<5% artifacts), 🟡 Moderate (5-15%), 🔴 Poor (>15%)",
-                    ),
-                    "Saved": st.column_config.TextColumn(
-                        "Saved",
-                        disabled=True,
-                        width="small",
-                    ),
-                    "Files": st.column_config.TextColumn(
-                        "Files",
-                        disabled=True,
-                        width="small",
-                        help="RR files / Events files. ⚠️ indicates multiple files (merged from restarts)",
-                    ),
-                    "Group": st.column_config.SelectboxColumn(
-                        "Group",
-                        options=list(st.session_state.groups.keys()),
-                        required=True,
-                        help="Assign participant to a group (changes save automatically)",
-                        width="medium",
-                    ),
-                    "Total Beats": st.column_config.NumberColumn(
-                        "Total Beats",
-                        disabled=True,
-                        format="%d",
-                    ),
-                    "Retained": st.column_config.NumberColumn(
-                        "Retained",
-                        disabled=True,
-                        format="%d",
-                    ),
-                    "Artifacts (%)": st.column_config.TextColumn(
-                        "Artifacts (%)",
-                        disabled=True,
-                        width="small",
-                    ),
-                    # ISSUE 2 FIX: Add column config for new event columns
-                    "Total Events": st.column_config.NumberColumn(
-                        "Total Events",
-                        disabled=True,
-                        format="%d",
-                        help="Total number of events detected",
-                    ),
-                    "Duplicate Events": st.column_config.NumberColumn(
-                        "Duplicate Events",
-                        disabled=True,
-                        format="%d",
-                        help="Number of duplicate event occurrences",
-                    ),
-                },
-                use_container_width=True,
-                hide_index=True,
-                key="participants_table",
-                disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates", "Artifacts (%)", "Duration (min)", "Events", "Total Events", "Duplicate Events", "RR Range (ms)", "Mean RR (ms)"]
-            )
-
-            # Auto-save group assignments when changed
-            groups_changed = False
-            for idx, row in edited_df.iterrows():
-                participant_id = row["Participant"]
-                new_group = row["Group"]
-                old_group = st.session_state.participant_groups.get(participant_id)
-                if old_group != new_group:
-                    st.session_state.participant_groups[participant_id] = new_group
-                    groups_changed = True
-
-            # Auto-save if changes detected
-            if groups_changed:
-                save_participant_data()
-                cached_load_participants.clear()
-                show_toast("Group assignments saved", icon="success")
-
-            # Show warning if any participant has duplicate RR intervals
-            high_duplicates = [
-                (row["Participant"], row["Duplicates"])
-                for _, row in df_participants.iterrows()
-                if row["Duplicates"] > 0
-            ]
-            if high_duplicates:
-                st.warning(
-                    f"⚠️ **Duplicate RR intervals detected!** "
-                    f"{len(high_duplicates)} participant(s) have duplicate RR intervals that were removed. "
-                    f"Check the 'Duplicates' column for details."
-                )
-                with st.expander("Show participants with duplicates"):
-                    for pid, dup_count in high_duplicates:
-                        st.text(f"• {pid}: {dup_count} duplicates removed")
-
-            # Download button (save is now automatic)
-            csv_participants = df_participants.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Participants CSV",
-                data=csv_participants,
-                file_name="participants_overview.csv",
-                mime="text/csv",
-                use_container_width=False,
-            )
-            st.info("💡 **Tip:** Group assignments save automatically when you change them in the table above.")
-
-            # ==================== BATCH PROCESSING ====================
-            st.markdown("---")
-            with st.expander("⚡ Batch Processing", expanded=False):
-                st.markdown("""
-                Apply operations to **multiple participants** at once. This saves time when you have
-                predefined settings you want to apply consistently across your study.
-                """)
-
-                batch_col1, batch_col2 = st.columns(2)
-
-                with batch_col1:
-                    st.markdown("##### Auto-Generate Music Events")
-                    st.caption("Generate music section events for all participants in a playlist group")
-
-                    # Select playlist group to process
-                    if "playlist_groups" in st.session_state and st.session_state.playlist_groups:
-                        batch_playlist = st.selectbox(
-                            "Select Playlist Group",
-                            options=list(st.session_state.playlist_groups.keys()),
-                            key="batch_playlist_group",
-                            help="Generate music events for all participants assigned to this playlist group"
-                        )
-
-                        batch_interval = st.number_input(
-                            "Music interval (minutes)",
-                            min_value=1, max_value=30, value=5, step=1,
-                            key="batch_music_interval",
-                            help="How often the music changes"
-                        )
-
-                        if st.button("🎵 Generate for All in Group", key="batch_generate_music"):
-                            # Find participants in this playlist group
-                            participants_in_group = [
-                                pid for pid, pg in st.session_state.get("participant_playlists", {}).items()
-                                if pg == batch_playlist
-                            ]
-
-                            if not participants_in_group:
-                                st.warning(f"No participants assigned to playlist group '{batch_playlist}'")
-                            else:
-                                progress = st.progress(0)
-                                status = st.empty()
-                                generated_count = 0
-
-                                for i, pid in enumerate(participants_in_group):
-                                    status.text(f"Processing {pid}...")
-                                    progress.progress((i + 1) / len(participants_in_group))
-
-                                    # Get participant's events and find boundaries
-                                    if pid in st.session_state.participant_events:
-                                        stored = st.session_state.participant_events[pid]
-                                        all_events = stored.get('events', []) + stored.get('manual', [])
-
-                                        # Find boundary events
-                                        boundaries = {}
-                                        for evt in all_events:
-                                            canonical = evt.canonical if hasattr(evt, 'canonical') else None
-                                            if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end']:
-                                                if evt.first_timestamp:
-                                                    boundaries[canonical] = evt.first_timestamp
-
-                                        if 'measurement_start' in boundaries:
-                                            # Generate music events
-                                            from music_hrv.prep.summaries import EventStatus
-                                            from datetime import timedelta
-
-                                            if 'music_events' not in stored:
-                                                stored['music_events'] = []
-                                            stored['music_events'] = []  # Clear existing
-
-                                            playlist_data = st.session_state.playlist_groups.get(batch_playlist, {})
-                                            music_order = playlist_data.get("music_order", ["music_1", "music_2", "music_3"])
-
-                                            # Pre-pause period
-                                            start = boundaries['measurement_start']
-                                            end = boundaries.get('pause_start') or boundaries.get('measurement_end')
-                                            if start and end:
-                                                current = start
-                                                idx = 0
-                                                while current < end:
-                                                    music_type = music_order[idx % len(music_order)]
-                                                    next_time = current + timedelta(minutes=batch_interval)
-                                                    if next_time > end:
-                                                        next_time = end
-
-                                                    stored['music_events'].append(EventStatus(
-                                                        raw_label=f"{music_type}_start",
-                                                        canonical=f"{music_type}_start",
-                                                        first_timestamp=current,
-                                                        last_timestamp=current
-                                                    ))
-                                                    stored['music_events'].append(EventStatus(
-                                                        raw_label=f"{music_type}_end",
-                                                        canonical=f"{music_type}_end",
-                                                        first_timestamp=next_time,
-                                                        last_timestamp=next_time
-                                                    ))
-                                                    current = next_time
-                                                    idx += 1
-
-                                            # Post-pause period
-                                            if 'pause_end' in boundaries and 'measurement_end' in boundaries:
-                                                start = boundaries['pause_end']
-                                                end = boundaries['measurement_end']
-                                                current = start
-                                                idx = 0
-                                                while current < end:
-                                                    music_type = music_order[idx % len(music_order)]
-                                                    next_time = current + timedelta(minutes=batch_interval)
-                                                    if next_time > end:
-                                                        next_time = end
-
-                                                    stored['music_events'].append(EventStatus(
-                                                        raw_label=f"{music_type}_start",
-                                                        canonical=f"{music_type}_start",
-                                                        first_timestamp=current,
-                                                        last_timestamp=current
-                                                    ))
-                                                    stored['music_events'].append(EventStatus(
-                                                        raw_label=f"{music_type}_end",
-                                                        canonical=f"{music_type}_end",
-                                                        first_timestamp=next_time,
-                                                        last_timestamp=next_time
-                                                    ))
-                                                    current = next_time
-                                                    idx += 1
-
-                                            generated_count += 1
-
-                                progress.progress(1.0)
-                                status.empty()
-                                show_toast(f"Generated music events for {generated_count} participants", icon="success")
-                                st.rerun()
-                    else:
-                        st.info("Create playlist groups in the Group Management tab first")
-
-                with batch_col2:
-                    st.markdown("##### Auto-Create Quality Events")
-                    st.caption("Create gap and variability events for all participants")
-
-                    batch_gap_threshold = st.number_input(
-                        "Gap threshold (seconds)",
-                        min_value=1.0, max_value=60.0, value=15.0, step=1.0,
-                        key="batch_gap_threshold",
-                        help="Create gap events when time between measurements exceeds this threshold"
-                    )
-
-                    batch_cv_threshold = st.number_input(
-                        "Variability CV threshold (%)",
-                        min_value=5.0, max_value=50.0, value=20.0, step=1.0,
-                        key="batch_cv_threshold",
-                        help="Create variability events for segments exceeding this CV"
-                    )
-
-                    if st.button("🔍 Detect Quality Issues for All", key="batch_detect_quality"):
-                        progress = st.progress(0)
-                        status = st.empty()
-                        total_gaps = 0
-                        total_var = 0
-
-                        participant_ids = [s.participant_id for s in st.session_state.summaries]
-                        bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
-                        bundle_map = {b.participant_id: b for b in bundles}
-
-                        for i, pid in enumerate(participant_ids):
-                            status.text(f"Processing {pid}...")
-                            progress.progress((i + 1) / len(participant_ids))
-
-                            if pid not in bundle_map:
-                                continue
-
-                            bundle = bundle_map[pid]
-
-                            try:
-                                # Load cached recording data
-                                recording_data = cached_load_recording(
-                                    tuple(str(p) for p in bundle.rr_paths),
-                                    tuple(str(p) for p in bundle.events_paths),
-                                    pid
-                                )
-
-                                config_dict = {
-                                    "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
-                                    "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
-                                    "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct
-                                }
-                                rr_with_timestamps, _ = cached_clean_rr_intervals(
-                                    tuple(recording_data['rr_intervals']),
-                                    config_dict
-                                )
-
-                                if rr_with_timestamps:
-                                    timestamps, rr_values = zip(*rr_with_timestamps)
-                                    timestamps_list = list(timestamps)
-                                    rr_list = list(rr_values)
-
-                                    # Initialize events
-                                    if pid not in st.session_state.participant_events:
-                                        summary = next((s for s in st.session_state.summaries if s.participant_id == pid), None)
-                                        if summary:
-                                            st.session_state.participant_events[pid] = {
-                                                'events': list(summary.events),
-                                                'manual': []
-                                            }
-
-                                    if pid in st.session_state.participant_events:
-                                        stored = st.session_state.participant_events[pid]
-
-                                        # Detect and create gap events
-                                        gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=batch_gap_threshold)
-                                        from music_hrv.prep.summaries import EventStatus
-
-                                        for gap in gap_result.get("gaps", []):
-                                            stored['manual'].append(EventStatus(
-                                                raw_label="gap_start",
-                                                canonical="gap_start",
-                                                first_timestamp=gap["start_time"],
-                                                last_timestamp=gap["start_time"]
-                                            ))
-                                            stored['manual'].append(EventStatus(
-                                                raw_label="gap_end",
-                                                canonical="gap_end",
-                                                first_timestamp=gap["end_time"],
-                                                last_timestamp=gap["end_time"]
-                                            ))
-                                            total_gaps += 1
-
-                                        # Detect variability
-                                        cp_result = cached_quality_analysis(tuple(rr_values), tuple(timestamps))
-                                        cv_threshold_decimal = batch_cv_threshold / 100.0
-
-                                        for seg in cp_result.get("segment_stats", []):
-                                            if seg.get("cv", 0) > cv_threshold_decimal:
-                                                if seg.get("start_time") and seg.get("end_time"):
-                                                    stored['manual'].append(EventStatus(
-                                                        raw_label="high_variability_start",
-                                                        canonical="high_variability_start",
-                                                        first_timestamp=seg["start_time"],
-                                                        last_timestamp=seg["start_time"]
-                                                    ))
-                                                    stored['manual'].append(EventStatus(
-                                                        raw_label="high_variability_end",
-                                                        canonical="high_variability_end",
-                                                        first_timestamp=seg["end_time"],
-                                                        last_timestamp=seg["end_time"]
-                                                    ))
-                                                    total_var += 1
-
-                            except Exception as e:
-                                st.warning(f"Error processing {pid}: {e}")
-
-                        progress.progress(1.0)
-                        status.empty()
-                        show_toast(f"Detected {total_gaps} gaps and {total_var} high variability segments", icon="success")
-                        st.rerun()
+        if st.session_state.get("last_render_time"):
+            st.caption(f"{st.session_state.last_render_time:.0f}ms render")
+
+    # Get selected page for content rendering
+    selected_page = st.session_state.active_page
+
+    # ================== PAGE: DATA ==================
+    if selected_page == "Data":
+        render_data_tab()
 
 
     # ================== TAB: PARTICIPANTS ==================
-    with tab2:
+    elif selected_page == "Participants":
         st.header("Participant Details")
+
+        # Scroll to top if triggered by bottom navigation buttons
+        if st.session_state.get("_scroll_to_top", False):
+            st.session_state._scroll_to_top = False
+            st.components.v1.html(
+                """
+                <script>
+                    // Try multiple selectors for different Streamlit versions
+                    var mainSection = window.parent.document.querySelector('[data-testid="stMainBlockContainer"]');
+                    if (!mainSection) mainSection = window.parent.document.querySelector('section.main');
+                    if (!mainSection) mainSection = window.parent.document.querySelector('.main');
+                    if (mainSection) {
+                        mainSection.scrollTo({top: 0, behavior: 'instant'});
+                    }
+                    // Also try scrolling the whole document
+                    window.parent.document.documentElement.scrollTo({top: 0, behavior: 'instant'});
+                    window.parent.scrollTo({top: 0, behavior: 'instant'});
+                </script>
+                """,
+                height=0
+            )
 
         if not st.session_state.summaries:
             st.info("Load data in the **Data** tab first to view participant details.")
         else:
 
-            # ISSUE 2 FIX: Initialize and manage participant selection with bounds checking
+            participant_list = get_participant_list()  # Cached for performance
+
+            # Initialize selected participant index
             if "current_participant_idx" not in st.session_state:
                 st.session_state.current_participant_idx = 0
 
-            participant_list = [s.participant_id for s in st.session_state.summaries]
-
-            # ISSUE 2 FIX: Ensure index is always valid BEFORE using it
+            # Ensure index is valid
+            if st.session_state.current_participant_idx >= len(participant_list):
+                st.session_state.current_participant_idx = len(participant_list) - 1
             if st.session_state.current_participant_idx < 0:
                 st.session_state.current_participant_idx = 0
-            elif st.session_state.current_participant_idx >= len(participant_list):
-                st.session_state.current_participant_idx = max(0, len(participant_list) - 1)
 
-            # Callback for navigation buttons with toast
-            def navigate_prev():
-                st.session_state.current_participant_idx -= 1
-                show_toast(f"Viewing participant {st.session_state.current_participant_idx + 1} of {len(participant_list)}", icon="info")
+            current_idx = st.session_state.current_participant_idx
+            selected_participant = participant_list[current_idx] if participant_list else None
 
-            def navigate_next():
-                st.session_state.current_participant_idx += 1
-                show_toast(f"Viewing participant {st.session_state.current_participant_idx + 1} of {len(participant_list)}", icon="info")
+            # Navigation row
+            col1, col2, col3 = st.columns([3, 1, 1])
 
-            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                def on_select_change():
+                    # Find index of selected participant
+                    selected = st.session_state.participant_selector
+                    if selected in participant_list:
+                        st.session_state.current_participant_idx = participant_list.index(selected)
+
+                st.selectbox(
+                    "Select participant",
+                    options=participant_list,
+                    index=current_idx,
+                    key="participant_selector",
+                    label_visibility="collapsed",
+                    on_change=on_select_change
+                )
 
             with col2:
+                def go_previous():
+                    if st.session_state.current_participant_idx > 0:
+                        st.session_state.current_participant_idx -= 1
+                        # Sync selectbox key with new index
+                        new_participant = participant_list[st.session_state.current_participant_idx]
+                        st.session_state.participant_selector = new_participant
+
                 st.button(
-                    "⬅️ Previous",
-                    disabled=st.session_state.current_participant_idx == 0,
+                    "Previous",
+                    disabled=current_idx == 0,
                     key="prev_btn",
-                    on_click=navigate_prev,
                     use_container_width=True,
+                    on_click=go_previous
                 )
 
             with col3:
+                def go_next():
+                    if st.session_state.current_participant_idx < len(participant_list) - 1:
+                        st.session_state.current_participant_idx += 1
+                        # Sync selectbox key with new index
+                        new_participant = participant_list[st.session_state.current_participant_idx]
+                        st.session_state.participant_selector = new_participant
+
                 st.button(
-                    "➡️ Next",
-                    disabled=st.session_state.current_participant_idx == len(participant_list) - 1,
+                    "Next",
+                    disabled=current_idx >= len(participant_list) - 1,
                     key="next_btn",
-                    on_click=navigate_next,
                     use_container_width=True,
+                    on_click=go_next
                 )
 
-            with col1:
-                selected_participant = st.selectbox(
-                    "Select participant",
-                    options=participant_list,
-                    index=st.session_state.current_participant_idx,
-                    key="selected_participant_dropdown",
-                    on_change=lambda: setattr(st.session_state, 'current_participant_idx',
-                                              participant_list.index(st.session_state.selected_participant_dropdown))
-                )
+            # Update selected_participant from current index
+            selected_participant = participant_list[st.session_state.current_participant_idx] if participant_list else None
 
-            # Show participant position with keyboard hints
-            st.info(
-                f"👤 **Viewing participant {st.session_state.current_participant_idx + 1} of {len(participant_list)}** | "
-                f"Use ⬅️ Previous / Next ➡️ buttons or the dropdown to navigate"
-            )
-
+            # Participant info header
             if selected_participant:
-                summary = next(
-                    s for s in st.session_state.summaries
-                    if s.participant_id == selected_participant
-                )
+                summary = get_summary_dict().get(selected_participant)
+
+                # Get group with label
+                assigned_group = st.session_state.participant_groups.get(selected_participant, "Default")
+                group_label = st.session_state.groups.get(assigned_group, {}).get("label", assigned_group)
+                group_display = f"{group_label}" if group_label != assigned_group else assigned_group
+
+                # Get randomization with label (check playlist_groups first, then custom labels)
+                assigned_randomization = st.session_state.get("participant_randomizations", {}).get(selected_participant, "")
+                if assigned_randomization:
+                    # Try playlist_groups first, then custom randomization_labels
+                    if assigned_randomization in st.session_state.get("playlist_groups", {}):
+                        rand_label = st.session_state.playlist_groups[assigned_randomization].get("label", assigned_randomization)
+                    else:
+                        rand_label = st.session_state.get("randomization_labels", {}).get(assigned_randomization, assigned_randomization)
+                    rand_display = f"{rand_label}" if rand_label != assigned_randomization else assigned_randomization
+                else:
+                    rand_display = "Not assigned"
+
+                st.markdown(f"**{selected_participant}** | Group: {group_display} | Randomization: {rand_display} | ({current_idx + 1} of {len(participant_list)})")
 
                 # Metrics row
-                col1, col2, col3, col4, col5, col6 = st.columns(6)
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("Total Beats", summary.total_beats)
                 with col2:
@@ -1631,9 +1722,6 @@ def main():
                     st.metric("Artifacts", f"{summary.artifact_ratio * 100:.1f}%")
                 with col5:
                     st.metric("Duration", f"{summary.duration_s / 60:.1f} min")
-                with col6:
-                    assigned_group = st.session_state.participant_groups.get(selected_participant, "Default")
-                    st.metric("Group", assigned_group)
 
                 # ISSUE 1 FIX: Show warning and expandable duplicate details if duplicates detected
                 if summary.duplicate_rr_intervals > 0:
@@ -1670,11 +1758,11 @@ def main():
 
                 # RR Interval Plot with Event Markers
                 st.markdown("---")
-                st.markdown("**📈 RR Interval Visualization with Event Markers:**")
+                st.subheader("RR Interval Visualization")
 
                 try:
                     # Load the recording using CACHED functions for instant access
-                    bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
+                    bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)
                     bundle = next(b for b in bundles if b.participant_id == selected_participant)
 
                     # Get cached recording data (uses tuples for hashability)
@@ -1987,15 +2075,19 @@ def main():
                         """)
 
                 # Music Change Event Generator
-                with st.expander("🎵 Generate Music Change Events", expanded=False):
+                with st.expander("Generate Music Change Events", expanded=False):
                     st.markdown("""
                     **Auto-generate music section boundaries** based on timing intervals and playlist group.
 
                     Music changes every 5 minutes in a cycling pattern based on the participant's randomization group.
                     """)
 
+                    # Ensure participant is initialized in events dict
+                    if selected_participant not in st.session_state.participant_events:
+                        st.session_state.participant_events[selected_participant] = {'events': [], 'manual': []}
+
                     # Get existing events to find measurement boundaries
-                    stored_data = st.session_state.participant_events[selected_participant]
+                    stored_data = st.session_state.participant_events.get(selected_participant, {'events': [], 'manual': []})
                     all_current_events = stored_data.get('events', []) + stored_data.get('manual', [])
 
                     # Find all relevant boundary events for music generation
@@ -2631,7 +2723,7 @@ def main():
                         all_evts = stored_data['events'] + stored_data['manual']
 
                         # Find the original summary to get the recording
-                        orig_summary = next((s for s in st.session_state.summaries if s.participant_id == selected_participant), None)
+                        orig_summary = get_summary_dict().get(selected_participant)  # O(1) cached lookup
                         if orig_summary:
                             # Update summary events with current state
                             orig_summary.events = all_evts
@@ -2679,12 +2771,48 @@ def main():
                     else:
                         st.caption("⚠️ Not yet saved")
 
+            # Bottom navigation buttons (duplicate for convenience)
+            st.markdown("---")
+            col_nav1, col_nav2, col_nav3 = st.columns([3, 1, 1])
+            with col_nav1:
+                st.caption(f"Participant {st.session_state.current_participant_idx + 1} of {len(participant_list)}")
+            with col_nav2:
+                def go_previous_bottom():
+                    if st.session_state.current_participant_idx > 0:
+                        st.session_state.current_participant_idx -= 1
+                        new_participant = participant_list[st.session_state.current_participant_idx]
+                        st.session_state.participant_selector = new_participant
+                        st.session_state._scroll_to_top = True
+
+                st.button(
+                    "Previous",
+                    disabled=st.session_state.current_participant_idx == 0,
+                    key="prev_btn_bottom",
+                    use_container_width=True,
+                    on_click=go_previous_bottom
+                )
+            with col_nav3:
+                def go_next_bottom():
+                    if st.session_state.current_participant_idx < len(participant_list) - 1:
+                        st.session_state.current_participant_idx += 1
+                        new_participant = participant_list[st.session_state.current_participant_idx]
+                        st.session_state.participant_selector = new_participant
+                        st.session_state._scroll_to_top = True
+
+                st.button(
+                    "Next",
+                    disabled=st.session_state.current_participant_idx >= len(participant_list) - 1,
+                    key="next_btn_bottom",
+                    use_container_width=True,
+                    on_click=go_next_bottom
+                )
+
     # ================== TAB: SETUP ==================
-    with tab3:
+    elif selected_page == "Setup":
         render_setup_tab()
 
     # ================== TAB: ANALYSIS ==================
-    with tab4:
+    elif selected_page == "Analysis":
         st.header("HRV Analysis")
 
         with st.expander("❓ Help - HRV Analysis", expanded=False):
@@ -2741,7 +2869,7 @@ def main():
 
             if analysis_mode == "Single Participant":
                 # Participant selection
-                participant_list = [s.participant_id for s in st.session_state.summaries]
+                participant_list = get_participant_list()  # Cached for performance
                 selected_participant = st.selectbox(
                     "Select Participant",
                     options=participant_list,
@@ -2786,7 +2914,7 @@ def main():
                                     st.write("📂 Loading recording data...")
                                     progress = st.progress(0)
                                     # Load the recording using CACHED functions
-                                    bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
+                                    bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)
                                     bundle = next(b for b in bundles if b.participant_id == selected_participant)
                                     recording_data = cached_load_recording(
                                         tuple(str(p) for p in bundle.rr_paths),
@@ -2794,11 +2922,11 @@ def main():
                                         selected_participant
                                     )
                                     # Reconstruct recording object from cached data
-                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, HRVLoggerEvent
+                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, EventMarker
                                     from music_hrv.cleaning.rr import RRInterval
                                     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                                     for ts, rr, elapsed in recording_data['rr_intervals']]
-                                    events = [HRVLoggerEvent(label=label, timestamp=ts)
+                                    events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                                               for label, ts in recording_data['events']]
                                     recording = HRVLoggerRecording(
                                         participant_id=selected_participant,
@@ -3003,8 +3131,8 @@ def main():
                                 # Use status context for group analysis
                                 with st.status(f"Analyzing {len(group_participants)} participants...", expanded=True) as status:
                                     from music_hrv.cleaning.rr import clean_rr_intervals, RRInterval
-                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, HRVLoggerEvent
-                                    bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
+                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, EventMarker
+                                    bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)
 
                                     # Results organized by section
                                     results_by_section = {section: [] for section in selected_sections}
@@ -3028,7 +3156,7 @@ def main():
                                             # Reconstruct recording object
                                             rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                                             for ts, rr, elapsed in recording_data['rr_intervals']]
-                                            events = [HRVLoggerEvent(label=label, timestamp=ts)
+                                            events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                                                       for label, ts in recording_data['events']]
                                             recording = HRVLoggerRecording(
                                                 participant_id=participant_id,

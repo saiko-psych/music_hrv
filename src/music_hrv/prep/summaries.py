@@ -8,6 +8,7 @@ from datetime import datetime
 
 from music_hrv.cleaning.rr import CleaningConfig, clean_rr_intervals, rr_summary
 from music_hrv.io.hrv_logger import HRVLoggerRecording, discover_recordings, load_recording
+from music_hrv.io.vns_analyse import discover_vns_recordings, load_vns_recording
 from music_hrv.segments.section_normalizer import SectionNormalizer
 
 
@@ -174,6 +175,43 @@ def load_hrv_logger_preview(
                 normalizer=normalizer,
                 rr_file_count=len(bundle.rr_paths),
                 events_file_count=len(bundle.events_paths),
+            )
+        )
+    return summaries
+
+
+def load_vns_preview(
+    root: Path,
+    *,
+    pattern: str,
+    config: CleaningConfig | None = None,
+    normalizer: SectionNormalizer | None = None,
+) -> list[PreparationSummary]:
+    """Return summaries for each VNS Analyse participant under root."""
+
+    bundles = discover_vns_recordings(root, pattern=pattern)
+    normalizer = normalizer or SectionNormalizer.from_yaml()
+    summaries: list[PreparationSummary] = []
+
+    for bundle in bundles:
+        vns_recording = load_vns_recording(bundle)
+
+        # Convert VNS recording to HRVLoggerRecording format for reuse of summarize_recording
+        hrv_recording = HRVLoggerRecording(
+            participant_id=vns_recording.participant_id,
+            rr_intervals=vns_recording.rr_intervals,
+            events=vns_recording.events,
+        )
+
+        summaries.append(
+            summarize_recording(
+                hrv_recording,
+                duplicate_rr_count=0,  # VNS doesn't track duplicates the same way
+                duplicate_details=[],
+                config=config,
+                normalizer=normalizer,
+                rr_file_count=1,  # VNS always has one file per participant
+                events_file_count=1 if vns_recording.events else 0,
             )
         )
     return summaries

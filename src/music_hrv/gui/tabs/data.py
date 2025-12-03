@@ -11,12 +11,155 @@ from music_hrv.cleaning.rr import CleaningConfig
 from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS
 from music_hrv.gui.shared import (
     cached_load_hrv_logger_preview,
+    cached_load_vns_preview,
     cached_load_participants,
     save_participant_data,
     show_toast,
     validate_regex_pattern,
     get_quality_badge,
 )
+
+
+# Mapping of folder name patterns to recording app info
+RECORDING_APP_DETECTION = {
+    "hrv_logger": {"name": "HRV Logger", "device": "Polar H10", "sampling_rate": 1000},
+    "hrv-logger": {"name": "HRV Logger", "device": "Polar H10", "sampling_rate": 1000},
+    "vns_analyse": {"name": "VNS Analyse", "device": "Unknown", "sampling_rate": 1000},
+    "vns-analyse": {"name": "VNS Analyse", "device": "Unknown", "sampling_rate": 1000},
+    "vns": {"name": "VNS Analyse", "device": "Unknown", "sampling_rate": 1000},
+    "elite_hrv": {"name": "Elite HRV", "device": "Unknown", "sampling_rate": 1000},
+    "elite-hrv": {"name": "Elite HRV", "device": "Unknown", "sampling_rate": 1000},
+    "elitehrv": {"name": "Elite HRV", "device": "Unknown", "sampling_rate": 1000},
+}
+
+
+def analyze_folder_structure(root_path: Path) -> dict:
+    """Analyze the folder structure to find data sources.
+
+    Expected structure:
+    raw/
+    ├── hrv_logger/
+    │   ├── RR_0001TEST.csv
+    │   └── Events_0001TEST.csv
+    ├── vns/
+    │   └── participant1.txt
+    └── elite_hrv/
+        └── participant2.csv
+
+    Returns:
+        Dictionary with:
+        - 'sources': list of detected data sources with their info
+        - 'tree': string representation of folder structure
+    """
+    if not root_path.exists():
+        return {"sources": [], "tree": "Directory not found"}
+
+    sources = []
+    tree_lines = [f"📁 {root_path.name}/"]
+
+    # Check immediate subdirectories
+    subdirs = sorted([d for d in root_path.iterdir() if d.is_dir()])
+
+    for subdir in subdirs:
+        folder_name = subdir.name.lower()
+        app_info = None
+
+        # Check if folder matches a known app
+        for pattern, info in RECORDING_APP_DETECTION.items():
+            if pattern == folder_name or folder_name.startswith(pattern):
+                app_info = info.copy()
+                app_info["folder"] = subdir.name
+                app_info["path"] = str(subdir)
+                break
+
+        if app_info:
+            # Count files in this folder
+            csv_files = list(subdir.glob("*.csv"))
+            txt_files = list(subdir.glob("*.txt"))
+            all_files = csv_files + txt_files
+
+            app_info["file_count"] = len(all_files)
+            sources.append(app_info)
+
+            tree_lines.append(f"├── 📂 {subdir.name}/ ({len(all_files)} files) → {app_info['name']}")
+
+            # Show first few files as preview
+            for i, f in enumerate(sorted(all_files)[:3]):
+                prefix = "│   ├──" if i < min(2, len(all_files) - 1) else "│   └──"
+                tree_lines.append(f"{prefix} 📄 {f.name}")
+            if len(all_files) > 3:
+                tree_lines.append(f"│   └── ... and {len(all_files) - 3} more files")
+        else:
+            # Unknown folder - just count files
+            all_files = list(subdir.glob("*.*"))
+            data_files = [f for f in all_files if f.suffix.lower() in ('.csv', '.txt')]
+            if data_files:
+                tree_lines.append(f"├── 📂 {subdir.name}/ ({len(data_files)} data files) → Unknown format")
+            else:
+                tree_lines.append(f"├── 📂 {subdir.name}/")
+
+    # Also check if root itself contains data files (flat structure)
+    root_csv = list(root_path.glob("*.csv"))
+    root_txt = list(root_path.glob("*.txt"))
+    root_files = root_csv + root_txt
+
+    if root_files and not subdirs:
+        # Flat structure - try to detect from folder name
+        app_info = None
+        for pattern, info in RECORDING_APP_DETECTION.items():
+            if pattern in root_path.name.lower():
+                app_info = info.copy()
+                break
+
+        if not app_info:
+            # Try to detect from file patterns
+            has_rr = any("RR" in f.name.upper() for f in root_files)
+            has_events = any("Events" in f.name for f in root_files)
+            if has_rr and has_events:
+                app_info = RECORDING_APP_DETECTION["hrv_logger"].copy()
+            else:
+                app_info = {"name": "Unknown", "device": "Unknown", "sampling_rate": 1000}
+
+        app_info["folder"] = root_path.name
+        app_info["path"] = str(root_path)
+        app_info["file_count"] = len(root_files)
+        sources.append(app_info)
+
+        for i, f in enumerate(sorted(root_files)[:5]):
+            tree_lines.append(f"├── 📄 {f.name}")
+        if len(root_files) > 5:
+            tree_lines.append(f"└── ... and {len(root_files) - 5} more files")
+
+    return {
+        "sources": sources,
+        "tree": "\n".join(tree_lines),
+    }
+
+
+def detect_recording_app(data_path: Path) -> dict:
+    """Detect recording app from folder name in the data path.
+
+    Args:
+        data_path: Path to the data directory
+
+    Returns:
+        Dictionary with 'name', 'device', and 'sampling_rate' keys
+    """
+    # Check the folder name directly first
+    folder_name = data_path.name.lower()
+    for folder_pattern, app_info in RECORDING_APP_DETECTION.items():
+        if folder_pattern == folder_name or folder_name.startswith(folder_pattern):
+            return app_info.copy()
+
+    # Check each part of the path (normalized to lowercase)
+    path_parts = [p.lower() for p in data_path.parts]
+
+    for folder_pattern, app_info in RECORDING_APP_DETECTION.items():
+        if folder_pattern in path_parts:
+            return app_info.copy()
+
+    # Default if no pattern matched
+    return {"name": "Unknown", "device": "Unknown", "sampling_rate": 1000}
 
 
 def render_data_tab():
@@ -133,20 +276,85 @@ def render_data_tab():
     col1, col2 = st.columns([3, 1])
     with col1:
         data_dir_input = st.text_input(
-            "Data directory path",
-            value=st.session_state.data_dir or "data/raw/hrv_logger",
-            help="Path to folder containing HRV Logger RR and Events CSV files",
+            "Raw data directory path",
+            value=st.session_state.data_dir or "data/raw",
+            help="Path to your raw data folder (should contain subfolders like hrv_logger, vns, etc.)",
         )
     with col2:
         st.write("")  # Spacer
         st.write("")  # Spacer
-        if st.button("Load Data", type="primary", use_container_width=True):
-            data_path = Path(data_dir_input).expanduser()
-            if data_path.exists():
-                st.session_state.data_dir = str(data_path)
+        analyze_clicked = st.button("Analyze Folder", type="secondary", use_container_width=True)
+
+    # Analyze folder structure when button clicked or path changes
+    data_path = Path(data_dir_input).expanduser()
+
+    if analyze_clicked and data_path.exists():
+        folder_analysis = analyze_folder_structure(data_path)
+        st.session_state.folder_analysis = folder_analysis
+        st.session_state.analyzed_path = str(data_path)
+
+    # Show folder analysis if available
+    if "folder_analysis" in st.session_state and st.session_state.get("analyzed_path") == str(data_path):
+        folder_analysis = st.session_state.folder_analysis
+
+        # Show tree diagram
+        with st.expander("Folder Structure", expanded=True):
+            st.code(folder_analysis["tree"], language=None)
+
+        # Show detected sources and let user select
+        sources = folder_analysis["sources"]
+        if sources:
+            st.markdown("**Detected Data Sources:**")
+
+            # Create source selection
+            source_options = []
+            for src in sources:
+                label = f"{src['folder']} → {src['name']} ({src['file_count']} files)"
+                source_options.append(label)
+
+            if len(sources) == 1:
+                # Auto-select if only one source
+                selected_idx = 0
+                st.info(f"Found: **{sources[0]['name']}** in `{sources[0]['folder']}/`")
+            else:
+                selected_idx = st.selectbox(
+                    "Select data source to load",
+                    options=range(len(source_options)),
+                    format_func=lambda i: source_options[i],
+                    key="source_selector",
+                )
+
+            selected_source = sources[selected_idx]
+
+            # Show source info
+            col_src1, col_src2, col_src3 = st.columns(3)
+            with col_src1:
+                st.metric("App", selected_source["name"])
+            with col_src2:
+                st.metric("Device", selected_source["device"])
+            with col_src3:
+                st.metric("Files", selected_source["file_count"])
+
+            # Check if the selected app is supported
+            if selected_source["name"] == "Elite HRV":
+                st.warning(
+                    f"**{selected_source['name']}** detected but not yet supported. "
+                    "HRV Logger and VNS Analyse are currently supported."
+                )
+
+            # Load button
+            if st.button("Load Selected Source", type="primary", use_container_width=True):
+                load_path = Path(selected_source["path"])
+                st.session_state.data_dir = str(load_path)
+                st.session_state.default_device_settings = {
+                    "recording_app": selected_source["name"],
+                    "device": selected_source["device"],
+                    "sampling_rate": selected_source["sampling_rate"],
+                }
 
                 with st.status("Loading recordings...", expanded=True) as status:
                     try:
+                        st.write(f"Loading from: {selected_source['name']}")
                         st.write("Discovering recordings...")
 
                         config_dict = {
@@ -154,12 +362,23 @@ def render_data_tab():
                             "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
                             "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct,
                         }
-                        summaries = cached_load_hrv_logger_preview(
-                            str(data_path),
-                            pattern=id_pattern,
-                            config_dict=config_dict,
-                            gui_events_dict=st.session_state.all_events,
-                        )
+
+                        # Use the appropriate loader based on detected app
+                        if selected_source["name"] == "VNS Analyse":
+                            summaries = cached_load_vns_preview(
+                                str(load_path),
+                                pattern=id_pattern,
+                                config_dict=config_dict,
+                                gui_events_dict=st.session_state.all_events,
+                            )
+                        else:
+                            # Default to HRV Logger format (also used for unknown)
+                            summaries = cached_load_hrv_logger_preview(
+                                str(load_path),
+                                pattern=id_pattern,
+                                config_dict=config_dict,
+                                gui_events_dict=st.session_state.all_events,
+                            )
 
                         st.write(f"Processing {len(summaries)} participant(s)...")
                         st.session_state.summaries = summaries
@@ -174,8 +393,8 @@ def render_data_tab():
                     except Exception as e:
                         status.update(label="Error loading data", state="error")
                         st.error(f"Error loading data: {e}")
-            else:
-                st.error(f"Directory not found: {data_path}")
+        else:
+            st.warning("No supported data sources found. Check that your folder structure matches the expected format.")
 
     # Store id_pattern for use by other tabs
     st.session_state.id_pattern = id_pattern
@@ -242,10 +461,15 @@ def _render_participants_table():
 
         quality_badge = get_quality_badge(100, summary.artifact_ratio)
 
+        # Get device info from session state
+        device_settings = st.session_state.get("default_device_settings", {})
+        device_name = device_settings.get("device", "Unknown")
+
         participants_data.append({
             "Participant": summary.participant_id,
             "Quality": quality_badge,
             "Saved": "Y" if summary.participant_id in loaded_participants else "N",
+            "Device": device_name,
             "Files": files_str,
             "Date/Time": recording_dt_str,
             "Group": st.session_state.participant_groups.get(summary.participant_id, "Default"),
@@ -271,6 +495,8 @@ def _render_participants_table():
             "Quality": st.column_config.TextColumn("Quality", disabled=True, width="small",
                 help="Green=Good (<5% artifacts), Yellow=Moderate (5-15%), Red=Poor (>15%)"),
             "Saved": st.column_config.TextColumn("Saved", disabled=True, width="small"),
+            "Device": st.column_config.TextColumn("Device", disabled=True, width="small",
+                help="Recording device used (e.g., Polar H10)"),
             "Files": st.column_config.TextColumn("Files", disabled=True, width="small",
                 help="RR files / Events files. * indicates multiple files (merged)"),
             "Group": st.column_config.SelectboxColumn("Group", options=list(st.session_state.groups.keys()),
@@ -284,7 +510,7 @@ def _render_participants_table():
         use_container_width=True,
         hide_index=True,
         key="participants_table",
-        disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates",
+        disabled=["Participant", "Saved", "Device", "Date/Time", "Total Beats", "Retained", "Duplicates",
                   "Artifacts (%)", "Duration (min)", "Events", "Total Events", "Duplicate Events",
                   "RR Range (ms)", "Mean RR (ms)"]
     )

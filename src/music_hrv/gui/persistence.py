@@ -13,6 +13,7 @@ EVENTS_FILE = CONFIG_DIR / "events.yml"
 SECTIONS_FILE = CONFIG_DIR / "sections.yml"
 PARTICIPANTS_FILE = CONFIG_DIR / "participants.yml"
 PLAYLIST_GROUPS_FILE = CONFIG_DIR / "playlist_groups.yml"
+MUSIC_LABELS_FILE = CONFIG_DIR / "music_labels.yml"
 
 
 def ensure_config_dir() -> None:
@@ -115,4 +116,32 @@ def load_playlist_groups() -> dict[str, Any]:
     if not PLAYLIST_GROUPS_FILE.exists():
         return {}
     with open(PLAYLIST_GROUPS_FILE, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_music_labels(music_labels: dict[str, Any]) -> None:
+    """Save music labels configuration to YAML.
+
+    Format:
+    {
+        "music_1": {
+            "label": "Music 1",
+            "description": "Brandenburg Concerto No. 3 - Bach"
+        },
+        "music_2": {
+            "label": "Music 2",
+            "description": "Moonlight Sonata - Beethoven"
+        }
+    }
+    """
+    ensure_config_dir()
+    with open(MUSIC_LABELS_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(music_labels, f, default_flow_style=False, allow_unicode=True)
+
+
+def load_music_labels() -> dict[str, Any]:
+    """Load music labels configuration from YAML."""
+    if not MUSIC_LABELS_FILE.exists():
+        return {}
+    with open(MUSIC_LABELS_FILE, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}

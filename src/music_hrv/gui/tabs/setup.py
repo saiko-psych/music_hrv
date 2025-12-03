@@ -13,6 +13,7 @@ from music_hrv.gui.persistence import (
     load_sections,
     load_playlist_groups,
     save_playlist_groups,
+    save_music_labels,
 )
 from music_hrv.gui.shared import (
     auto_save_config,
@@ -23,17 +24,22 @@ from music_hrv.gui.shared import (
 
 
 def render_setup_tab():
-    """Render the Setup tab with nested sub-tabs for Events, Groups, Sections."""
+    """Render the Setup tab with nested sub-tabs for Events, Groups, Playlists, Sections."""
     st.header("Setup")
 
     # Nested sub-tabs
-    tab_events, tab_groups, tab_sections = st.tabs(["Events", "Groups", "Sections"])
+    tab_events, tab_groups, tab_playlists, tab_sections = st.tabs(
+        ["Events", "Groups", "Playlists", "Sections"]
+    )
 
     with tab_events:
         _render_events_section()
 
     with tab_groups:
         _render_groups_section()
+
+    with tab_playlists:
+        _render_playlists_section()
 
     with tab_sections:
         _render_sections_section()
@@ -492,35 +498,59 @@ def _render_groups_section():
                 type="secondary",
             )
 
-    # Playlist Groups Section
     st.markdown("---")
+    st.info("**All changes save automatically** when you modify group settings or select events.")
+
+
+def _render_playlists_section():
+    """Render the Playlists sub-section for music randomization."""
     st.subheader("Playlist Groups (Music Randomization)")
+
+    with st.expander("Help - Playlist Groups", expanded=False):
+        st.markdown("""
+        ### What are Playlist Groups?
+
+        Playlist groups define the **music order** for randomization conditions in your study.
+        Each participant can be assigned to a playlist group, which determines the order of
+        music pieces they experience.
+
+        ### Example
+
+        If your study has 3 music pieces and 6 randomization conditions:
+        - **playlist_01**: music_1 -> music_2 -> music_3
+        - **playlist_02**: music_1 -> music_3 -> music_2
+        - **playlist_03**: music_2 -> music_1 -> music_3
+        - etc.
+
+        ### How to Use
+
+        1. Define playlist groups here with their music order
+        2. Assign participants to playlist groups in the Data tab
+        3. Use Batch Processing to auto-generate music events based on the playlist order
+        """)
+
     st.markdown("""
     Define music order for each randomization group. Participants assigned to a playlist group
     will have music events generated in the specified order.
     """)
 
-    # Initialize playlist groups
+    # Initialize playlist groups (already done at app startup, but ensure present)
     if "playlist_groups" not in st.session_state:
         loaded_playlist = load_playlist_groups()
         if loaded_playlist:
             st.session_state.playlist_groups = loaded_playlist
         else:
-            st.session_state.playlist_groups = {
-                "R1": {"label": "Randomization 1", "music_order": ["music_1", "music_2", "music_3"]},
-                "R2": {"label": "Randomization 2", "music_order": ["music_1", "music_3", "music_2"]},
-                "R3": {"label": "Randomization 3", "music_order": ["music_2", "music_1", "music_3"]},
-                "R4": {"label": "Randomization 4", "music_order": ["music_2", "music_3", "music_1"]},
-                "R5": {"label": "Randomization 5", "music_order": ["music_3", "music_1", "music_2"]},
-                "R6": {"label": "Randomization 6", "music_order": ["music_3", "music_2", "music_1"]},
-            }
+            st.session_state.playlist_groups = {}
 
     if "participant_playlists" not in st.session_state:
         st.session_state.participant_playlists = {}
 
     # Create new playlist group
     with st.expander("Create New Playlist Group"):
-        new_playlist_name = st.text_input("Playlist Group ID (e.g., R7)", key="new_playlist_name")
+        new_playlist_name = st.text_input(
+            "Playlist Group ID (e.g., playlist_06)",
+            key="new_playlist_name"
+        )
         new_playlist_label = st.text_input("Playlist Group Label", key="new_playlist_label")
         new_playlist_order = st.text_input(
             "Music Order (comma-separated, e.g., music_2, music_1, music_3)",
@@ -544,85 +574,184 @@ def _render_groups_section():
         st.button("Create Playlist Group", key="create_playlist_btn", on_click=create_playlist_group)
 
     # Show existing playlist groups
+    st.markdown("---")
     st.subheader("Existing Playlist Groups")
 
-    for playlist_name, playlist_data in list(st.session_state.playlist_groups.items()):
-        with st.expander(f"{playlist_name} - {playlist_data['label']}"):
-            st.markdown(f"**Music Order:** {' -> '.join(playlist_data['music_order'])} -> (repeat)")
+    if not st.session_state.playlist_groups:
+        st.info("No playlist groups defined yet. Create one above.")
+    else:
+        for playlist_name, playlist_data in list(st.session_state.playlist_groups.items()):
+            with st.expander(f"{playlist_name} - {playlist_data['label']}"):
+                # Edit label
+                new_label = st.text_input(
+                    "Label",
+                    value=playlist_data.get('label', playlist_name),
+                    key=f"edit_label_{playlist_name}"
+                )
 
-            new_order = st.text_input(
-                "Edit Music Order (comma-separated)",
-                value=", ".join(playlist_data['music_order']),
-                key=f"edit_order_{playlist_name}"
-            )
+                st.markdown(f"**Music Order:** {' -> '.join(playlist_data['music_order'])}")
 
-            col_pl1, col_pl2 = st.columns(2)
-            with col_pl1:
-                def save_playlist_order(pl_name, new_ord):
-                    order_list = [m.strip() for m in new_ord.split(",") if m.strip()]
-                    if order_list:
-                        st.session_state.playlist_groups[pl_name]["music_order"] = order_list
+                new_order = st.text_input(
+                    "Edit Music Order (comma-separated)",
+                    value=", ".join(playlist_data['music_order']),
+                    key=f"edit_order_{playlist_name}"
+                )
+
+                col_pl1, col_pl2, col_pl3 = st.columns(3)
+                with col_pl1:
+                    def save_playlist_changes(pl_name, new_ord, new_lbl):
+                        order_list = [m.strip() for m in new_ord.split(",") if m.strip()]
+                        if order_list:
+                            st.session_state.playlist_groups[pl_name]["music_order"] = order_list
+                        st.session_state.playlist_groups[pl_name]["label"] = new_lbl
                         save_playlist_groups(st.session_state.playlist_groups)
-                        show_toast(f"Updated '{pl_name}' music order", icon="success")
+                        show_toast(f"Updated '{pl_name}'", icon="success")
 
-                st.button(
-                    "Save Order",
-                    key=f"save_playlist_{playlist_name}",
-                    on_click=save_playlist_order,
-                    args=(playlist_name, new_order)
-                )
+                    st.button(
+                        "Save Changes",
+                        key=f"save_playlist_{playlist_name}",
+                        on_click=save_playlist_changes,
+                        args=(playlist_name, new_order, new_label)
+                    )
 
-            with col_pl2:
-                def delete_playlist(pl_name):
-                    del st.session_state.playlist_groups[pl_name]
-                    for pid in list(st.session_state.participant_playlists.keys()):
-                        if st.session_state.participant_playlists.get(pid) == pl_name:
-                            del st.session_state.participant_playlists[pid]
-                    save_playlist_groups(st.session_state.playlist_groups)
-                    show_toast(f"Deleted playlist group '{pl_name}'", icon="success")
+                with col_pl3:
+                    def delete_playlist(pl_name):
+                        del st.session_state.playlist_groups[pl_name]
+                        for pid in list(st.session_state.participant_playlists.keys()):
+                            if st.session_state.participant_playlists.get(pid) == pl_name:
+                                del st.session_state.participant_playlists[pid]
+                        # Also remove from participant_randomizations
+                        for pid in list(st.session_state.get("participant_randomizations", {}).keys()):
+                            if st.session_state.participant_randomizations.get(pid) == pl_name:
+                                del st.session_state.participant_randomizations[pid]
+                        save_playlist_groups(st.session_state.playlist_groups)
+                        show_toast(f"Deleted playlist group '{pl_name}'", icon="success")
 
-                st.button(
-                    "Delete",
-                    key=f"delete_playlist_{playlist_name}",
-                    on_click=delete_playlist,
-                    args=(playlist_name,)
-                )
+                    st.button(
+                        "Delete",
+                        key=f"delete_playlist_{playlist_name}",
+                        on_click=delete_playlist,
+                        args=(playlist_name,),
+                        type="secondary"
+                    )
 
-            participants_in_group = [
-                pid for pid, pl in st.session_state.participant_playlists.items()
-                if pl == playlist_name
-            ]
-            if participants_in_group:
-                st.markdown(f"**Participants:** {', '.join(participants_in_group)}")
-            else:
-                st.caption("No participants assigned yet")
+                # Show participants assigned to this playlist
+                participants_in_group = [
+                    pid for pid, pl in st.session_state.get("participant_randomizations", {}).items()
+                    if pl == playlist_name
+                ]
+                if participants_in_group:
+                    st.markdown(f"**Participants:** {', '.join(participants_in_group)}")
+                else:
+                    st.caption("No participants assigned yet")
+
+    # Music Item Labels Section
+    st.markdown("---")
+    st.subheader("Music Item Labels")
+    st.markdown("""
+    Define labels and descriptions for your music items (e.g., `music_1`, `music_2`).
+    These labels will appear in exports and the codebook.
+    """)
+
+    # Collect all unique music items from playlist orders
+    all_music_items = set()
+    for pl_data in st.session_state.get("playlist_groups", {}).values():
+        all_music_items.update(pl_data.get("music_order", []))
+    all_music_items = sorted(all_music_items)
+
+    if all_music_items:
+        # Initialize music_labels if not present
+        if "music_labels" not in st.session_state:
+            st.session_state.music_labels = {}
+
+        music_data = []
+        for music_item in all_music_items:
+            current_data = st.session_state.music_labels.get(music_item, {})
+            music_data.append({
+                "Code": music_item,
+                "Label": current_data.get("label", music_item.replace("_", " ").title()),
+                "Description": current_data.get("description", ""),
+            })
+
+        df_music = pd.DataFrame(music_data)
+
+        edited_music = st.data_editor(
+            df_music,
+            use_container_width=True,
+            hide_index=True,
+            key="music_labels_table",
+            column_config={
+                "Code": st.column_config.TextColumn("Code", disabled=True, help="Internal identifier"),
+                "Label": st.column_config.TextColumn("Label", help="Short display name"),
+                "Description": st.column_config.TextColumn("Description", help="Full description (e.g., composer, piece name)", width="large"),
+            }
+        )
+
+        def save_music_labels_callback():
+            """Save music labels from the edited table."""
+            for _, row in edited_music.iterrows():
+                code = row["Code"]
+                st.session_state.music_labels[code] = {
+                    "label": row["Label"],
+                    "description": row["Description"],
+                }
+            # Save to persistence (dedicated music_labels file)
+            save_music_labels(st.session_state.music_labels)
+            show_toast("Music labels saved", icon="success")
+
+        st.button("Save Music Labels", key="save_music_labels_btn", on_click=save_music_labels_callback, type="primary")
+    else:
+        st.info("No music items defined yet. Add them to playlist groups above.")
 
     st.markdown("---")
-    st.info("**All changes save automatically** when you modify group settings, select events, or assign participants.")
+    st.info("**All changes save automatically.** Playlist labels are used in the Data tab.")
 
 
 def _render_sections_section():
     """Render the Sections sub-section."""
     st.subheader("Sections")
-    st.markdown("Define time ranges (sections) between events for analysis. Each section has a start and end event.")
+
+    with st.expander("Help - Sections", expanded=False):
+        st.markdown("""
+        ### What are Sections?
+
+        Sections define **time ranges** between events for HRV analysis. Each section has:
+        - **Code**: Internal identifier (e.g., `music_01`)
+        - **Label**: Short display name (e.g., `Music 1`)
+        - **Description**: Detailed description (e.g., `Brandenburg Concerto No. 3 - Bach`)
+        - **Start/End Events**: The events that mark the beginning and end
+
+        ### Example
+
+        | Code | Label | Description | Start Event | End Event |
+        |------|-------|-------------|-------------|-----------|
+        | music_01 | Music 1 | Brandenburg Concerto - Bach | music_01_start | music_01_end |
+        | rest_pre | Pre-Rest | 5-minute baseline rest period | rest_pre_start | rest_pre_end |
+        """)
+
+    st.markdown("Define time ranges (sections) between events for analysis.")
 
     # Initialize sections if not present
     if "sections" not in st.session_state:
         loaded_sections = load_sections()
         if not loaded_sections:
             st.session_state.sections = {
-                "rest_pre": {"label": "Pre-Rest", "start_event": "rest_pre_start", "end_event": "rest_pre_end"},
-                "measurement": {"label": "Measurement", "start_event": "measurement_start", "end_event": "measurement_end"},
-                "pause": {"label": "Pause", "start_event": "pause_start", "end_event": "pause_end"},
-                "rest_post": {"label": "Post-Rest", "start_event": "rest_post_start", "end_event": "rest_post_end"},
+                "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_event": "rest_pre_end"},
+                "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_event": "measurement_end"},
+                "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_event": "pause_end"},
+                "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_event": "rest_post_end"},
             }
         else:
             st.session_state.sections = loaded_sections
 
     # Create new section
     with st.expander("Create New Section"):
-        new_section_name = st.text_input("Section Name (internal ID)", key="new_section_name")
-        new_section_label = st.text_input("Section Label (display name)", key="new_section_label")
+        new_section_name = st.text_input("Section Code (internal ID)", key="new_section_name",
+                                         help="e.g., music_01, rest_pre")
+        new_section_label = st.text_input("Section Label (short name)", key="new_section_label",
+                                          help="e.g., Music 1, Pre-Rest")
+        new_section_desc = st.text_input("Description (detailed)", key="new_section_desc",
+                                         help="e.g., Brandenburg Concerto No. 3 - Bach")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -642,6 +771,7 @@ def _render_sections_section():
             if new_section_name and new_section_name not in st.session_state.sections:
                 st.session_state.sections[new_section_name] = {
                     "label": new_section_label or new_section_name,
+                    "description": new_section_desc or "",
                     "start_event": start_event,
                     "end_event": end_event,
                 }
@@ -663,8 +793,9 @@ def _render_sections_section():
         sections_list = []
         for section_name, section_data in st.session_state.sections.items():
             sections_list.append({
-                "Section Name": section_name,
+                "Code": section_name,
                 "Label": section_data.get("label", section_name),
+                "Description": section_data.get("description", ""),
                 "Start Event": section_data.get("start_event", ""),
                 "End Event": section_data.get("end_event", ""),
             })
@@ -679,6 +810,9 @@ def _render_sections_section():
             num_rows="dynamic",
             key="sections_table",
             column_config={
+                "Code": st.column_config.TextColumn("Code", help="Internal identifier"),
+                "Label": st.column_config.TextColumn("Label", help="Short display name"),
+                "Description": st.column_config.TextColumn("Description", help="Detailed description", width="large"),
                 "Start Event": st.column_config.SelectboxColumn("Start Event", options=available_events, required=True),
                 "End Event": st.column_config.SelectboxColumn("End Event", options=available_events, required=True),
             }
@@ -688,12 +822,14 @@ def _render_sections_section():
             """Callback to save section changes."""
             updated_sections = {}
             for _, row in edited_sections.iterrows():
-                section_name = row["Section Name"]
-                updated_sections[section_name] = {
-                    "label": row["Label"],
-                    "start_event": row["Start Event"],
-                    "end_event": row["End Event"],
-                }
+                section_code = row["Code"]
+                if section_code:  # Skip empty rows
+                    updated_sections[section_code] = {
+                        "label": row["Label"],
+                        "description": row.get("Description", ""),
+                        "start_event": row["Start Event"],
+                        "end_event": row["End Event"],
+                    }
 
             st.session_state.sections = updated_sections
             auto_save_config()
@@ -711,3 +847,94 @@ def _render_sections_section():
         )
     else:
         st.info("No sections defined yet. Create sections above.")
+
+    # Codebook Export Section
+    st.markdown("---")
+    st.subheader("Codebook Export")
+    st.markdown("Export all codes, labels, and descriptions for documentation.")
+
+    def generate_codebook():
+        """Generate a comprehensive codebook with all definitions."""
+        codebook_data = []
+
+        # Events
+        for event_name, synonyms in st.session_state.get("all_events", {}).items():
+            codebook_data.append({
+                "Category": "Event",
+                "Code": event_name,
+                "Label": event_name.replace("_", " ").title(),
+                "Description": f"Synonyms: {', '.join(synonyms[:3])}" if synonyms else "",
+            })
+
+        # Sections
+        for section_code, section_data in st.session_state.get("sections", {}).items():
+            codebook_data.append({
+                "Category": "Section",
+                "Code": section_code,
+                "Label": section_data.get("label", section_code),
+                "Description": section_data.get("description", ""),
+            })
+
+        # Groups
+        for group_id, group_data in st.session_state.get("groups", {}).items():
+            codebook_data.append({
+                "Category": "Group",
+                "Code": group_id,
+                "Label": group_data.get("label", group_id),
+                "Description": f"Expected events: {len(group_data.get('expected_events', {}))}",
+            })
+
+        # Playlist Groups
+        for pl_id, pl_data in st.session_state.get("playlist_groups", {}).items():
+            codebook_data.append({
+                "Category": "Playlist",
+                "Code": pl_id,
+                "Label": pl_data.get("label", pl_id),
+                "Description": f"Order: {' -> '.join(pl_data.get('music_order', []))}",
+            })
+
+        # Music Items
+        for music_code, music_data in st.session_state.get("music_labels", {}).items():
+            codebook_data.append({
+                "Category": "Music",
+                "Code": music_code,
+                "Label": music_data.get("label", music_code),
+                "Description": music_data.get("description", ""),
+            })
+
+        # Device Settings
+        device_settings = st.session_state.get("default_device_settings", {})
+        if device_settings:
+            codebook_data.append({
+                "Category": "Device",
+                "Code": "recording_app",
+                "Label": "Recording App",
+                "Description": device_settings.get("recording_app", "HRV Logger"),
+            })
+            codebook_data.append({
+                "Category": "Device",
+                "Code": "device",
+                "Label": "HR Sensor",
+                "Description": device_settings.get("device", "Polar H10"),
+            })
+            codebook_data.append({
+                "Category": "Device",
+                "Code": "sampling_rate",
+                "Label": "Sampling Rate",
+                "Description": f"{device_settings.get('sampling_rate', 1000)} Hz",
+            })
+
+        return pd.DataFrame(codebook_data)
+
+    if st.button("Generate Codebook", key="generate_codebook_btn"):
+        df_codebook = generate_codebook()
+        st.dataframe(df_codebook, use_container_width=True, hide_index=True)
+
+        csv_codebook = df_codebook.to_csv(index=False)
+        st.download_button(
+            label="Download Codebook CSV",
+            data=csv_codebook,
+            file_name="codebook.csv",
+            mime="text/csv",
+            key="download_codebook"
+        )

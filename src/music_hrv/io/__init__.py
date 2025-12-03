@@ -16,7 +16,16 @@ from music_hrv.io.hrv_logger import (
     load_rr_intervals,
 )
 
+from music_hrv.io.vns_analyse import (
+    VNSRecording,
+    VNSRecordingBundle,
+    discover_vns_recordings,
+    load_vns_recording,
+    load_vns_recordings_from_directory,
+)
+
 __all__ = [
+    # HRV Logger
     "DEFAULT_ID_PATTERN",
     "PREDEFINED_PATTERNS",
     "DuplicateInfo",
@@ -30,4 +39,10 @@ __all__ = [
     "load_recording",
     "load_recordings_from_directory",
     "load_rr_intervals",
+    # VNS Analyse
+    "VNSRecording",
+    "VNSRecordingBundle",
+    "discover_vns_recordings",
+    "load_vns_recording",
+    "load_vns_recordings_from_directory",
 ]

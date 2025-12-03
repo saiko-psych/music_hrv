@@ -10,7 +10,7 @@ import streamlit as st
 
 from music_hrv.cleaning.rr import CleaningConfig
 from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS, load_recording, discover_recordings
-from music_hrv.prep import load_hrv_logger_preview
+from music_hrv.prep import load_hrv_logger_preview, load_vns_preview
 from music_hrv.segments.section_normalizer import SectionNormalizer
 from music_hrv.config.sections import SectionsConfig, SectionDefinition
 from music_hrv.gui.persistence import (
@@ -47,6 +47,7 @@ __all__ = [
     "detect_artifacts_fixpeaks",
     # Cached functions
     "cached_load_hrv_logger_preview",
+    "cached_load_vns_preview",
     "cached_load_participants",
     "cached_discover_recordings",
     "cached_load_recording",
@@ -470,6 +471,19 @@ def cached_load_hrv_logger_preview(data_dir_str, pattern, config_dict, gui_event
     )
     normalizer = create_gui_normalizer(gui_events_dict)
     return load_hrv_logger_preview(data_path, pattern=pattern, config=config, normalizer=normalizer)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_load_vns_preview(data_dir_str, pattern, config_dict, gui_events_dict):
+    """Cached version of load_vns_preview for VNS Analyse data."""
+    data_path = Path(data_dir_str)
+    config = CleaningConfig(
+        rr_min_ms=config_dict["rr_min_ms"],
+        rr_max_ms=config_dict["rr_max_ms"],
+        sudden_change_pct=config_dict["sudden_change_pct"]
+    )
+    normalizer = create_gui_normalizer(gui_events_dict)
+    return load_vns_preview(data_path, pattern=pattern, config=config, normalizer=normalizer)
 
 
 @st.cache_data(show_spinner=False)
