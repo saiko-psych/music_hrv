@@ -38,7 +38,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.3.4` | **Tests**: 13/13 passing
+**Version**: `v0.4.2` | **Tests**: 13/13 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, batch processing, CSV import)
@@ -50,6 +50,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 **Storage**: `~/.music_hrv/*.yml`
 
 **Data Sources**: HRV Logger (CSV) and VNS Analyse (TXT) supported
+- VNS loader: Only imports one RR section (raw by default, use_corrected option available)
 
 ## Performance Rules (CRITICAL)
 
@@ -68,9 +69,13 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## TODOs
 
+- [ ] Add `use_corrected` option in UI for VNS data (raw vs corrected RR)
+- [ ] Participant section should work for VNS data too
+- [ ] Scroll to top when clicking Next/Previous buttons or switching sections
 - [ ] Improve UI layout (spacing, sizing)
 - [ ] Section-based HRV analysis (currently whole recording)
-- [x] ~~VNS Analyse loader~~ (DONE v0.3.3)
+- [x] ~~VNS loader fix: only imports one section~~ (DONE v0.4.2)
+- [x] ~~App column shows recording source~~ (DONE v0.4.2)
 - [x] ~~CSV import for groups/playlists~~ (DONE v0.3.4)
 
 ## References

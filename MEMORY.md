@@ -4,6 +4,69 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-12-03 (Continued): VNS Loader Fix & App Column
+
+### Version Tag: `v0.4.2`
+
+### Issues Fixed:
+
+#### 1. VNS Loader Importing Data Twice
+**Problem**: VNS Analyse files contain TWO RR sections:
+- `RR-Intervalle - Rohwerte (Nicht aktiv)` = Raw/Uncorrected values
+- `RR-Intervalle - Korrigierte Werte (Aktiv)` = Corrected values
+
+The loader was importing ALL RR values, essentially doubling the data.
+
+**Solution**:
+- Added section tracking with `current_section` variable
+- Added `use_corrected` parameter (default: False = raw values)
+- Only parse RR values when `current_section == target_section`
+
+```python
+VNS_RAW_SECTION = "RR-Intervalle - Rohwerte"
+VNS_CORRECTED_SECTION = "RR-Intervalle - Korrigierte Werte"
+
+def load_vns_recording(bundle, *, use_corrected=False):
+    target_section = VNS_CORRECTED_SECTION if use_corrected else VNS_RAW_SECTION
+    current_section = None
+
+    for line in lines:
+        if VNS_RAW_SECTION in line:
+            current_section = VNS_RAW_SECTION
+        elif VNS_CORRECTED_SECTION in line:
+            current_section = VNS_CORRECTED_SECTION
+
+        if current_section != target_section:
+            continue
+        # ... parse RR values
+```
+
+#### 2. App Column Showing "Unknown"
+**Problem**: Even with `source_app` field added to PreparationSummary, cached data still showed "Unknown".
+
+**Solution**: Explicitly set `source_app` after loading to handle cached data:
+```python
+# Ensure source_app is set (handles old cached data)
+for s in summaries:
+    if not hasattr(s, 'source_app') or s.source_app == "Unknown":
+        object.__setattr__(s, 'source_app', app_name)
+```
+
+### Files Modified:
+- `src/music_hrv/io/vns_analyse.py` - Section tracking, use_corrected parameter
+- `src/music_hrv/gui/tabs/data.py` - Explicit source_app setting
+
+### Future Tasks (noted for next session):
+- [ ] Add UI option for `use_corrected` (raw vs corrected VNS data)
+- [ ] Participant section should work for VNS data
+- [ ] Scroll to top when clicking Next/Previous or switching sections
+
+### Testing Results:
+- ✅ All 13 tests passing
+- ✅ Changes committed and tagged v0.4.2
+
+---
+
 ## Session 2025-12-03: CSV Import & UI Improvements
 
 ### Version Tags: `v0.3.3`, `v0.3.4`
