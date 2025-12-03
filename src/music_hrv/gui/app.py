@@ -209,7 +209,7 @@ if "sections" not in st.session_state:
 if "normalizer" not in st.session_state:
     st.session_state.normalizer = create_gui_normalizer(st.session_state.all_events)
 
-# Load participant-specific data (groups, randomizations, event orders, manual events)
+# Load participant-specific data (groups, playlists, labels, event orders, manual events)
 if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
     loaded_participants = load_participants()
     if loaded_participants:
@@ -227,6 +227,16 @@ if "participant_groups" not in st.session_state or "event_order" not in st.sessi
             for pid, data in loaded_participants.items()
             if not pid.startswith("_")
         }
+        st.session_state.participant_playlists = {
+            pid: data.get("playlist", "")
+            for pid, data in loaded_participants.items()
+            if not pid.startswith("_")
+        }
+        st.session_state.participant_labels = {
+            pid: data.get("label", "")
+            for pid, data in loaded_participants.items()
+            if not pid.startswith("_")
+        }
         st.session_state.event_order = {
             pid: data.get("event_order", [])
             for pid, data in loaded_participants.items()
@@ -240,6 +250,8 @@ if "participant_groups" not in st.session_state or "event_order" not in st.sessi
     else:
         st.session_state.participant_groups = {}
         st.session_state.participant_randomizations = {}
+        st.session_state.participant_playlists = {}
+        st.session_state.participant_labels = {}
         st.session_state.event_order = {}
         st.session_state.manual_events = {}
 

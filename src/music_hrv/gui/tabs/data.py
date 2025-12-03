@@ -520,6 +520,22 @@ def _render_participants_table():
         device_settings = st.session_state.get("default_device_settings", {})
         device_name = device_settings.get("device", "Unknown")
 
+        # Get playlist assignment
+        playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
+        group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
+
+        # Get group label for display
+        group_data = st.session_state.groups.get(group_code, {})
+        group_label = group_data.get("label", "") if isinstance(group_data, dict) else ""
+        group_display = f"{group_code} ({group_label})" if group_label and group_label != group_code else group_code
+
+        # Get playlist label for display
+        playlist_display = ""
+        if playlist_code:
+            playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
+            playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
+            playlist_display = f"{playlist_code} ({playlist_label})" if playlist_label and playlist_label != playlist_code else playlist_code
+
         participants_data.append({
             "Participant": summary.participant_id,
             "Quality": quality_badge,
@@ -527,7 +543,8 @@ def _render_participants_table():
             "Device": device_name,
             "Files": files_str,
             "Date/Time": recording_dt_str,
-            "Group": st.session_state.participant_groups.get(summary.participant_id, "Default"),
+            "Group": group_display,
+            "Playlist": playlist_display,
             "Total Beats": summary.total_beats,
             "Retained": summary.retained_beats,
             "Duplicates": summary.duplicate_rr_intervals,
@@ -542,6 +559,24 @@ def _render_participants_table():
 
     df_participants = pd.DataFrame(participants_data)
 
+    # Build group display options (code + label)
+    group_display_options = []
+    for gid, gdata in st.session_state.groups.items():
+        glabel = gdata.get("label", "") if isinstance(gdata, dict) else ""
+        if glabel and glabel != gid:
+            group_display_options.append(f"{gid} ({glabel})")
+        else:
+            group_display_options.append(gid)
+
+    # Build playlist display options (code + label)
+    playlist_display_options = [""]
+    for pid, pdata in st.session_state.get("playlist_groups", {}).items():
+        plabel = pdata.get("label", "") if isinstance(pdata, dict) else ""
+        if plabel and plabel != pid:
+            playlist_display_options.append(f"{pid} ({plabel})")
+        else:
+            playlist_display_options.append(pid)
+
     # Editable dataframe
     edited_df = st.data_editor(
         df_participants,
@@ -554,8 +589,10 @@ def _render_participants_table():
                 help="Recording device used (e.g., Polar H10)"),
             "Files": st.column_config.TextColumn("Files", disabled=True, width="small",
                 help="RR files / Events files. * indicates multiple files (merged)"),
-            "Group": st.column_config.SelectboxColumn("Group", options=list(st.session_state.groups.keys()),
-                required=True, help="Assign participant to a group", width="medium"),
+            "Group": st.column_config.SelectboxColumn("Group", options=group_display_options,
+                required=True, help="Select group (code + label)", width="medium"),
+            "Playlist": st.column_config.SelectboxColumn("Playlist", options=playlist_display_options,
+                required=False, help="Select playlist (code + label)", width="medium"),
             "Total Beats": st.column_config.NumberColumn("Total Beats", disabled=True, format="%d"),
             "Retained": st.column_config.NumberColumn("Retained", disabled=True, format="%d"),
             "Artifacts (%)": st.column_config.TextColumn("Artifacts (%)", disabled=True, width="small"),
@@ -570,20 +607,50 @@ def _render_participants_table():
                   "RR Range (ms)", "Mean RR (ms)"]
     )
 
-    # Auto-save group assignments when changed
+    # Auto-save group and playlist assignments when changed
     groups_changed = False
+    playlists_changed = False
+
+    # Initialize participant_playlists if not exists
+    if "participant_playlists" not in st.session_state:
+        st.session_state.participant_playlists = {}
+
+    # Helper to extract code from display string like "5 (MAR)" → "5"
+    def extract_code(display_str):
+        if not display_str:
+            return ""
+        if " (" in display_str:
+            return display_str.split(" (")[0]
+        return display_str
+
     for idx, row in edited_df.iterrows():
         participant_id = row["Participant"]
-        new_group = row["Group"]
-        old_group = st.session_state.participant_groups.get(participant_id)
-        if old_group != new_group:
-            st.session_state.participant_groups[participant_id] = new_group
+
+        # Check group change - extract code from display
+        new_group_display = row["Group"]
+        new_group_code = extract_code(new_group_display)
+        old_group_code = st.session_state.participant_groups.get(participant_id)
+        if old_group_code != new_group_code:
+            st.session_state.participant_groups[participant_id] = new_group_code
             groups_changed = True
 
-    if groups_changed:
+        # Check playlist change - extract code from display
+        new_playlist_display = row["Playlist"]
+        new_playlist_code = extract_code(new_playlist_display)
+        old_playlist_code = st.session_state.participant_playlists.get(participant_id, "")
+        if old_playlist_code != new_playlist_code:
+            st.session_state.participant_playlists[participant_id] = new_playlist_code
+            playlists_changed = True
+
+    if groups_changed or playlists_changed:
         save_participant_data()
         cached_load_participants.clear()
-        show_toast("Group assignments saved", icon="success")
+        msg = []
+        if groups_changed:
+            msg.append("Groups")
+        if playlists_changed:
+            msg.append("Playlists")
+        show_toast(f"{' & '.join(msg)} saved", icon="success")
 
     # Show warning if any participant has duplicate RR intervals
     high_duplicates = [
@@ -600,16 +667,247 @@ def _render_participants_table():
             for pid, dup_count in high_duplicates:
                 st.text(f"- {pid}: {dup_count} duplicates removed")
 
-    # Download button
-    csv_participants = df_participants.to_csv(index=False)
-    st.download_button(
-        label="Download Participants CSV",
-        data=csv_participants,
-        file_name="participants_overview.csv",
-        mime="text/csv",
-        use_container_width=False,
-    )
-    st.info("**Tip:** Group assignments save automatically when you change them in the table above.")
+    # Download and Import buttons in columns
+    col_dl, col_import = st.columns([1, 2])
+
+    with col_dl:
+        csv_participants = df_participants.to_csv(index=False)
+        st.download_button(
+            label="Download Participants CSV",
+            data=csv_participants,
+            file_name="participants_overview.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with col_import:
+        # CSV import for group/playlist matching
+        with st.expander("📥 Import Group/Playlist from CSV", expanded=False):
+            st.markdown("""
+            Upload a CSV file to automatically assign groups and playlists.
+            Map your CSV columns to the required fields below.
+            """)
+
+            # Column mapping settings
+            st.markdown("**Column Mapping** (predefined defaults)")
+            col_map1, col_map2, col_map3 = st.columns(3)
+
+            with col_map1:
+                participant_col = st.text_input(
+                    "Participant ID column",
+                    value="code",
+                    key="csv_col_participant",
+                    help="Column name containing participant IDs"
+                )
+            with col_map2:
+                group_col = st.text_input(
+                    "Group column",
+                    value="group",
+                    key="csv_col_group",
+                    help="Column name for group code (leave empty to skip)"
+                )
+            with col_map3:
+                group_label_col = st.text_input(
+                    "Group Label column",
+                    value="group_label",
+                    key="csv_col_group_label",
+                    help="Column name for group label/description (e.g., 5→MAR)"
+                )
+
+            col_map4, col_map5, col_map6 = st.columns(3)
+            with col_map4:
+                playlist_col = st.text_input(
+                    "Playlist column",
+                    value="playlist",
+                    key="csv_col_playlist",
+                    help="Column name for playlist code (leave empty to skip)"
+                )
+            with col_map5:
+                playlist_label_col = st.text_input(
+                    "Playlist Label column",
+                    value="playlist_label",
+                    key="csv_col_playlist_label",
+                    help="Column name for playlist label (e.g., 1→playlist_01)"
+                )
+            with col_map6:
+                label_col = st.text_input(
+                    "Notes column",
+                    value="notes",
+                    key="csv_col_label",
+                    help="Column for participant notes (leave empty to skip)"
+                )
+
+            uploaded_file = st.file_uploader(
+                "Choose CSV file",
+                type=['csv'],
+                key="group_playlist_csv_upload",
+                help="Upload your CSV file with participant assignments"
+            )
+
+            if uploaded_file is not None:
+                try:
+                    import_df = pd.read_csv(uploaded_file)
+                    csv_columns = list(import_df.columns)
+
+                    st.success(f"Found {len(import_df)} rows, {len(csv_columns)} columns")
+
+                    # Preview the data
+                    st.dataframe(import_df.head(5), use_container_width=True)
+
+                    # Validate participant column exists
+                    if participant_col not in csv_columns:
+                        st.error(f"Participant column '{participant_col}' not found in CSV. Available: {csv_columns}")
+                    else:
+                        # Check which mapped columns are present
+                        has_group = group_col and group_col in csv_columns
+                        has_group_label = group_label_col and group_label_col in csv_columns
+                        has_playlist = playlist_col and playlist_col in csv_columns
+                        has_playlist_label = playlist_label_col and playlist_label_col in csv_columns
+                        has_label = label_col and label_col in csv_columns
+
+                        # Show mapping status
+                        st.markdown("**Detected mappings:**")
+                        st.write(f"- Participant: `{participant_col}` ✅")
+                        if group_col:
+                            st.write(f"- Group: `{group_col}` {'✅' if has_group else '❌ not found'}")
+                        if group_label_col:
+                            st.write(f"- Group Label: `{group_label_col}` {'✅' if has_group_label else '❌ not found'}")
+                        if playlist_col:
+                            st.write(f"- Playlist: `{playlist_col}` {'✅' if has_playlist else '❌ not found'}")
+                        if playlist_label_col:
+                            st.write(f"- Playlist Label: `{playlist_label_col}` {'✅' if has_playlist_label else '❌ not found'}")
+                        if label_col:
+                            st.write(f"- Notes: `{label_col}` {'✅' if has_label else '❌ not found'}")
+
+                        if not has_group and not has_playlist and not has_label:
+                            st.warning("No valid Group, Playlist, or Notes column found. Check your column mapping above.")
+                        else:
+                            if st.button("Apply Assignments", type="primary", key="apply_csv_assignments"):
+                                matched = 0
+                                not_found = []
+                                groups_created = set()
+                                playlists_created = set()
+
+                                # Get current participant IDs
+                                current_pids = {s.participant_id for s in st.session_state.summaries}
+
+                                # First pass: collect group and playlist labels from CSV
+                                group_labels_from_csv = {}
+                                playlist_labels_from_csv = {}
+
+                                for _, row in import_df.iterrows():
+                                    # Collect group labels
+                                    if has_group and has_group_label and pd.notna(row[group_col]):
+                                        g_code = str(row[group_col]).strip()
+                                        if pd.notna(row[group_label_col]):
+                                            g_label = str(row[group_label_col]).strip()
+                                            if g_label:
+                                                group_labels_from_csv[g_code] = g_label
+
+                                    # Collect playlist labels
+                                    if has_playlist and has_playlist_label and pd.notna(row[playlist_col]):
+                                        p_code = str(row[playlist_col]).strip()
+                                        if pd.notna(row[playlist_label_col]):
+                                            p_label = str(row[playlist_label_col]).strip()
+                                            if p_label:
+                                                playlist_labels_from_csv[p_code] = p_label
+
+                                # Create/update groups with labels
+                                for g_code, g_label in group_labels_from_csv.items():
+                                    if g_code not in st.session_state.groups:
+                                        # Create new group with empty events
+                                        st.session_state.groups[g_code] = {"events": [], "label": g_label}
+                                        groups_created.add(g_code)
+                                    else:
+                                        # Update label of existing group
+                                        if isinstance(st.session_state.groups[g_code], dict):
+                                            st.session_state.groups[g_code]["label"] = g_label
+                                        else:
+                                            # Convert old format to new
+                                            events = st.session_state.groups[g_code]
+                                            st.session_state.groups[g_code] = {"events": events, "label": g_label}
+
+                                # Create/update playlist groups with labels
+                                if "playlist_groups" not in st.session_state:
+                                    st.session_state.playlist_groups = {}
+
+                                for p_code, p_label in playlist_labels_from_csv.items():
+                                    if p_code not in st.session_state.playlist_groups:
+                                        # Create new playlist group
+                                        st.session_state.playlist_groups[p_code] = {
+                                            "label": p_label,
+                                            "music_order": ["music_1", "music_2", "music_3"]
+                                        }
+                                        playlists_created.add(p_code)
+                                    else:
+                                        # Update label of existing playlist
+                                        st.session_state.playlist_groups[p_code]["label"] = p_label
+
+                                # Second pass: assign participants
+                                for _, row in import_df.iterrows():
+                                    pid = str(row[participant_col]).strip()
+
+                                    if pid in current_pids:
+                                        matched += 1
+
+                                        # Assign group if present
+                                        if has_group and pd.notna(row[group_col]):
+                                            group_val = str(row[group_col]).strip()
+                                            # Create group if doesn't exist (without label)
+                                            if group_val not in st.session_state.groups:
+                                                st.session_state.groups[group_val] = {"events": [], "label": group_val}
+                                                groups_created.add(group_val)
+                                            st.session_state.participant_groups[pid] = group_val
+
+                                        # Assign playlist if present
+                                        if has_playlist and pd.notna(row[playlist_col]):
+                                            playlist_val = str(row[playlist_col]).strip()
+                                            # Initialize if not exists
+                                            if "participant_playlists" not in st.session_state:
+                                                st.session_state.participant_playlists = {}
+                                            # Create playlist group if doesn't exist
+                                            if playlist_val and playlist_val not in st.session_state.playlist_groups:
+                                                st.session_state.playlist_groups[playlist_val] = {
+                                                    "label": playlist_val,
+                                                    "music_order": ["music_1", "music_2", "music_3"]
+                                                }
+                                                playlists_created.add(playlist_val)
+                                            st.session_state.participant_playlists[pid] = playlist_val
+
+                                        # Assign notes if present
+                                        if has_label and pd.notna(row[label_col]):
+                                            label_val = str(row[label_col]).strip()
+                                            if "participant_labels" not in st.session_state:
+                                                st.session_state.participant_labels = {}
+                                            st.session_state.participant_labels[pid] = label_val
+                                    else:
+                                        not_found.append(pid)
+
+                                # Save all changes
+                                from music_hrv.gui.persistence import save_groups, save_playlist_groups
+                                save_groups(st.session_state.groups)
+                                save_playlist_groups(st.session_state.playlist_groups)
+                                save_participant_data()
+                                cached_load_participants.clear()
+
+                                # Show results
+                                msg_parts = [f"Applied to {matched} participants"]
+                                if groups_created:
+                                    msg_parts.append(f"created {len(groups_created)} groups")
+                                if playlists_created:
+                                    msg_parts.append(f"created {len(playlists_created)} playlists")
+                                show_toast(", ".join(msg_parts), icon="success")
+
+                                if not_found:
+                                    st.warning(f"Not found in loaded data: {', '.join(not_found[:10])}" +
+                                              (f" and {len(not_found) - 10} more" if len(not_found) > 10 else ""))
+
+                                st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error reading CSV: {e}")
+
+    st.info("**Tip:** Group and Playlist assignments save automatically when you change them in the table above.")
 
 
 def _render_batch_processing():

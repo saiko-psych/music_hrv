@@ -190,10 +190,12 @@ def save_all_config():
 
 
 def save_participant_data():
-    """Save participant-specific data (groups, event orders, manual events)."""
+    """Save participant-specific data (groups, playlists, labels, event orders, manual events)."""
     participants_data = {}
     all_participant_ids = set(
         list(st.session_state.participant_groups.keys()) +
+        list(st.session_state.get("participant_playlists", {}).keys()) +
+        list(st.session_state.get("participant_labels", {}).keys()) +
         list(st.session_state.event_order.keys()) +
         list(st.session_state.manual_events.keys())
     )
@@ -201,6 +203,8 @@ def save_participant_data():
     for pid in all_participant_ids:
         participants_data[pid] = {
             "group": st.session_state.participant_groups.get(pid, "Default"),
+            "playlist": st.session_state.get("participant_playlists", {}).get(pid, ""),
+            "label": st.session_state.get("participant_labels", {}).get(pid, ""),
             "event_order": st.session_state.event_order.get(pid, []),
             "manual_events": st.session_state.manual_events.get(pid, []),
         }
