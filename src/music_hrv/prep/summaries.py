@@ -49,6 +49,7 @@ class PreparationSummary:
     # Multiple file support
     rr_file_count: int = 1  # Number of RR files for this participant
     events_file_count: int = 0  # Number of Events files for this participant
+    source_app: str = "Unknown"  # Recording app (HRV Logger, VNS Analyse, etc.)
 
     @property
     def has_multiple_files(self) -> bool:
@@ -79,6 +80,7 @@ def summarize_recording(
     normalizer: SectionNormalizer | None = None,
     rr_file_count: int = 1,
     events_file_count: int = 0,
+    source_app: str = "Unknown",
 ) -> PreparationSummary:
     """Clean one participant recording and collect descriptive stats."""
 
@@ -149,6 +151,7 @@ def summarize_recording(
         present_sections=present_sections,
         rr_file_count=rr_file_count,
         events_file_count=events_file_count,
+        source_app=source_app,
     )
 
 
@@ -175,6 +178,7 @@ def load_hrv_logger_preview(
                 normalizer=normalizer,
                 rr_file_count=len(bundle.rr_paths),
                 events_file_count=len(bundle.events_paths),
+                source_app="HRV Logger",
             )
         )
     return summaries
@@ -212,6 +216,7 @@ def load_vns_preview(
                 normalizer=normalizer,
                 rr_file_count=1,  # VNS always has one file per participant
                 events_file_count=1 if vns_recording.events else 0,
+                source_app="VNS Analyse",
             )
         )
     return summaries
