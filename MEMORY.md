@@ -4,6 +4,121 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-12-03: CSV Import & UI Improvements
+
+### Version Tags: `v0.3.3`, `v0.3.4`
+
+### Major Features Implemented:
+
+#### 1. CSV Import for Group/Playlist Assignments (v0.3.3, v0.3.4)
+- **Value→Label Mappings**: Define what CSV values mean (e.g., group "5" = "MAR", playlist "1" = "R1")
+- **Column Mapping**: Configurable column names (default: `code`, `group`, `playlist`)
+- **Auto-create Groups/Playlists**: Creates groups and playlist entries with labels when importing
+- **CSV Status Column**: Shows which participants have imported data (✓✓=Both, G=Group, P=Playlist, —=None)
+- **Scrollable Preview**: CSV preview limited to 200px height with priority columns first
+
+#### 2. App Column in Participants Table (v0.3.3)
+- Shows recording app source (HRV Logger, VNS Analyse)
+- `source_app` field added to `PreparationSummary` dataclass
+- Set during data loading based on which loader is used
+
+#### 3. Label-Only Display (v0.3.3)
+- Group and Playlist columns show only labels, not "code (label)" format
+- Cleaner table presentation
+- Mapping from label→code maintained for saving
+
+#### 4. CSV Import UX Fixes (v0.3.4)
+- Expander stays open when file is uploaded or labels are added/removed
+- Used session state to track expander state
+- Check for uploaded file before expander renders
+
+### Files Modified:
+- `src/music_hrv/gui/tabs/data.py` - CSV import UI, participants table columns
+- `src/music_hrv/prep/summaries.py` - Added `source_app` field
+
+### Project Structure Review:
+The project is well-organized with clean separation:
+```
+src/music_hrv/
+├── cleaning/        # RR interval cleaning
+├── cli.py           # Command-line interface
+├── config/          # Configuration (sections)
+├── gui/             # Streamlit GUI
+│   ├── app.py       # Main app
+│   ├── persistence.py  # YAML storage
+│   ├── shared.py    # Shared utilities, cached functions
+│   └── tabs/        # Tab implementations
+├── io/              # Data loading (HRV Logger, VNS Analyse)
+├── prep/            # Data preparation
+└── segments/        # Segment handling
+```
+
+### Testing Results:
+- ✅ All 13 tests passing
+- ✅ No linting errors
+
+---
+
+## Session 2025-12-03: Startup Performance & Lazy Imports
+
+### Changes Made:
+
+#### 1. Project Structure Cleanup
+- Deleted `nul` artifact file (empty Windows device file)
+- Verified project organization is clean and well-structured
+- All tests passing (13/13), no linting errors
+
+#### 2. Lazy Import for neurokit2 (Major Performance Win)
+**Problem:** `import neurokit2` takes ~0.9s, blocking app startup even when not needed.
+
+**Solution:** Created `get_neurokit()` function for lazy loading:
+```python
+_nk = None
+
+def get_neurokit():
+    global _nk, NEUROKIT_AVAILABLE
+    if _nk is None:
+        try:
+            import neurokit2 as nk
+            _nk = nk
+        except ImportError:
+            NEUROKIT_AVAILABLE = False
+    return _nk
+```
+
+Replaced all `nk.` calls with `nk = get_neurokit()` followed by `nk.method()`.
+
+#### 3. Lazy Import for matplotlib
+Same pattern - `get_matplotlib()` function to defer import until needed.
+
+### Performance Results:
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| App startup | ~1.6s | ~0.7s | **56% faster** |
+| app.py import | ~1.0s | ~0.16s | 84% faster |
+| neurokit2 | at startup | on-demand | Deferred |
+| matplotlib | at startup | on-demand | Deferred |
+
+### Files Modified:
+- `src/music_hrv/gui/app.py` - Added `get_neurokit()`, `get_matplotlib()`, updated all call sites
+- `CLAUDE.md` - Updated performance guidelines
+
+### Profiling Results (for reference):
+- `pandas` import: 0.36s (unavoidable)
+- `streamlit` import: 0.37s (unavoidable)
+- `neurokit2` import: 0.88s (now deferred)
+- `signal_changepoints(variance)`: 0.75s (cached)
+- `signal_changepoints(mean)`: 26s (!!! - never use this)
+- Plot rendering with downsampling: 9ms
+
+### Key Learnings:
+- Heavy scientific libraries (neurokit2, scipy) are slow to import
+- Lazy loading is essential for responsive UIs
+- Profile before optimizing - identify actual bottlenecks
+
+---
+
 ## Session 2025-11-28: Performance Optimization & Batch Processing
 
 ### Version Tag: `v0.3.1`
