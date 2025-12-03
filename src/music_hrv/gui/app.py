@@ -917,8 +917,9 @@ def main():
         st.caption("Configure settings in the tabs below.")
 
     # Main content tabs (4-tab structure)
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Data",
+        "Participants",
         "Setup",
         "Analysis"
     ])
@@ -1539,10 +1540,14 @@ def main():
                         show_toast(f"Detected {total_gaps} gaps and {total_var} high variability segments", icon="success")
                         st.rerun()
 
-            st.markdown("---")
 
-            # Participant selector with easier navigation
-            st.subheader("🔍 Participant Details")
+    # ================== TAB: PARTICIPANTS ==================
+    with tab2:
+        st.header("Participant Details")
+
+        if not st.session_state.summaries:
+            st.info("Load data in the **Data** tab first to view participant details.")
+        else:
 
             # ISSUE 2 FIX: Initialize and manage participant selection with bounds checking
             if "current_participant_idx" not in st.session_state:
@@ -2668,11 +2673,11 @@ def main():
                         st.caption("⚠️ Not yet saved")
 
     # ================== TAB: SETUP ==================
-    with tab2:
+    with tab3:
         render_setup_tab()
 
     # ================== TAB: ANALYSIS ==================
-    with tab3:
+    with tab4:
         st.header("HRV Analysis")
 
         with st.expander("❓ Help - HRV Analysis", expanded=False):
