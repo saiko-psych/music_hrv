@@ -13,6 +13,10 @@ from music_hrv.gui.shared import (
     cached_load_hrv_logger_preview,
     cached_load_vns_preview,
     cached_load_participants,
+    cached_load_recording,
+    cached_clean_rr_intervals,
+    cached_quality_analysis,
+    detect_time_gaps,
     save_participant_data,
     show_toast,
     validate_regex_pattern,
@@ -194,7 +198,7 @@ def render_data_tab():
 
     # Import Settings section
     with st.expander("Import Settings", expanded=False):
-        col_cfg1, col_cfg2 = st.columns(2)
+        col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
 
         with col_cfg1:
             st.markdown("**Participant ID Pattern**")
@@ -272,6 +276,44 @@ def render_data_tab():
                 on_change=update_cleaning_config,
             )
 
+        with col_cfg3:
+            st.markdown("**Device Settings**")
+
+            # Initialize default device settings if not present
+            if "default_device_settings" not in st.session_state:
+                st.session_state.default_device_settings = {
+                    "device": "Polar H10",
+                    "sampling_rate": 1000,
+                }
+
+            # Device selector
+            devices = ["Polar H10", "Polar H9", "Polar OH1", "Garmin HRM-Pro", "Movesense", "Other"]
+            current_device = st.session_state.default_device_settings.get("device", "Polar H10")
+            dev_idx = devices.index(current_device) if current_device in devices else 0
+
+            def update_device():
+                st.session_state.default_device_settings["device"] = st.session_state.device_select
+                # Auto-set sampling rate based on device
+                device_rates = {
+                    "Polar H10": 1000, "Polar H9": 1000, "Polar OH1": 135,
+                    "Garmin HRM-Pro": 1000, "Movesense": 512
+                }
+                if st.session_state.device_select in device_rates:
+                    st.session_state.default_device_settings["sampling_rate"] = device_rates[st.session_state.device_select]
+
+            st.selectbox(
+                "HR Sensor Device",
+                options=devices,
+                index=dev_idx,
+                key="device_select",
+                on_change=update_device,
+                help="The heart rate sensor used for recordings"
+            )
+
+            sampling_rate = st.session_state.default_device_settings.get("sampling_rate", 1000)
+            st.text_input("Sampling Rate", value=f"{sampling_rate} Hz", disabled=True,
+                         help="Based on device selection")
+
     # Data directory input
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -306,93 +348,102 @@ def render_data_tab():
         if sources:
             st.markdown("**Detected Data Sources:**")
 
-            # Create source selection
-            source_options = []
-            for src in sources:
-                label = f"{src['folder']} → {src['name']} ({src['file_count']} files)"
-                source_options.append(label)
+            # Create source selection - multiselect for loading multiple sources
+            source_labels = {src['folder']: f"{src['folder']} → {src['name']} ({src['file_count']} files)"
+                            for src in sources}
 
-            if len(sources) == 1:
-                # Auto-select if only one source
-                selected_idx = 0
-                st.info(f"Found: **{sources[0]['name']}** in `{sources[0]['folder']}/`")
+            # Default to all supported sources selected
+            supported_defaults = [src['folder'] for src in sources if src['name'] != "Elite HRV"]
+
+            selected_folders = st.multiselect(
+                "Select data sources to load",
+                options=[src['folder'] for src in sources],
+                default=supported_defaults,
+                format_func=lambda f: source_labels[f],
+                key="source_selector",
+                help="Select one or more data sources to load. You can combine HRV Logger and VNS data."
+            )
+
+            # Show info about selected sources
+            if selected_folders:
+                selected_sources = [src for src in sources if src['folder'] in selected_folders]
+                total_files = sum(src['file_count'] for src in selected_sources)
+
+                # Show summary metrics
+                col_src1, col_src2, col_src3 = st.columns(3)
+                with col_src1:
+                    apps = ", ".join(set(src['name'] for src in selected_sources))
+                    st.metric("Apps", apps)
+                with col_src2:
+                    st.metric("Total Files", total_files)
+                with col_src3:
+                    st.metric("Sources", len(selected_sources))
+
+                # Check if any selected app is not supported
+                unsupported = [src for src in selected_sources if src['name'] == "Elite HRV"]
+                if unsupported:
+                    st.warning(
+                        "**Elite HRV** is detected but not yet supported. "
+                        "It will be skipped during loading."
+                    )
+
+                # Load button
+                if st.button("Load Selected Sources", type="primary", use_container_width=True):
+                    with st.status("Loading recordings...", expanded=True) as status:
+                        try:
+                            all_summaries = []
+                            config_dict = {
+                                "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
+                                "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
+                                "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct,
+                            }
+
+                            for src in selected_sources:
+                                if src['name'] == "Elite HRV":
+                                    st.write(f"⏭️ Skipping {src['folder']} (Elite HRV not yet supported)")
+                                    continue
+
+                                st.write(f"📂 Loading from: {src['folder']} ({src['name']})")
+                                load_path = Path(src["path"])
+
+                                # Use the appropriate loader based on detected app
+                                if src["name"] == "VNS Analyse":
+                                    summaries = cached_load_vns_preview(
+                                        str(load_path),
+                                        pattern=id_pattern,
+                                        config_dict=config_dict,
+                                        gui_events_dict=st.session_state.all_events,
+                                    )
+                                else:
+                                    # Default to HRV Logger format
+                                    summaries = cached_load_hrv_logger_preview(
+                                        str(load_path),
+                                        pattern=id_pattern,
+                                        config_dict=config_dict,
+                                        gui_events_dict=st.session_state.all_events,
+                                    )
+
+                                st.write(f"   Found {len(summaries)} participant(s)")
+                                all_summaries.extend(summaries)
+
+                            # Store all summaries
+                            st.session_state.summaries = all_summaries
+                            st.session_state.data_dir = str(data_path)
+
+                            # Auto-assign to Default group if not assigned
+                            for summary in all_summaries:
+                                if summary.participant_id not in st.session_state.participant_groups:
+                                    st.session_state.participant_groups[summary.participant_id] = "Default"
+
+                            status.update(label=f"Loaded {len(all_summaries)} participant(s) total", state="complete")
+                            show_toast(f"Loaded {len(all_summaries)} participant(s) from {len(selected_sources)} source(s)", icon="success")
+                        except Exception as e:
+                            status.update(label="Error loading data", state="error")
+                            st.error(f"Error loading data: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
             else:
-                selected_idx = st.selectbox(
-                    "Select data source to load",
-                    options=range(len(source_options)),
-                    format_func=lambda i: source_options[i],
-                    key="source_selector",
-                )
-
-            selected_source = sources[selected_idx]
-
-            # Show source info
-            col_src1, col_src2, col_src3 = st.columns(3)
-            with col_src1:
-                st.metric("App", selected_source["name"])
-            with col_src2:
-                st.metric("Device", selected_source["device"])
-            with col_src3:
-                st.metric("Files", selected_source["file_count"])
-
-            # Check if the selected app is supported
-            if selected_source["name"] == "Elite HRV":
-                st.warning(
-                    f"**{selected_source['name']}** detected but not yet supported. "
-                    "HRV Logger and VNS Analyse are currently supported."
-                )
-
-            # Load button
-            if st.button("Load Selected Source", type="primary", use_container_width=True):
-                load_path = Path(selected_source["path"])
-                st.session_state.data_dir = str(load_path)
-                st.session_state.default_device_settings = {
-                    "recording_app": selected_source["name"],
-                    "device": selected_source["device"],
-                    "sampling_rate": selected_source["sampling_rate"],
-                }
-
-                with st.status("Loading recordings...", expanded=True) as status:
-                    try:
-                        st.write(f"Loading from: {selected_source['name']}")
-                        st.write("Discovering recordings...")
-
-                        config_dict = {
-                            "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
-                            "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
-                            "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct,
-                        }
-
-                        # Use the appropriate loader based on detected app
-                        if selected_source["name"] == "VNS Analyse":
-                            summaries = cached_load_vns_preview(
-                                str(load_path),
-                                pattern=id_pattern,
-                                config_dict=config_dict,
-                                gui_events_dict=st.session_state.all_events,
-                            )
-                        else:
-                            # Default to HRV Logger format (also used for unknown)
-                            summaries = cached_load_hrv_logger_preview(
-                                str(load_path),
-                                pattern=id_pattern,
-                                config_dict=config_dict,
-                                gui_events_dict=st.session_state.all_events,
-                            )
-
-                        st.write(f"Processing {len(summaries)} participant(s)...")
-                        st.session_state.summaries = summaries
-
-                        # Auto-assign to Default group if not assigned
-                        for summary in summaries:
-                            if summary.participant_id not in st.session_state.participant_groups:
-                                st.session_state.participant_groups[summary.participant_id] = "Default"
-
-                        status.update(label=f"Loaded {len(summaries)} participant(s)", state="complete")
-                        show_toast(f"Loaded {len(summaries)} participant(s)", icon="success")
-                    except Exception as e:
-                        status.update(label="Error loading data", state="error")
-                        st.error(f"Error loading data: {e}")
+                st.info("Select at least one data source to load")
         else:
             st.warning("No supported data sources found. Check that your folder structure matches the expected format.")
 
@@ -402,6 +453,10 @@ def render_data_tab():
     if st.session_state.summaries:
         st.markdown("---")
         _render_participants_table()
+
+        # ==================== BATCH PROCESSING ====================
+        st.markdown("---")
+        _render_batch_processing()
 
 
 def _render_participants_table():
@@ -555,3 +610,260 @@ def _render_participants_table():
         use_container_width=False,
     )
     st.info("**Tip:** Group assignments save automatically when you change them in the table above.")
+
+
+def _render_batch_processing():
+    """Render the Batch Processing section for bulk operations."""
+    with st.expander("⚡ Batch Processing", expanded=False):
+        st.markdown("""
+        Apply operations to **multiple participants** at once. This saves time when you have
+        predefined settings you want to apply consistently across your study.
+        """)
+
+        batch_col1, batch_col2 = st.columns(2)
+
+        with batch_col1:
+            st.markdown("##### Auto-Generate Music Events")
+            st.caption("Generate music section events for all participants in a playlist group")
+
+            # Select playlist group to process
+            if "playlist_groups" in st.session_state and st.session_state.playlist_groups:
+                batch_playlist = st.selectbox(
+                    "Select Playlist Group",
+                    options=list(st.session_state.playlist_groups.keys()),
+                    key="batch_playlist_group",
+                    help="Generate music events for all participants assigned to this playlist group"
+                )
+
+                batch_interval = st.number_input(
+                    "Music interval (minutes)",
+                    min_value=1, max_value=30, value=5, step=1,
+                    key="batch_music_interval",
+                    help="How often the music changes"
+                )
+
+                if st.button("🎵 Generate for All in Group", key="batch_generate_music"):
+                    # Find participants in this playlist group
+                    participants_in_group = [
+                        pid for pid, pg in st.session_state.get("participant_playlists", {}).items()
+                        if pg == batch_playlist
+                    ]
+
+                    if not participants_in_group:
+                        st.warning(f"No participants assigned to playlist group '{batch_playlist}'")
+                    else:
+                        progress = st.progress(0)
+                        status = st.empty()
+                        generated_count = 0
+
+                        for i, pid in enumerate(participants_in_group):
+                            status.text(f"Processing {pid}...")
+                            progress.progress((i + 1) / len(participants_in_group))
+
+                            # Get participant's events and find boundaries
+                            if pid in st.session_state.get("participant_events", {}):
+                                stored = st.session_state.participant_events[pid]
+                                all_events = stored.get('events', []) + stored.get('manual', [])
+
+                                # Find boundary events
+                                boundaries = {}
+                                for evt in all_events:
+                                    canonical = evt.canonical if hasattr(evt, 'canonical') else None
+                                    if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end']:
+                                        if evt.first_timestamp:
+                                            boundaries[canonical] = evt.first_timestamp
+
+                                if 'measurement_start' in boundaries:
+                                    # Generate music events
+                                    from music_hrv.prep.summaries import EventStatus
+                                    from datetime import timedelta
+
+                                    if 'music_events' not in stored:
+                                        stored['music_events'] = []
+                                    stored['music_events'] = []  # Clear existing
+
+                                    playlist_data = st.session_state.playlist_groups.get(batch_playlist, {})
+                                    music_order = playlist_data.get("music_order", ["music_1", "music_2", "music_3"])
+
+                                    # Pre-pause period
+                                    start = boundaries['measurement_start']
+                                    end = boundaries.get('pause_start') or boundaries.get('measurement_end')
+                                    if start and end:
+                                        current = start
+                                        idx = 0
+                                        while current < end:
+                                            music_type = music_order[idx % len(music_order)]
+                                            next_time = current + timedelta(minutes=batch_interval)
+                                            if next_time > end:
+                                                next_time = end
+
+                                            stored['music_events'].append(EventStatus(
+                                                raw_label=f"{music_type}_start",
+                                                canonical=f"{music_type}_start",
+                                                first_timestamp=current,
+                                                last_timestamp=current
+                                            ))
+                                            stored['music_events'].append(EventStatus(
+                                                raw_label=f"{music_type}_end",
+                                                canonical=f"{music_type}_end",
+                                                first_timestamp=next_time,
+                                                last_timestamp=next_time
+                                            ))
+                                            current = next_time
+                                            idx += 1
+
+                                    # Post-pause period
+                                    if 'pause_end' in boundaries and 'measurement_end' in boundaries:
+                                        start = boundaries['pause_end']
+                                        end = boundaries['measurement_end']
+                                        current = start
+                                        idx = 0
+                                        while current < end:
+                                            music_type = music_order[idx % len(music_order)]
+                                            next_time = current + timedelta(minutes=batch_interval)
+                                            if next_time > end:
+                                                next_time = end
+
+                                            stored['music_events'].append(EventStatus(
+                                                raw_label=f"{music_type}_start",
+                                                canonical=f"{music_type}_start",
+                                                first_timestamp=current,
+                                                last_timestamp=current
+                                            ))
+                                            stored['music_events'].append(EventStatus(
+                                                raw_label=f"{music_type}_end",
+                                                canonical=f"{music_type}_end",
+                                                first_timestamp=next_time,
+                                                last_timestamp=next_time
+                                            ))
+                                            current = next_time
+                                            idx += 1
+
+                                    generated_count += 1
+
+                        progress.progress(1.0)
+                        status.empty()
+                        show_toast(f"Generated music events for {generated_count} participants", icon="success")
+                        st.rerun()
+            else:
+                st.info("Create playlist groups in the Group Management tab first")
+
+        with batch_col2:
+            st.markdown("##### Auto-Create Quality Events")
+            st.caption("Create gap and variability events for all participants")
+
+            batch_gap_threshold = st.number_input(
+                "Gap threshold (seconds)",
+                min_value=1.0, max_value=60.0, value=15.0, step=1.0,
+                key="batch_gap_threshold",
+                help="Create gap events when time between measurements exceeds this threshold"
+            )
+
+            batch_cv_threshold = st.number_input(
+                "Variability CV threshold (%)",
+                min_value=5.0, max_value=50.0, value=20.0, step=1.0,
+                key="batch_cv_threshold",
+                help="Create variability events for segments exceeding this CV"
+            )
+
+            if st.button("🔍 Detect Quality Issues for All", key="batch_detect_quality"):
+                progress = st.progress(0)
+                status = st.empty()
+                total_gaps = 0
+                total_var = 0
+
+                participant_ids = [s.participant_id for s in st.session_state.summaries]
+
+                for i, pid in enumerate(participant_ids):
+                    status.text(f"Processing {pid}...")
+                    progress.progress((i + 1) / len(participant_ids))
+
+                    try:
+                        # Find the summary for this participant
+                        summary = next((s for s in st.session_state.summaries if s.participant_id == pid), None)
+                        if not summary:
+                            continue
+
+                        # Get RR paths from summary
+                        if hasattr(summary, 'rr_paths') and summary.rr_paths:
+                            # Load cached recording data
+                            events_paths = getattr(summary, 'events_paths', []) or []
+                            recording_data = cached_load_recording(
+                                tuple(str(p) for p in summary.rr_paths),
+                                tuple(str(p) for p in events_paths),
+                                pid
+                            )
+
+                            config_dict = {
+                                "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
+                                "rr_max_ms": st.session_state.cleaning_config.rr_max_ms,
+                                "sudden_change_pct": st.session_state.cleaning_config.sudden_change_pct
+                            }
+                            rr_with_timestamps, _ = cached_clean_rr_intervals(
+                                tuple(recording_data['rr_intervals']),
+                                config_dict
+                            )
+
+                            if rr_with_timestamps:
+                                timestamps, rr_values = zip(*rr_with_timestamps)
+                                timestamps_list = list(timestamps)
+                                rr_list = list(rr_values)
+
+                                # Initialize events
+                                if pid not in st.session_state.get("participant_events", {}):
+                                    if "participant_events" not in st.session_state:
+                                        st.session_state.participant_events = {}
+                                    st.session_state.participant_events[pid] = {
+                                        'events': list(summary.events) if hasattr(summary, 'events') else [],
+                                        'manual': []
+                                    }
+
+                                stored = st.session_state.participant_events[pid]
+
+                                # Detect and create gap events
+                                gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=batch_gap_threshold)
+                                from music_hrv.prep.summaries import EventStatus
+
+                                for gap in gap_result.get("gaps", []):
+                                    stored['manual'].append(EventStatus(
+                                        raw_label="gap_start",
+                                        canonical="gap_start",
+                                        first_timestamp=gap["start_time"],
+                                        last_timestamp=gap["start_time"]
+                                    ))
+                                    stored['manual'].append(EventStatus(
+                                        raw_label="gap_end",
+                                        canonical="gap_end",
+                                        first_timestamp=gap["end_time"],
+                                        last_timestamp=gap["end_time"]
+                                    ))
+                                    total_gaps += 1
+
+                                # Detect variability
+                                cp_result = cached_quality_analysis(tuple(rr_values), tuple(timestamps))
+                                cv_threshold_decimal = batch_cv_threshold / 100.0
+
+                                for seg in cp_result.get("segment_stats", []):
+                                    if seg.get("cv", 0) > cv_threshold_decimal:
+                                        if seg.get("start_time") and seg.get("end_time"):
+                                            stored['manual'].append(EventStatus(
+                                                raw_label="high_variability_start",
+                                                canonical="high_variability_start",
+                                                first_timestamp=seg["start_time"],
+                                                last_timestamp=seg["start_time"]
+                                            ))
+                                            stored['manual'].append(EventStatus(
+                                                raw_label="high_variability_end",
+                                                canonical="high_variability_end",
+                                                first_timestamp=seg["end_time"],
+                                                last_timestamp=seg["end_time"]
+                                            ))
+                                            total_var += 1
+
+                    except Exception as e:
+                        st.warning(f"Error processing {pid}: {e}")
+
+                progress.progress(1.0)
+                status.empty()
+                show_toast(f"Detected {total_gaps} gaps and {total_var} high variability segments", icon="success")
+                st.rerun()
