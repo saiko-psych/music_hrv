@@ -896,6 +896,9 @@ def detect_artifacts_fixpeaks(rr_values: list[int], sampling_rate: int = 1000) -
 
 def main():
     """Main Streamlit app."""
+    import time as _time
+    _script_start = _time.time()
+
     st.title("🎵 Music HRV Toolkit")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
@@ -915,6 +918,10 @@ def main():
 
         st.markdown("---")
         st.caption("Configure settings in the tabs below.")
+
+        # Debug: Show script execution time
+        if "last_render_time" in st.session_state:
+            st.caption(f"⏱️ Last render: {st.session_state.last_render_time:.0f}ms")
 
     # Main content tabs (4-tab structure)
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -2778,11 +2785,26 @@ def main():
                                 try:
                                     st.write("📂 Loading recording data...")
                                     progress = st.progress(0)
-                                    # Load the recording
-                                    data_path = Path(st.session_state.data_dir)
-                                    bundles = discover_recordings(data_path, pattern=id_pattern)
+                                    # Load the recording using CACHED functions
+                                    bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
                                     bundle = next(b for b in bundles if b.participant_id == selected_participant)
-                                    recording, _, _ = load_recording(bundle)
+                                    recording_data = cached_load_recording(
+                                        tuple(str(p) for p in bundle.rr_paths),
+                                        tuple(str(p) for p in bundle.events_paths),
+                                        selected_participant
+                                    )
+                                    # Reconstruct recording object from cached data
+                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, HRVLoggerEvent
+                                    from music_hrv.cleaning.rr import RRInterval
+                                    rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
+                                                    for ts, rr, elapsed in recording_data['rr_intervals']]
+                                    events = [HRVLoggerEvent(label=label, timestamp=ts)
+                                              for label, ts in recording_data['events']]
+                                    recording = HRVLoggerRecording(
+                                        participant_id=selected_participant,
+                                        rr_intervals=rr_intervals,
+                                        events=events
+                                    )
                                     progress.progress(20)
 
                                     from music_hrv.cleaning.rr import clean_rr_intervals
@@ -2980,9 +3002,9 @@ def main():
                             else:
                                 # Use status context for group analysis
                                 with st.status(f"Analyzing {len(group_participants)} participants...", expanded=True) as status:
-                                    from music_hrv.cleaning.rr import clean_rr_intervals
-                                    data_path = Path(st.session_state.data_dir)
-                                    bundles = discover_recordings(data_path, pattern=id_pattern)
+                                    from music_hrv.cleaning.rr import clean_rr_intervals, RRInterval
+                                    from music_hrv.io.hrv_logger import HRVLoggerRecording, HRVLoggerEvent
+                                    bundles = cached_discover_recordings(st.session_state.data_dir, id_pattern)
 
                                     # Results organized by section
                                     results_by_section = {section: [] for section in selected_sections}
@@ -2997,7 +3019,22 @@ def main():
                                         progress.progress(int((idx / total_steps) * 100))
                                         try:
                                             bundle = next(b for b in bundles if b.participant_id == participant_id)
-                                            recording, _, _ = load_recording(bundle)
+                                            # Use CACHED loading
+                                            recording_data = cached_load_recording(
+                                                tuple(str(p) for p in bundle.rr_paths),
+                                                tuple(str(p) for p in bundle.events_paths),
+                                                participant_id
+                                            )
+                                            # Reconstruct recording object
+                                            rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
+                                                            for ts, rr, elapsed in recording_data['rr_intervals']]
+                                            events = [HRVLoggerEvent(label=label, timestamp=ts)
+                                                      for label, ts in recording_data['events']]
+                                            recording = HRVLoggerRecording(
+                                                participant_id=participant_id,
+                                                rr_intervals=rr_intervals,
+                                                events=events
+                                            )
 
                                             combined_rr = []
 
@@ -3082,6 +3119,9 @@ def main():
                                                     mime="text/csv",
                                                     key=f"download_group_{section_name}",
                                                 )
+
+    # Record render time for debugging
+    st.session_state.last_render_time = (_time.time() - _script_start) * 1000
 
 
 if __name__ == "__main__":
