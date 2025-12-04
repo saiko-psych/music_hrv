@@ -4,6 +4,156 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-12-04: Music Section Analysis & Event UI Improvements
+
+### Version Tags: `v0.6.0`, `v0.6.1`
+
+### Major Features Implemented:
+
+#### 1. Music Section Analysis Mode (v0.6.0)
+New dedicated analysis mode for protocol-based 5-minute music sections:
+
+- **Protocol Configuration**:
+  - Expected duration (default 90 min)
+  - Section length (default 5 min)
+  - Pre-pause sections (default 9)
+  - Post-pause sections (default 9)
+  - Min section duration and beats for validity
+
+- **Duration Mismatch Strategies**:
+  - `strict`: Fail if duration doesn't match expected
+  - `proportional`: Scale section durations to fit actual recording
+  - `flag_only`: Create sections as-is with warnings (default)
+
+- **Section Extraction**: Creates MusicSection objects with:
+  - Section index, music type, phase (pre/post pause)
+  - Start/end times and RR intervals
+  - Duration, beat count, validity flags
+
+- **HRV by Section**: Computes time-domain HRV metrics per section using NeuroKit2
+
+#### 2. Event Adding UI Improvements
+- **Plot Click to Add Events**: Click on RR plot to set timestamp, quick-add form appears immediately
+- **Custom Events**: Added "Custom..." option in quick-add dropdown for arbitrary event names
+- **Second-level Time Precision**: Changed from Streamlit time_input (60s min) to text_input with HH:MM:SS parsing
+- **Immediate Feedback**: Moved add-event form inside fragment for instant click response
+
+#### 3. Auto-fill Boundary Events
+- Shows which boundary events are present (✅) or missing (❌)
+- Configurable pre-pause and post-pause durations (default 45 min each)
+- "Auto-fill X missing event(s)" button calculates timestamps from existing events
+- Works forwards from measurement_start or backwards from measurement_end
+
+#### 4. Participant Events Persistence
+- Events saved to `~/.music_hrv/participant_events.yml`
+- Save/load/delete functions for participant-specific events
+- "Reset to Original" button to clear saved edits
+
+### Bug Fixes (v0.6.1):
+
+1. **HRV Computation Error**: NeuroKit2 expects peaks not RR intervals
+   - Fixed by using `nk.intervals_to_peaks(rr_values, sampling_rate=1000)`
+
+2. **EventMarker Missing offset_s**: Added `offset_s=None` to constructor call
+
+3. **Timezone-aware vs Naive Datetime Comparison**:
+   - Added `sort_key()` and `normalize_ts()` helpers
+   - Normalizes timestamps by removing tzinfo before comparison/arithmetic
+   - Fixed in timing validation section
+
+### Files Created:
+- `src/music_hrv/analysis/music_sections.py` - Protocol-based music section extraction
+- `tests/analysis/test_music_sections.py` - 4 tests for music section extraction
+- `tests/analysis/__init__.py` - Test module init
+
+### Files Modified:
+- `src/music_hrv/gui/app.py` - Music section UI, event adding improvements, auto-fill
+- `src/music_hrv/gui/persistence.py` - Protocol and participant events persistence
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ No linting errors
+
+---
+
+## Session 2025-12-04 (Continued): VNS Flagging + NeuroKit2 Artifact Detection
+
+### Version Tag: `v0.5.1`
+
+### Changes Made:
+
+#### 1. New Default Cleaning Thresholds
+- **Min RR**: 200ms (was 300ms)
+- **Max RR**: 2000ms (was 2200ms)
+- **Sudden Change**: 100% = disabled (was 20%)
+- Rationale: Sudden change threshold interferes with normal HRV. Use NeuroKit2 artifact detection instead.
+
+#### 2. VNS Loader - No Hardcoded Filter
+- Removed `if 200 <= rr_ms <= 3000:` filter from `load_vns_recording()`
+- ALL RR intervals now loaded regardless of value
+
+#### 3. VNS Display with Flagging
+- VNS data shows ALL intervals with correct timestamps
+- Intervals outside min/max thresholds flagged in RED
+- Uses `clean_rr_intervals_with_flags()` for display
+- Cleaning only applied at analysis time
+
+#### 4. NeuroKit2 Artifact Detection in Participant View
+- New checkbox: "Show artifacts (NeuroKit2)"
+- Uses Kubios algorithm via `signal_fixpeaks`
+- Detects: ectopic, missed, extra, long/short beats
+- Artifacts shown as orange X markers on plot
+- Info bar shows count by artifact type
+
+### Files Modified:
+- `src/music_hrv/cleaning/rr.py` - New defaults, `clean_rr_intervals_with_flags()`
+- `src/music_hrv/io/vns_analyse.py` - Removed hardcoded RR filter
+- `src/music_hrv/gui/app.py` - VNS flagging, `cached_artifact_detection()`, artifact display
+- `src/music_hrv/gui/tabs/data.py` - Updated slider to show percentage
+
+### Testing Results:
+- ✅ All 14 tests passing
+- ✅ No linting errors
+
+---
+
+## Session 2025-12-04: VNS UI Support & Navigation Improvements
+
+### Version Tag: `v0.5.0`
+
+### Features Implemented:
+
+#### 1. VNS `use_corrected` Option in UI
+- Added checkbox in Import Settings → VNS Analyse Settings
+- Toggle between raw and corrected RR values from VNS files
+- Clears VNS cache when setting changes to reload data
+- Stored in `st.session_state.vns_use_corrected`
+
+#### 2. Participant View Works for VNS Data
+- Added `rr_paths`, `events_paths`, and `vns_path` fields to `PreparationSummary`
+- Paths are stored when loading preview data
+- Participant view checks `source_app` and uses appropriate loader:
+  - VNS Analyse: Uses `cached_load_vns_recording()` with stored `vns_path`
+  - HRV Logger: Uses `cached_load_recording()` with stored `rr_paths`/`events_paths`
+  - Fallback: Re-discovers recordings for old cached summaries
+
+#### 3. Scroll to Top on Navigation
+- Added `scroll_to_top_trigger` session state flag
+- Set in Previous/Next button callbacks and dropdown on_change
+- Injects JavaScript to scroll `stAppViewContainer` to top
+
+### Files Modified:
+- `src/music_hrv/prep/summaries.py` - Added path fields to PreparationSummary, use_corrected param
+- `src/music_hrv/gui/shared.py` - Added cached_load_vns_recording, scroll_to_top helper
+- `src/music_hrv/gui/tabs/data.py` - Added VNS use_corrected checkbox
+- `src/music_hrv/gui/app.py` - VNS-aware participant loading, scroll trigger
+
+### Testing Results:
+- ✅ All 13 tests passing
+- ✅ No linting errors
+
+---
+
 ## Session 2025-12-03 (Continued): VNS Loader Fix & App Column
 
 ### Version Tag: `v0.4.2`

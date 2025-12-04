@@ -996,9 +996,13 @@ def _render_music_section_analysis():
                             pass  # Use original if correction fails
 
                     try:
-                        # Compute HRV metrics
-                        hrv_time = nk.hrv_time(rr_values, sampling_rate=1000, show=False)
-                        hrv_freq = nk.hrv_frequency(rr_values, sampling_rate=1000, show=False)
+                        # Convert RR intervals to peaks for NeuroKit2
+                        # NeuroKit expects peak indices, not RR values directly
+                        peaks = nk.intervals_to_peaks(rr_values, sampling_rate=1000)
+
+                        # Compute HRV metrics using peaks
+                        hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
+                        hrv_freq = nk.hrv_frequency(peaks, sampling_rate=1000, show=False)
 
                         hrv_results.append({
                             "Section": section.label,
@@ -1818,13 +1822,69 @@ def render_rr_plot_fragment(participant_id: str):
                     line=dict(color=color, width=1, dash='dot'), opacity=0.5
                 )
 
-    # Display interactive plot
+    # Display interactive plot with click detection
     st.info("💡 Click on the plot to add a new event at that timestamp")
     selected_points = plotly_events(fig, click_event=True, hover_event=False, select_event=False, override_height=600)
 
-    # Store click result for parent to handle
+    # Handle click immediately with quick add form
     if selected_points and len(selected_points) > 0:
-        st.session_state[f"plot_click_{participant_id}"] = selected_points[0]
+        clicked_point = selected_points[0]
+        if 'x' in clicked_point:
+            clicked_ts = pd.to_datetime(clicked_point['x'])
+            clicked_time_str = clicked_ts.strftime("%H:%M:%S")
+
+            # Show quick add form right here in the fragment
+            st.success(f"📍 **Clicked at {clicked_time_str}** - Add event below:")
+
+            col_evt, col_custom, col_add = st.columns([2, 2, 1])
+            with col_evt:
+                quick_events = ["measurement_start", "measurement_end", "pause_start", "pause_end",
+                               "rest_pre_start", "rest_pre_end", "rest_post_start", "rest_post_end",
+                               "Custom..."]
+                selected_evt = st.selectbox(
+                    "Event type",
+                    options=quick_events,
+                    key=f"quick_evt_{participant_id}_{clicked_time_str}",
+                    label_visibility="collapsed"
+                )
+
+            with col_custom:
+                if selected_evt == "Custom...":
+                    custom_evt_label = st.text_input(
+                        "Custom label",
+                        key=f"custom_evt_{participant_id}_{clicked_time_str}",
+                        placeholder="Enter event name...",
+                        label_visibility="collapsed"
+                    )
+                else:
+                    custom_evt_label = None
+
+            with col_add:
+                if st.button("➕ Add", key=f"add_click_{participant_id}_{clicked_time_str}", type="primary"):
+                    from music_hrv.prep.summaries import EventStatus
+
+                    # Determine label
+                    event_label = custom_evt_label if selected_evt == "Custom..." else selected_evt
+                    if not event_label:
+                        st.error("Enter a custom event name")
+                    else:
+                        # Use clicked timestamp with proper timezone
+                        if clicked_ts.tzinfo is None:
+                            clicked_ts = clicked_ts.tz_localize('UTC')
+
+                        new_event = EventStatus(
+                            raw_label=event_label,
+                            canonical=st.session_state.normalizer.normalize(event_label),
+                            count=1,
+                            first_timestamp=clicked_ts,
+                            last_timestamp=clicked_ts,
+                        )
+
+                        if participant_id not in st.session_state.participant_events:
+                            st.session_state.participant_events[participant_id] = {'events': [], 'manual': []}
+                        st.session_state.participant_events[participant_id]['manual'].append(new_event)
+                        st.toast(f"✅ Added '{event_label}' at {clicked_time_str}")
+                        st.rerun()
 
 
 def extract_section_rr_intervals(recording, section_def, normalizer):
@@ -2414,10 +2474,39 @@ def main():
 
                     # Store events in session state for this participant if not already there
                     if selected_participant not in st.session_state.participant_events:
-                        st.session_state.participant_events[selected_participant] = {
-                            'events': list(summary.events),
-                            'manual': st.session_state.manual_events.get(selected_participant, []).copy()
-                        }
+                        # First check if we have saved events for this participant
+                        from music_hrv.gui.persistence import load_participant_events
+                        from music_hrv.prep.summaries import EventStatus
+                        from datetime import datetime
+
+                        saved_events = load_participant_events(selected_participant)
+                        if saved_events:
+                            # Load from saved YAML - convert dicts back to EventStatus
+                            def dict_to_event(d):
+                                ts = d.get("first_timestamp")
+                                if ts and isinstance(ts, str):
+                                    ts = datetime.fromisoformat(ts)
+                                last_ts = d.get("last_timestamp")
+                                if last_ts and isinstance(last_ts, str):
+                                    last_ts = datetime.fromisoformat(last_ts)
+                                return EventStatus(
+                                    raw_label=d.get("raw_label", ""),
+                                    canonical=d.get("canonical"),
+                                    first_timestamp=ts,
+                                    last_timestamp=last_ts,
+                                )
+
+                            st.session_state.participant_events[selected_participant] = {
+                                'events': [dict_to_event(e) for e in saved_events.get('events', [])],
+                                'manual': [dict_to_event(e) for e in saved_events.get('manual', [])],
+                                'music_events': [dict_to_event(e) for e in saved_events.get('music_events', [])],
+                            }
+                        else:
+                            # Load from original recording
+                            st.session_state.participant_events[selected_participant] = {
+                                'events': list(summary.events),
+                                'manual': st.session_state.manual_events.get(selected_participant, []).copy()
+                            }
 
                     # Get cleaned RR intervals using CACHED function
                     config_dict = {
@@ -2452,41 +2541,8 @@ def main():
                         plot_data['source_app'] = source_app
                         st.session_state[f"plot_data_{selected_participant}"] = plot_data
 
-                        # Render plot using fragment (prevents full page reruns when toggling options)
+                        # Render plot using fragment (click handling is inside the fragment)
                         render_rr_plot_fragment(selected_participant)
-
-                        # Handle click events from fragment
-                        click_key = f"plot_click_{selected_participant}"
-                        if click_key in st.session_state:
-                            clicked_point = st.session_state[click_key]
-                            del st.session_state[click_key]  # Clear to prevent repeated triggers
-
-                            if 'x' in clicked_point:
-                                from datetime import datetime
-                                clicked_timestamp = pd.to_datetime(clicked_point['x'])
-                                if clicked_timestamp.tzinfo is None:
-                                    clicked_timestamp = clicked_timestamp.tz_localize('UTC')
-
-                                with st.form(key=f"add_event_from_plot_{selected_participant}"):
-                                    st.write(f"Add event at: {clicked_timestamp.strftime('%H:%M:%S')}")
-                                    new_event_label = st.text_input("Event label:")
-                                    submitted = st.form_submit_button("Add Event")
-
-                                    if submitted and new_event_label:
-                                        from music_hrv.prep.summaries import EventStatus
-                                        new_event = EventStatus(
-                                            raw_label=new_event_label,
-                                            canonical=st.session_state.normalizer.normalize(new_event_label),
-                                            first_timestamp=clicked_timestamp,
-                                            last_timestamp=clicked_timestamp
-                                        )
-
-                                        if selected_participant not in st.session_state.participant_events:
-                                            st.session_state.participant_events[selected_participant] = {'events': [], 'manual': []}
-
-                                        st.session_state.participant_events[selected_participant]['manual'].append(new_event)
-                                        show_toast(f"Added event '{new_event_label}' at {clicked_timestamp.strftime('%H:%M:%S')}", icon="success")
-                                        st.rerun()
 
                 except Exception as e:
                     st.warning(f"Could not generate RR plot: {e}")
@@ -2968,29 +3024,278 @@ def main():
                     if not is_chronological:
                         st.error("⚠️ **Events are NOT in chronological order!** Click 'Auto-Sort by Timestamp' to fix.")
 
-                    # Add new event button
-                    def add_new_event():
-                        """Add a new manual event for this participant."""
-                        from music_hrv.prep.summaries import EventStatus
-                        import datetime
-                        # Use timezone-aware datetime to match existing events
-                        now = datetime.datetime.now(datetime.timezone.utc)
-                        new_event = EventStatus(
-                            raw_label="New Event",
-                            canonical=None,
-                            count=1,
-                            first_timestamp=now,
-                            last_timestamp=now,
-                        )
-                        # Add to participant events
-                        st.session_state.participant_events[selected_participant]['manual'].append(new_event)
-                        show_toast("New event added", icon="success")
+                    # Quick Add Event Section
+                    st.markdown("### ➕ Add Event")
 
-                    st.button(
-                        "➕ Add Event",
-                        key=f"add_event_{selected_participant}",
-                        on_click=add_new_event,
-                    )
+                    # Get recording time range for time input
+                    stored_data = st.session_state.participant_events.get(selected_participant, {})
+                    all_evts_for_range = stored_data.get('events', []) + stored_data.get('manual', [])
+                    timestamps_with_data = [e.first_timestamp for e in all_evts_for_range if e.first_timestamp]
+
+                    # Get first RR timestamp as reference
+                    first_rr_time = None
+                    if 'rr_intervals' in recording_data and recording_data['rr_intervals']:
+                        first_rr_time = recording_data['rr_intervals'][0][0]  # (timestamp, rr_ms, elapsed)
+
+                    col_add1, col_add2, col_add3 = st.columns([2, 2, 1])
+
+                    with col_add1:
+                        # Quick event type selector
+                        quick_events = ["measurement_start", "measurement_end", "pause_start", "pause_end",
+                                       "rest_pre_start", "rest_pre_end", "rest_post_start", "rest_post_end",
+                                       "Custom..."]
+                        selected_quick_event = st.selectbox(
+                            "Event type",
+                            options=quick_events,
+                            key=f"quick_event_type_{selected_participant}",
+                            label_visibility="collapsed",
+                            placeholder="Select event type..."
+                        )
+
+                        # Custom label input if "Custom..." selected
+                        if selected_quick_event == "Custom...":
+                            custom_label = st.text_input(
+                                "Custom label",
+                                key=f"custom_event_label_{selected_participant}",
+                                placeholder="Enter event label..."
+                            )
+                        else:
+                            custom_label = None
+
+                    with col_add2:
+                        # Time input with second precision using text input
+                        import datetime as dt
+
+                        # Default time from first RR timestamp
+                        if first_rr_time and hasattr(first_rr_time, 'strftime'):
+                            default_time_str = first_rr_time.strftime("%H:%M:%S")
+                        else:
+                            default_time_str = "10:00:00"
+
+                        event_time_str = st.text_input(
+                            "Time (HH:MM:SS)",
+                            value=default_time_str,
+                            key=f"event_time_{selected_participant}",
+                            placeholder="HH:MM:SS",
+                            help="Enter time as HH:MM:SS (e.g., 10:30:45)"
+                        )
+
+                        # Parse the time string
+                        def parse_time_str(time_str):
+                            """Parse HH:MM:SS or HH:MM string to time object."""
+                            try:
+                                parts = time_str.strip().split(":")
+                                if len(parts) == 3:
+                                    return dt.time(int(parts[0]), int(parts[1]), int(parts[2]))
+                                elif len(parts) == 2:
+                                    return dt.time(int(parts[0]), int(parts[1]), 0)
+                                else:
+                                    return None
+                            except (ValueError, IndexError):
+                                return None
+
+                        # Optional: offset from measurement start
+                        use_offset = st.checkbox(
+                            "Use offset from start instead",
+                            key=f"use_offset_{selected_participant}",
+                            help="Enter time as offset (minutes:seconds) from recording start"
+                        )
+
+                        if use_offset:
+                            col_min, col_sec = st.columns(2)
+                            with col_min:
+                                offset_min = st.number_input("Min", min_value=0, max_value=180, value=0,
+                                                            key=f"offset_min_{selected_participant}")
+                            with col_sec:
+                                offset_sec = st.number_input("Sec", min_value=0, max_value=59, value=0,
+                                                            key=f"offset_sec_{selected_participant}")
+
+                    with col_add3:
+                        def add_quick_event():
+                            """Add event with selected type and time."""
+                            from music_hrv.prep.summaries import EventStatus
+                            import datetime as dt
+
+                            # Determine label
+                            label = custom_label if selected_quick_event == "Custom..." else selected_quick_event
+                            if not label:
+                                show_toast("Please enter an event label", icon="error")
+                                return
+
+                            # Determine timestamp
+                            if use_offset and first_rr_time:
+                                # Calculate from offset
+                                offset_delta = dt.timedelta(minutes=offset_min, seconds=offset_sec)
+                                event_timestamp = first_rr_time + offset_delta
+                            else:
+                                # Parse the time string
+                                parsed_time = parse_time_str(event_time_str)
+                                if not parsed_time:
+                                    show_toast("Invalid time format. Use HH:MM:SS", icon="error")
+                                    return
+
+                                # Use the parsed time with the recording date
+                                if first_rr_time:
+                                    event_timestamp = first_rr_time.replace(
+                                        hour=parsed_time.hour,
+                                        minute=parsed_time.minute,
+                                        second=parsed_time.second,
+                                        microsecond=0
+                                    )
+                                else:
+                                    # Fallback to today's date
+                                    event_timestamp = dt.datetime.combine(
+                                        dt.date.today(),
+                                        parsed_time,
+                                        tzinfo=dt.timezone.utc
+                                    )
+
+                            # Normalize the label
+                            canonical = st.session_state.normalizer.normalize(label)
+
+                            new_event = EventStatus(
+                                raw_label=label,
+                                canonical=canonical,
+                                count=1,
+                                first_timestamp=event_timestamp,
+                                last_timestamp=event_timestamp,
+                            )
+
+                            # Add to participant events
+                            if selected_participant not in st.session_state.participant_events:
+                                st.session_state.participant_events[selected_participant] = {'events': [], 'manual': []}
+                            st.session_state.participant_events[selected_participant]['manual'].append(new_event)
+                            show_toast(f"Added '{label}' at {event_timestamp.strftime('%H:%M:%S')}", icon="success")
+
+                        st.write("")  # Spacer
+                        st.button(
+                            "➕ Add",
+                            key=f"add_event_{selected_participant}",
+                            on_click=add_quick_event,
+                            type="primary",
+                            use_container_width=True
+                        )
+
+                    st.markdown("---")
+
+                    # Auto-fill Boundary Events section
+                    st.markdown("### 🔄 Auto-fill Boundary Events")
+                    st.caption("Automatically calculate missing boundary events based on existing ones (90 min protocol: 45 min + pause + 45 min)")
+
+                    # Get existing boundary events
+                    stored_data = st.session_state.participant_events.get(selected_participant, {})
+                    all_evts = stored_data.get('events', []) + stored_data.get('manual', [])
+
+                    boundary_events = {}
+                    for evt in all_evts:
+                        if evt.canonical in ["measurement_start", "measurement_end", "pause_start", "pause_end"]:
+                            if evt.first_timestamp:
+                                boundary_events[evt.canonical] = evt.first_timestamp
+
+                    # Show current status
+                    col_status1, col_status2 = st.columns(2)
+                    with col_status1:
+                        st.write("**Found:**")
+                        for evt_name in ["measurement_start", "pause_start", "pause_end", "measurement_end"]:
+                            if evt_name in boundary_events:
+                                st.write(f"✅ {evt_name}: {boundary_events[evt_name].strftime('%H:%M:%S')}")
+                            else:
+                                st.write(f"❌ {evt_name}: missing")
+
+                    with col_status2:
+                        st.write("**Protocol settings:**")
+                        pre_pause_min = st.number_input("Pre-pause duration (min)", min_value=1, max_value=120, value=45,
+                                                       key=f"auto_pre_pause_{selected_participant}")
+                        post_pause_min = st.number_input("Post-pause duration (min)", min_value=1, max_value=120, value=45,
+                                                        key=f"auto_post_pause_{selected_participant}")
+
+                    def auto_fill_boundaries():
+                        """Auto-fill missing boundary events based on existing ones."""
+                        from music_hrv.prep.summaries import EventStatus
+                        import datetime as dt
+
+                        events_added = 0
+                        new_events = []
+
+                        # Calculate missing events based on what we have
+                        if "measurement_start" in boundary_events:
+                            ms = boundary_events["measurement_start"]
+
+                            # Calculate pause_start if missing (measurement_start + pre_pause_min)
+                            if "pause_start" not in boundary_events:
+                                ps = ms + dt.timedelta(minutes=pre_pause_min)
+                                new_events.append(("pause_start", ps))
+
+                            # Calculate pause_end if missing (same as pause_start or slightly after)
+                            if "pause_end" not in boundary_events:
+                                pe = boundary_events.get("pause_start", ms + dt.timedelta(minutes=pre_pause_min))
+                                new_events.append(("pause_end", pe))
+
+                            # Calculate measurement_end if missing (measurement_start + total duration)
+                            if "measurement_end" not in boundary_events:
+                                me = ms + dt.timedelta(minutes=pre_pause_min + post_pause_min)
+                                new_events.append(("measurement_end", me))
+
+                        elif "measurement_end" in boundary_events:
+                            me = boundary_events["measurement_end"]
+
+                            # Work backwards
+                            if "measurement_start" not in boundary_events:
+                                ms = me - dt.timedelta(minutes=pre_pause_min + post_pause_min)
+                                new_events.append(("measurement_start", ms))
+
+                            if "pause_end" not in boundary_events:
+                                pe = me - dt.timedelta(minutes=post_pause_min)
+                                new_events.append(("pause_end", pe))
+
+                            if "pause_start" not in boundary_events:
+                                ps = me - dt.timedelta(minutes=post_pause_min)
+                                new_events.append(("pause_start", ps))
+
+                        elif "pause_start" in boundary_events:
+                            ps = boundary_events["pause_start"]
+
+                            if "measurement_start" not in boundary_events:
+                                ms = ps - dt.timedelta(minutes=pre_pause_min)
+                                new_events.append(("measurement_start", ms))
+
+                            if "pause_end" not in boundary_events:
+                                new_events.append(("pause_end", ps))
+
+                            if "measurement_end" not in boundary_events:
+                                me = ps + dt.timedelta(minutes=post_pause_min)
+                                new_events.append(("measurement_end", me))
+
+                        # Add the new events
+                        for label, timestamp in new_events:
+                            new_event = EventStatus(
+                                raw_label=label,
+                                canonical=label,
+                                count=1,
+                                first_timestamp=timestamp,
+                                last_timestamp=timestamp,
+                            )
+                            st.session_state.participant_events[selected_participant]['manual'].append(new_event)
+                            events_added += 1
+
+                        if events_added > 0:
+                            show_toast(f"Added {events_added} boundary event(s)", icon="success")
+                        else:
+                            show_toast("No events to add (need at least one existing boundary event)", icon="warning")
+
+                    # Only show button if we have at least one boundary event and some are missing
+                    missing_count = 4 - len(boundary_events)
+                    if len(boundary_events) > 0 and missing_count > 0:
+                        st.button(
+                            f"🔄 Auto-fill {missing_count} missing event(s)",
+                            key=f"auto_fill_{selected_participant}",
+                            on_click=auto_fill_boundaries,
+                            type="primary"
+                        )
+                    elif len(boundary_events) == 0:
+                        st.info("Add at least one boundary event first (measurement_start, pause_start, etc.)")
+                    else:
+                        st.success("✅ All boundary events present")
 
                     st.markdown("---")
 
@@ -3114,14 +3419,42 @@ def main():
                                                  help="Add raw label as synonym")
 
                                 with col_time:
-                                    # Display timestamp
-                                    timestamp_str = event.first_timestamp.strftime("%H:%M:%S") if event.first_timestamp else "—"
+                                    # Editable time input with second precision using text
+                                    import datetime as dt
+                                    current_time_str = event.first_timestamp.strftime("%H:%M:%S") if event.first_timestamp else "00:00:00"
+
+                                    def update_event_time(participant_id, event_idx, original_ts):
+                                        """Update event timestamp from time text input."""
+                                        key = f"time_{participant_id}_{event_idx}"
+                                        if key in st.session_state:
+                                            time_str = st.session_state[key]
+                                            # Parse HH:MM:SS
+                                            try:
+                                                parts = time_str.strip().split(":")
+                                                if len(parts) >= 2:
+                                                    h = int(parts[0])
+                                                    m = int(parts[1])
+                                                    s = int(parts[2]) if len(parts) > 2 else 0
+                                                    if original_ts:
+                                                        new_ts = original_ts.replace(hour=h, minute=m, second=s, microsecond=0)
+                                                        stored = st.session_state.participant_events[participant_id]
+                                                        all_evts = stored['events'] + stored['manual']
+                                                        if event_idx < len(all_evts):
+                                                            all_evts[event_idx].first_timestamp = new_ts
+                                                            all_evts[event_idx].last_timestamp = new_ts
+                                                            st.session_state.participant_events[participant_id]['events'] = all_evts
+                                                            st.session_state.participant_events[participant_id]['manual'] = []
+                                            except (ValueError, IndexError):
+                                                pass  # Invalid format, ignore
+
                                     st.text_input(
                                         "Time",
-                                        value=timestamp_str,
+                                        value=current_time_str,
                                         key=f"time_{selected_participant}_{idx}",
-                                        disabled=True,
-                                        label_visibility="collapsed"
+                                        label_visibility="collapsed",
+                                        on_change=update_event_time,
+                                        args=(selected_participant, idx, event.first_timestamp),
+                                        help="HH:MM:SS"
                                     )
 
                                 with col_delete:
@@ -3300,16 +3633,33 @@ def main():
                 if boundary_events:
                     # Show detected boundaries
                     with st.expander("Detected Boundary Events", expanded=False):
-                        for name, ts in sorted(boundary_events.items(), key=lambda x: x[1] if x[1] else ""):
+                        # Normalize timestamps for sorting (remove timezone info if present)
+                        def sort_key(item):
+                            ts = item[1]
+                            if ts is None:
+                                return pd.Timestamp.min
+                            # Convert to naive timestamp for comparison
+                            if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+                                return ts.replace(tzinfo=None)
+                            return ts
+                        for name, ts in sorted(boundary_events.items(), key=sort_key):
                             st.write(f"- {name}: {ts.strftime('%H:%M:%S') if ts else 'N/A'}")
 
                     # Calculate and validate durations
                     validation_issues = []
                     validation_ok = []
 
+                    # Helper to normalize timestamps for safe arithmetic
+                    def normalize_ts(ts):
+                        if ts is None:
+                            return None
+                        if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+                            return ts.replace(tzinfo=None)
+                        return ts
+
                     # Rest Pre duration (should be 3-5 min)
                     if 'rest_pre_start' in boundary_events and 'rest_pre_end' in boundary_events:
-                        rest_pre_dur = (boundary_events['rest_pre_end'] - boundary_events['rest_pre_start']).total_seconds() / 60
+                        rest_pre_dur = (normalize_ts(boundary_events['rest_pre_end']) - normalize_ts(boundary_events['rest_pre_start'])).total_seconds() / 60
                         if rest_pre_dur < 3:
                             validation_issues.append(f"⚠️ Rest Pre: {rest_pre_dur:.1f} min (should be ≥3 min)")
                         elif rest_pre_dur < 5:
@@ -3319,7 +3669,7 @@ def main():
 
                     # Rest Post duration (should be 3-5 min)
                     if 'rest_post_start' in boundary_events and 'rest_post_end' in boundary_events:
-                        rest_post_dur = (boundary_events['rest_post_end'] - boundary_events['rest_post_start']).total_seconds() / 60
+                        rest_post_dur = (normalize_ts(boundary_events['rest_post_end']) - normalize_ts(boundary_events['rest_post_start'])).total_seconds() / 60
                         if rest_post_dur < 3:
                             validation_issues.append(f"⚠️ Rest Post: {rest_post_dur:.1f} min (should be ≥3 min)")
                         elif rest_post_dur < 5:
@@ -3329,7 +3679,7 @@ def main():
 
                     # Pre-pause measurement (should be ~90 min / 1.5 hours)
                     if 'measurement_start' in boundary_events and 'pause_start' in boundary_events:
-                        pre_pause_dur = (boundary_events['pause_start'] - boundary_events['measurement_start']).total_seconds() / 60
+                        pre_pause_dur = (normalize_ts(boundary_events['pause_start']) - normalize_ts(boundary_events['measurement_start'])).total_seconds() / 60
                         expected_segments = int(pre_pause_dur / 5)
                         if abs(pre_pause_dur - 90) > 10:
                             validation_issues.append(f"⚠️ Pre-pause measurement: {pre_pause_dur:.1f} min (expected ~90 min)")
@@ -3343,7 +3693,7 @@ def main():
 
                     # Post-pause measurement (should be ~90 min / 1.5 hours)
                     if 'pause_end' in boundary_events and 'measurement_end' in boundary_events:
-                        post_pause_dur = (boundary_events['measurement_end'] - boundary_events['pause_end']).total_seconds() / 60
+                        post_pause_dur = (normalize_ts(boundary_events['measurement_end']) - normalize_ts(boundary_events['pause_end'])).total_seconds() / 60
                         expected_segments = int(post_pause_dur / 5)
                         if abs(post_pause_dur - 90) > 10:
                             validation_issues.append(f"⚠️ Post-pause measurement: {post_pause_dur:.1f} min (expected ~90 min)")
@@ -3366,62 +3716,52 @@ def main():
                 else:
                     st.info("No boundary events found yet. Events will be validated once measurement boundaries are detected.")
 
-                # Save participant button
+                # Save/Reset participant events
                 st.markdown("---")
-                col_save, col_status = st.columns([1, 2])
+                from music_hrv.gui.persistence import (
+                    save_participant_events,
+                    load_participant_events,
+                    delete_participant_events,
+                    list_saved_participant_events,
+                )
+
+                col_save, col_reset, col_status = st.columns([1, 1, 2])
+
                 with col_save:
-                    def save_participant_to_disk():
-                        """Save participant events to disk."""
-                        # Get the current recording with updated events
-                        stored_data = st.session_state.participant_events[selected_participant]
-                        all_evts = stored_data['events'] + stored_data['manual']
+                    def save_events_to_yaml():
+                        """Save participant events to YAML persistence."""
+                        stored_data = st.session_state.participant_events.get(selected_participant, {})
+                        save_participant_events(selected_participant, stored_data)
+                        show_toast(f"Saved events for {selected_participant}", icon="success")
 
-                        # Find the original summary to get the recording
-                        orig_summary = get_summary_dict().get(selected_participant)  # O(1) cached lookup
-                        if orig_summary:
-                            # Update summary events with current state
-                            orig_summary.events = all_evts
-
-                            # Save to output directory
-                            output_dir = Path("output/participants")
-                            output_dir.mkdir(parents=True, exist_ok=True)
-
-                            # Convert EventStatus back to EventMarker for saving
-                            from music_hrv.io.hrv_logger import EventMarker
-                            event_markers = []
-                            for evt in all_evts:
-                                event_markers.append(EventMarker(
-                                    label=evt.raw_label,
-                                    timestamp=evt.first_timestamp
-                                ))
-
-                            # Get RR intervals from original recording
-                            bundle = next((b for b in discover_recordings(st.session_state.data_path) if b.participant_id == selected_participant), None)
-                            if bundle:
-                                recording, _, _ = load_recording(bundle)
-                                recording.events = event_markers
-
-                                # Save
-                                save_path = output_dir / f"{selected_participant}.pkl"
-                                import pickle
-                                with open(save_path, 'wb') as f:
-                                    pickle.dump(recording, f)
-
-                                show_toast(f"Saved {selected_participant} to {save_path}", icon="success")
-
-                    st.button("💾 Save Participant Data",
+                    st.button("💾 Save Events",
                              key=f"save_{selected_participant}",
-                             on_click=save_participant_to_disk,
+                             on_click=save_events_to_yaml,
                              help="Save all event changes for this participant",
                              type="primary")
 
+                with col_reset:
+                    def reset_to_original():
+                        """Reset participant events to original (from file)."""
+                        # Delete saved events
+                        delete_participant_events(selected_participant)
+                        # Clear from session state so it reloads from original
+                        if selected_participant in st.session_state.participant_events:
+                            del st.session_state.participant_events[selected_participant]
+                        show_toast(f"Reset {selected_participant} to original events", icon="success")
+
+                    # Only show reset if there are saved events
+                    saved_participants = list_saved_participant_events()
+                    if selected_participant in saved_participants:
+                        st.button("🔄 Reset to Original",
+                                 key=f"reset_{selected_participant}",
+                                 on_click=reset_to_original,
+                                 help="Discard saved changes and reload original events")
+
                 with col_status:
-                    # Check if participant is saved
-                    saved_path = Path("output/participants") / f"{selected_participant}.pkl"
-                    if saved_path.exists():
-                        from datetime import datetime
-                        mod_time = datetime.fromtimestamp(saved_path.stat().st_mtime)
-                        st.caption(f"✅ Last saved: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    # Check if participant has saved events
+                    if selected_participant in saved_participants:
+                        st.caption(f"✅ Has saved event edits")
                     else:
                         st.caption("⚠️ Not yet saved")
 

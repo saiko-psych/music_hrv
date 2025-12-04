@@ -50,6 +50,10 @@ class PreparationSummary:
     rr_file_count: int = 1  # Number of RR files for this participant
     events_file_count: int = 0  # Number of Events files for this participant
     source_app: str = "Unknown"  # Recording app (HRV Logger, VNS Analyse, etc.)
+    # File paths for reloading data in participant view
+    rr_paths: list[Path] | None = None  # HRV Logger RR file paths
+    events_paths: list[Path] | None = None  # HRV Logger Events file paths
+    vns_path: Path | None = None  # VNS Analyse file path
 
     @property
     def has_multiple_files(self) -> bool:
@@ -81,6 +85,9 @@ def summarize_recording(
     rr_file_count: int = 1,
     events_file_count: int = 0,
     source_app: str = "Unknown",
+    rr_paths: list[Path] | None = None,
+    events_paths: list[Path] | None = None,
+    vns_path: Path | None = None,
 ) -> PreparationSummary:
     """Clean one participant recording and collect descriptive stats."""
 
@@ -152,6 +159,9 @@ def summarize_recording(
         rr_file_count=rr_file_count,
         events_file_count=events_file_count,
         source_app=source_app,
+        rr_paths=rr_paths,
+        events_paths=events_paths,
+        vns_path=vns_path,
     )
 
 
@@ -179,6 +189,8 @@ def load_hrv_logger_preview(
                 rr_file_count=len(bundle.rr_paths),
                 events_file_count=len(bundle.events_paths),
                 source_app="HRV Logger",
+                rr_paths=list(bundle.rr_paths),
+                events_paths=list(bundle.events_paths),
             )
         )
     return summaries
@@ -190,15 +202,21 @@ def load_vns_preview(
     pattern: str,
     config: CleaningConfig | None = None,
     normalizer: SectionNormalizer | None = None,
+    use_corrected: bool = False,
 ) -> list[PreparationSummary]:
-    """Return summaries for each VNS Analyse participant under root."""
+    """Return summaries for each VNS Analyse participant under root.
+
+    Args:
+        use_corrected: If True, use corrected RR values from VNS files.
+                       Default False = raw values.
+    """
 
     bundles = discover_vns_recordings(root, pattern=pattern)
     normalizer = normalizer or SectionNormalizer.from_yaml()
     summaries: list[PreparationSummary] = []
 
     for bundle in bundles:
-        vns_recording = load_vns_recording(bundle)
+        vns_recording = load_vns_recording(bundle, use_corrected=use_corrected)
 
         # Convert VNS recording to HRVLoggerRecording format for reuse of summarize_recording
         hrv_recording = HRVLoggerRecording(
@@ -217,6 +235,7 @@ def load_vns_preview(
                 rr_file_count=1,  # VNS always has one file per participant
                 events_file_count=1 if vns_recording.events else 0,
                 source_app="VNS Analyse",
+                vns_path=bundle.file_path,
             )
         )
     return summaries

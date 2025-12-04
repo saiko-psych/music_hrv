@@ -354,13 +354,13 @@ def _render_groups_section():
                 new_name = st.text_input(
                     "Group Name (ID)",
                     value=group_name,
-                    key=f"edit_name_{group_name}"
+                    key=f"edit_group_name_{group_name}"
                 )
             with col2:
                 new_label = st.text_input(
                     "Group Label",
                     value=group_data["label"],
-                    key=f"edit_label_{group_name}"
+                    key=f"edit_group_label_{group_name}"
                 )
 
             def save_group_changes(old_name, new_name_val, new_label_val):
@@ -586,7 +586,7 @@ def _render_playlists_section():
                 new_label = st.text_input(
                     "Label",
                     value=playlist_data.get('label', playlist_name),
-                    key=f"edit_label_{playlist_name}"
+                    key=f"edit_playlist_label_{playlist_name}"
                 )
 
                 st.markdown(f"**Music Order:** {' -> '.join(playlist_data['music_order'])}")
@@ -594,7 +594,7 @@ def _render_playlists_section():
                 new_order = st.text_input(
                     "Edit Music Order (comma-separated)",
                     value=", ".join(playlist_data['music_order']),
-                    key=f"edit_order_{playlist_name}"
+                    key=f"edit_playlist_order_{playlist_name}"
                 )
 
                 col_pl1, col_pl2, col_pl3 = st.columns(3)

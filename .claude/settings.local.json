@@ -20,7 +20,17 @@
       "Bash(del:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "WebSearch",
+      "WebFetch(domain:neuropsychology.github.io)",
+      "Bash(tree:*)",
+      "Bash(for f in \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/src/music_hrv/gui/app.py\" \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/src/music_hrv/gui/persistence.py\" \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/src/music_hrv/io/hrv_logger.py\" \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/src/music_hrv/cleaning/rr.py\" \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/src/music_hrv/segments/section_normalizer.py\" \"C:\\Users\\David\\Nextcloud2\\Documents\\python\\music_hrv/MEMORY.md\")",
+      "Bash(done)",
+      "Bash(rm:*)",
+      "Bash(git checkout:*)",
+      "Bash(git reset:*)",
+      "Bash(wc:*)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)"
     ],
     "deny": [],
     "ask": []

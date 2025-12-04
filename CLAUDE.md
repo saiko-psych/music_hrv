@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.0` | **Tests**: 18/18 passing
+**Version**: `v0.6.1` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, batch processing, CSV import)
@@ -87,6 +87,8 @@ uv run ruff check src/ tests/ --fix            # Lint
 ## TODOs
 
 - [ ] Playlist group comparison (compare music types across playlists)
+- [x] ~~Auto-fill boundary events~~ (DONE v0.6.1)
+- [x] ~~Custom events from plot click~~ (DONE v0.6.1)
 - [x] ~~Music Section Analysis mode~~ (DONE v0.6.0)
 - [x] ~~Section-based HRV analysis~~ (DONE v0.6.0)
 - [x] ~~Add `use_corrected` option in UI for VNS data~~ (DONE v0.5.0)
