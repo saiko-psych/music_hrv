@@ -687,6 +687,376 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
     return result
 
 
+def _render_music_section_analysis():
+    """Render the Music Section Analysis UI.
+
+    Protocol-based analysis of 5-minute music sections with validation.
+    """
+    from music_hrv.analysis.music_sections import (
+        ProtocolConfig,
+        DurationMismatchStrategy,
+        extract_music_sections,
+        get_sections_by_music_type,
+    )
+    from music_hrv.gui.persistence import load_protocol, save_protocol
+
+    st.markdown("""
+    Analyze HRV metrics for each **5-minute music section** based on your protocol.
+    This mode automatically extracts sections using measurement events and validates data quality.
+    """)
+
+    # Protocol Settings
+    with st.expander("⚙️ Protocol Settings", expanded=False):
+        protocol_data = load_protocol()
+
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            expected_duration = st.number_input(
+                "Expected total duration (min)",
+                min_value=30.0, max_value=180.0,
+                value=float(protocol_data.get("expected_duration_min", 90.0)),
+                step=5.0,
+                key="protocol_expected_duration",
+                help="Total expected duration of the measurement session"
+            )
+            section_length = st.number_input(
+                "Section length (min)",
+                min_value=1.0, max_value=15.0,
+                value=float(protocol_data.get("section_length_min", 5.0)),
+                step=1.0,
+                key="protocol_section_length",
+                help="Duration of each music section"
+            )
+            pre_pause_sections = st.number_input(
+                "Pre-pause sections",
+                min_value=1, max_value=20,
+                value=int(protocol_data.get("pre_pause_sections", 9)),
+                step=1,
+                key="protocol_pre_pause",
+                help="Number of music sections before the pause"
+            )
+
+        with col_p2:
+            post_pause_sections = st.number_input(
+                "Post-pause sections",
+                min_value=1, max_value=20,
+                value=int(protocol_data.get("post_pause_sections", 9)),
+                step=1,
+                key="protocol_post_pause",
+                help="Number of music sections after the pause"
+            )
+            min_section_duration = st.number_input(
+                "Minimum valid section duration (min)",
+                min_value=1.0, max_value=10.0,
+                value=float(protocol_data.get("min_section_duration_min", 4.0)),
+                step=0.5,
+                key="protocol_min_duration",
+                help="Sections shorter than this are flagged as incomplete"
+            )
+            min_section_beats = st.number_input(
+                "Minimum beats per section",
+                min_value=50, max_value=500,
+                value=int(protocol_data.get("min_section_beats", 100)),
+                step=10,
+                key="protocol_min_beats",
+                help="Sections with fewer beats are flagged as incomplete"
+            )
+
+        # Duration mismatch handling
+        mismatch_options = {
+            "Flag only (include all, mark incomplete)": DurationMismatchStrategy.FLAG_ONLY,
+            "Strict (exclude incomplete sections)": DurationMismatchStrategy.STRICT,
+            "Proportional (scale sections to fit)": DurationMismatchStrategy.PROPORTIONAL,
+        }
+        current_strategy = protocol_data.get("mismatch_strategy", DurationMismatchStrategy.FLAG_ONLY)
+        current_label = next(
+            (k for k, v in mismatch_options.items() if v == current_strategy),
+            "Flag only (include all, mark incomplete)"
+        )
+        mismatch_strategy = st.radio(
+            "Duration mismatch handling",
+            options=list(mismatch_options.keys()),
+            index=list(mismatch_options.keys()).index(current_label),
+            key="protocol_mismatch_strategy",
+            horizontal=True,
+            help="How to handle recordings that don't match expected duration"
+        )
+
+        if st.button("💾 Save Protocol Settings", key="save_protocol_btn"):
+            new_protocol = {
+                "expected_duration_min": expected_duration,
+                "section_length_min": section_length,
+                "pre_pause_sections": pre_pause_sections,
+                "post_pause_sections": post_pause_sections,
+                "min_section_duration_min": min_section_duration,
+                "min_section_beats": min_section_beats,
+                "mismatch_strategy": mismatch_options[mismatch_strategy],
+            }
+            save_protocol(new_protocol)
+            st.success("Protocol settings saved!")
+
+    # Build protocol config from current values
+    protocol = ProtocolConfig(
+        expected_duration_min=st.session_state.get("protocol_expected_duration", 90.0),
+        section_length_min=st.session_state.get("protocol_section_length", 5.0),
+        pre_pause_sections=st.session_state.get("protocol_pre_pause", 9),
+        post_pause_sections=st.session_state.get("protocol_post_pause", 9),
+        min_section_duration_min=st.session_state.get("protocol_min_duration", 4.0),
+        min_section_beats=st.session_state.get("protocol_min_beats", 100),
+    )
+
+    st.markdown("---")
+
+    # Participant/Playlist selection
+    col_sel1, col_sel2 = st.columns(2)
+
+    with col_sel1:
+        participant_list = get_participant_list()
+        selected_participant = st.selectbox(
+            "Select Participant",
+            options=participant_list,
+            key="music_analysis_participant"
+        )
+
+    with col_sel2:
+        # Get participant's playlist
+        participant_playlist = st.session_state.get("participant_playlists", {}).get(selected_participant, "")
+        playlist_groups = st.session_state.get("playlist_groups", {})
+
+        if participant_playlist and participant_playlist in playlist_groups:
+            playlist_data = playlist_groups[participant_playlist]
+            music_order = playlist_data.get("music_order", ["music_1", "music_2", "music_3"])
+            playlist_label = playlist_data.get("label", participant_playlist)
+            st.info(f"**Playlist:** {playlist_label}")
+            st.caption(f"Music order: {' → '.join(music_order)}")
+        else:
+            st.warning("No playlist assigned. Using default music order.")
+            music_order = ["music_1", "music_2", "music_3"]
+
+    # Artifact correction option
+    apply_correction = st.checkbox(
+        "Apply artifact correction (NeuroKit2 Kubios)",
+        value=False,
+        key="music_analysis_correction",
+        help="Recommended for data with quality issues"
+    )
+
+    # Analyze button
+    if st.button("🎵 Analyze Music Sections", key="analyze_music_btn", type="primary"):
+        with st.status("Extracting music sections...", expanded=True) as status:
+            try:
+                st.write("📂 Loading recording data...")
+
+                # Get participant's recording data
+                summary = get_summary_dict().get(selected_participant)
+                if not summary:
+                    st.error(f"No data found for participant {selected_participant}")
+                    return
+
+                source_app = getattr(summary, 'source_app', 'HRV Logger')
+                is_vns = (source_app == "VNS Analyse")
+
+                # Load recording
+                if is_vns and getattr(summary, 'vns_path', None):
+                    recording_data = cached_load_vns_recording(
+                        str(summary.vns_path),
+                        selected_participant,
+                        use_corrected=st.session_state.get("vns_use_corrected", False),
+                    )
+                else:
+                    bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)
+                    bundle = next((b for b in bundles if b.participant_id == selected_participant), None)
+                    if not bundle:
+                        st.error(f"No recording bundle found for {selected_participant}")
+                        return
+                    recording_data = cached_load_recording(
+                        tuple(str(p) for p in bundle.rr_paths),
+                        tuple(str(p) for p in bundle.events_paths),
+                        selected_participant
+                    )
+
+                # Build RR intervals and events dict
+                from music_hrv.io.hrv_logger import RRInterval
+                rr_intervals = [
+                    RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
+                    for ts, rr, elapsed in recording_data['rr_intervals']
+                ]
+
+                # Build events dictionary (canonical -> timestamp)
+                events_dict = {}
+                stored_events = st.session_state.participant_events.get(selected_participant, {})
+                all_events = stored_events.get('events', []) + stored_events.get('manual', [])
+
+                for evt in all_events:
+                    canonical = evt.canonical if hasattr(evt, 'canonical') else None
+                    if canonical and evt.first_timestamp:
+                        events_dict[canonical] = evt.first_timestamp
+
+                st.write(f"📊 Found {len(rr_intervals)} RR intervals")
+                st.write(f"📌 Events: {', '.join(events_dict.keys()) or 'None'}")
+
+                # Extract music sections
+                st.write("🎵 Extracting music sections...")
+                mismatch_strategy_value = mismatch_options.get(
+                    st.session_state.get("protocol_mismatch_strategy", "Flag only (include all, mark incomplete)"),
+                    DurationMismatchStrategy.FLAG_ONLY
+                )
+
+                analysis = extract_music_sections(
+                    rr_intervals=rr_intervals,
+                    events=events_dict,
+                    music_order=music_order,
+                    protocol=protocol,
+                    mismatch_strategy=mismatch_strategy_value,
+                )
+
+                # Show warnings
+                if analysis.warnings:
+                    for warning in analysis.warnings:
+                        st.warning(f"⚠️ {warning}")
+
+                st.write(f"✅ Extracted {len(analysis.sections)} sections "
+                        f"({analysis.valid_sections} valid, {analysis.incomplete_sections} incomplete)")
+
+                status.update(label="Section extraction complete", state="complete")
+
+                # Display results
+                st.markdown("---")
+                st.subheader("📊 Music Section Analysis Results")
+
+                # Duration overview
+                col_dur1, col_dur2, col_dur3 = st.columns(3)
+                with col_dur1:
+                    st.metric(
+                        "Expected Duration",
+                        f"{protocol.expected_duration_min:.0f} min"
+                    )
+                with col_dur2:
+                    st.metric(
+                        "Actual Duration",
+                        f"{analysis.actual_total_duration_s/60:.1f} min",
+                        delta=f"{-analysis.duration_mismatch_s/60:.1f} min" if analysis.duration_mismatch_s > 60 else None,
+                        delta_color="inverse"
+                    )
+                with col_dur3:
+                    st.metric(
+                        "Valid Sections",
+                        f"{analysis.valid_sections}/{len(analysis.sections)}"
+                    )
+
+                # Section details table
+                st.markdown("### Section Details")
+
+                section_data = []
+                for section in analysis.sections:
+                    status_icon = "✅" if section.is_valid else "⚠️"
+                    section_data.append({
+                        "Status": status_icon,
+                        "Section": section.label,
+                        "Music": section.music_type,
+                        "Phase": section.phase.replace("_", " ").title(),
+                        "Duration (min)": f"{section.actual_duration_s/60:.1f}",
+                        "Beats": section.beat_count,
+                        "Duration %": f"{section.duration_ratio*100:.0f}%",
+                        "Warnings": "; ".join(section.validation_warnings) if section.validation_warnings else "-",
+                    })
+
+                import pandas as pd
+                df_sections = pd.DataFrame(section_data)
+                st.dataframe(df_sections, use_container_width=True, hide_index=True)
+
+                # HRV Analysis for valid sections
+                st.markdown("### HRV Metrics by Section")
+
+                nk = get_neurokit()
+                if nk is None:
+                    st.error("NeuroKit2 not available for HRV computation")
+                    return
+
+                hrv_results = []
+                for section in analysis.sections:
+                    if not section.is_valid or section.beat_count < 50:
+                        continue
+
+                    rr_values = [rr.rr_ms for rr in section.rr_intervals]
+
+                    # Apply artifact correction if requested
+                    if apply_correction:
+                        try:
+                            peaks_corrected, info = nk.signal_fixpeaks(
+                                {"ECG_R_Peaks": list(range(len(rr_values)))},
+                                sampling_rate=1000,
+                                iterative=True,
+                                method="kubios"
+                            )
+                            # Reconstruct RR from corrected peaks
+                            rr_values = [rr_values[i] for i in range(len(rr_values))
+                                        if i not in info.get("artifacts", [])]
+                        except Exception:
+                            pass  # Use original if correction fails
+
+                    try:
+                        # Compute HRV metrics
+                        hrv_time = nk.hrv_time(rr_values, sampling_rate=1000, show=False)
+                        hrv_freq = nk.hrv_frequency(rr_values, sampling_rate=1000, show=False)
+
+                        hrv_results.append({
+                            "Section": section.label,
+                            "Music": section.music_type,
+                            "Phase": section.phase.replace("_", " ").title(),
+                            "Beats": section.beat_count,
+                            "RMSSD": f"{hrv_time['HRV_RMSSD'].values[0]:.1f}",
+                            "SDNN": f"{hrv_time['HRV_SDNN'].values[0]:.1f}",
+                            "pNN50": f"{hrv_time['HRV_pNN50'].values[0]:.1f}",
+                            "HF (ms²)": f"{hrv_freq['HRV_HF'].values[0]:.1f}",
+                            "LF (ms²)": f"{hrv_freq['HRV_LF'].values[0]:.1f}",
+                            "LF/HF": f"{hrv_freq['HRV_LFHF'].values[0]:.2f}",
+                        })
+                    except Exception as e:
+                        st.warning(f"Could not compute HRV for {section.label}: {e}")
+
+                if hrv_results:
+                    df_hrv = pd.DataFrame(hrv_results)
+                    st.dataframe(df_hrv, use_container_width=True, hide_index=True)
+
+                    # Download button
+                    csv_hrv = df_hrv.to_csv(index=False)
+                    st.download_button(
+                        "📥 Download HRV Results (CSV)",
+                        data=csv_hrv,
+                        file_name=f"music_sections_hrv_{selected_participant}.csv",
+                        mime="text/csv"
+                    )
+
+                    # Summary by music type
+                    st.markdown("### Summary by Music Type")
+                    sections_by_type = get_sections_by_music_type(analysis, valid_only=True)
+
+                    for music_type, sections in sections_by_type.items():
+                        with st.expander(f"🎵 {music_type} ({len(sections)} sections)", expanded=False):
+                            type_results = [r for r in hrv_results if r["Music"] == music_type]
+                            if type_results:
+                                df_type = pd.DataFrame(type_results)
+                                st.dataframe(df_type, use_container_width=True, hide_index=True)
+
+                                # Compute averages
+                                try:
+                                    avg_rmssd = sum(float(r["RMSSD"]) for r in type_results) / len(type_results)
+                                    avg_sdnn = sum(float(r["SDNN"]) for r in type_results) / len(type_results)
+                                    st.markdown(f"**Averages:** RMSSD={avg_rmssd:.1f} ms, SDNN={avg_sdnn:.1f} ms")
+                                except (ValueError, ZeroDivisionError):
+                                    pass
+
+                else:
+                    st.warning("No valid sections for HRV analysis")
+
+            except Exception as e:
+                status.update(label="Error during analysis", state="error")
+                st.error(f"Error: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+
 @st.fragment
 def render_participant_table_fragment():
     """Fragment for participant table - prevents re-render when expanders change.
@@ -3119,7 +3489,7 @@ def main():
             # Selection mode
             analysis_mode = st.radio(
                 "Analysis Mode",
-                options=["Single Participant", "Group Analysis"],
+                options=["Single Participant", "Music Section Analysis", "Group Analysis"],
                 horizontal=True,
             )
 
@@ -3364,6 +3734,10 @@ def main():
                                     ax.grid(True, alpha=0.3)
                                     st.pyplot(fig)
                                     plt.close(fig)
+
+            elif analysis_mode == "Music Section Analysis":
+                # Music Section Analysis - protocol-based 5-minute section analysis
+                _render_music_section_analysis()
 
             else:  # Group Analysis
                 # Group selection

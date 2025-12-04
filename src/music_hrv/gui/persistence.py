@@ -14,6 +14,7 @@ SECTIONS_FILE = CONFIG_DIR / "sections.yml"
 PARTICIPANTS_FILE = CONFIG_DIR / "participants.yml"
 PLAYLIST_GROUPS_FILE = CONFIG_DIR / "playlist_groups.yml"
 MUSIC_LABELS_FILE = CONFIG_DIR / "music_labels.yml"
+PROTOCOL_FILE = CONFIG_DIR / "protocol.yml"
 
 
 def ensure_config_dir() -> None:
@@ -144,4 +145,39 @@ def load_music_labels() -> dict[str, Any]:
     if not MUSIC_LABELS_FILE.exists():
         return {}
     with open(MUSIC_LABELS_FILE, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_protocol(protocol: dict[str, Any]) -> None:
+    """Save protocol configuration to YAML.
+
+    Format:
+    {
+        "expected_duration_min": 90.0,
+        "section_length_min": 5.0,
+        "pre_pause_sections": 9,
+        "post_pause_sections": 9,
+        "min_section_duration_min": 4.0,
+        "min_section_beats": 100,
+        "mismatch_strategy": "flag_only"
+    }
+    """
+    ensure_config_dir()
+    with open(PROTOCOL_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(protocol, f, default_flow_style=False, allow_unicode=True)
+
+
+def load_protocol() -> dict[str, Any]:
+    """Load protocol configuration from YAML."""
+    if not PROTOCOL_FILE.exists():
+        return {
+            "expected_duration_min": 90.0,
+            "section_length_min": 5.0,
+            "pre_pause_sections": 9,
+            "post_pause_sections": 9,
+            "min_section_duration_min": 4.0,
+            "min_section_beats": 100,
+            "mismatch_strategy": "flag_only",
+        }
+    with open(PROTOCOL_FILE, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
