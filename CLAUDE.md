@@ -89,13 +89,24 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## TODOs
 
+**Next up:**
+- [ ] Fix batch processing
+- [ ] Remove redundant code/UI elements (cleanup)
+- [ ] Flexible section end events (end with any event, or selection of events)
+- [ ] Standalone app (no Python required) - PyInstaller/Nuitka
+- [ ] Example simulated data for testing/demo
+- [ ] Tutorial videos
+
+**Future:**
 - [ ] Playlist group comparison (compare music types across playlists)
-- [x] ~~Editable exclusion zones~~ (DONE v0.6.2)
-- [x] ~~Vertical exclusion labels (like events)~~ (DONE v0.6.2)
-- [x] ~~Exclusion zones affect timing validation~~ (DONE v0.6.2)
-- [x] ~~Auto-fill boundary events~~ (DONE v0.6.1)
-- [x] ~~Custom events from plot click~~ (DONE v0.6.1)
-- [x] ~~Music Section Analysis mode~~ (DONE v0.6.0)
+
+**Done:**
+- [x] ~~Editable exclusion zones~~ (v0.6.2)
+- [x] ~~Vertical exclusion labels~~ (v0.6.2)
+- [x] ~~Exclusion zones affect timing validation~~ (v0.6.2)
+- [x] ~~Auto-fill boundary events~~ (v0.6.1)
+- [x] ~~Custom events from plot click~~ (v0.6.1)
+- [x] ~~Music Section Analysis mode~~ (v0.6.0)
 
 ## References
 
