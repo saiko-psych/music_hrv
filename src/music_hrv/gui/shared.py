@@ -256,9 +256,12 @@ def validate_regex_pattern(pattern):
 def extract_section_rr_intervals(recording, section_def, normalizer):
     """Extract RR intervals for a specific section based on start/end events."""
     start_event_name = section_def.get("start_event")
-    end_event_name = section_def.get("end_event")
+    # Support both old (end_event) and new (end_events) format
+    end_event_names = section_def.get("end_events", [])
+    if not end_event_names and "end_event" in section_def:
+        end_event_names = [section_def["end_event"]]
 
-    if not start_event_name or not end_event_name:
+    if not start_event_name or not end_event_names:
         return None
 
     start_ts = None
@@ -268,8 +271,10 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
         canonical = normalizer.normalize(event.label)
         if canonical == start_event_name and event.timestamp:
             start_ts = event.timestamp
-        elif canonical == end_event_name and event.timestamp:
-            end_ts = event.timestamp
+        elif canonical in end_event_names and event.timestamp:
+            # Use first matching end event
+            if end_ts is None:
+                end_ts = event.timestamp
 
     if not start_ts or not end_ts:
         return None

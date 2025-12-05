@@ -306,8 +306,8 @@ def _render_groups_section():
         - **R2**: music_1 -> music_3 -> music_2
         - etc.
 
-        Assign participants to playlist groups, then use **Batch Processing** to automatically
-        generate music section events for all participants in each group.
+        Assign participants to playlist groups. The playlist order is used when generating
+        music section events in the **Participants** tab.
         """)
 
     st.markdown("Create groups, edit/rename/delete them, and assign events from the Event Mapping tab.")
@@ -526,7 +526,7 @@ def _render_playlists_section():
 
         1. Define playlist groups here with their music order
         2. Assign participants to playlist groups in the Data tab
-        3. Use Batch Processing to auto-generate music events based on the playlist order
+        3. Use Music Section Analysis to analyze HRV by music type
         """)
 
     st.markdown("""
@@ -716,17 +716,24 @@ def _render_sections_section():
         ### What are Sections?
 
         Sections define **time ranges** between events for HRV analysis. Each section has:
-        - **Code**: Internal identifier (e.g., `music_01`)
-        - **Label**: Short display name (e.g., `Music 1`)
-        - **Description**: Detailed description (e.g., `Brandenburg Concerto No. 3 - Bach`)
+        - **Code**: Internal identifier (e.g., `pre_pause`)
+        - **Label**: Short display name (e.g., `Pre-Pause`)
         - **Start/End Events**: The events that mark the beginning and end
+        - **Duration**: Expected duration in minutes
+        - **Tolerance**: Acceptable deviation from expected duration
+
+        ### Validation
+
+        In the **Participants** tab, sections are validated:
+        - ✅ Start and end events present
+        - ✅ Duration within tolerance of expected
 
         ### Example
 
-        | Code | Label | Description | Start Event | End Event |
-        |------|-------|-------------|-------------|-----------|
-        | music_01 | Music 1 | Brandenburg Concerto - Bach | music_01_start | music_01_end |
-        | rest_pre | Pre-Rest | 5-minute baseline rest period | rest_pre_start | rest_pre_end |
+        | Code | Label | Start Event | End Event | Duration | Tolerance |
+        |------|-------|-------------|-----------|----------|-----------|
+        | pre_pause | Pre-Pause | measurement_start | pause_start | 90 min | 5 min |
+        | rest_pre | Pre-Rest | rest_pre_start | rest_pre_end | 5 min | 1 min |
         """)
 
     st.markdown("Define time ranges (sections) between events for analysis.")
@@ -735,13 +742,18 @@ def _render_sections_section():
     if "sections" not in st.session_state:
         loaded_sections = load_sections()
         if not loaded_sections:
+            # Default sections - end_events is a list (any of these events can end the section)
             st.session_state.sections = {
-                "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_event": "rest_pre_end"},
-                "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_event": "measurement_end"},
-                "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_event": "pause_end"},
-                "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_event": "rest_post_end"},
+                "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_events": ["rest_pre_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
+                "pre_pause": {"label": "Pre-Pause", "description": "Music before pause", "start_event": "measurement_start", "end_events": ["pause_start"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
+                "post_pause": {"label": "Post-Pause", "description": "Music after pause", "start_event": "pause_end", "end_events": ["measurement_end"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
+                "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_events": ["rest_post_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
             }
         else:
+            # Migrate old format (end_event) to new format (end_events)
+            for section_data in loaded_sections.values():
+                if "end_event" in section_data and "end_events" not in section_data:
+                    section_data["end_events"] = [section_data.pop("end_event")]
             st.session_state.sections = loaded_sections
 
     # Create new section
@@ -753,12 +765,26 @@ def _render_sections_section():
         new_section_desc = st.text_input("Description (detailed)", key="new_section_desc",
                                          help="e.g., Brandenburg Concerto No. 3 - Bach")
 
+        available_events = list(st.session_state.all_events.keys())
         col1, col2 = st.columns(2)
         with col1:
-            available_events = list(st.session_state.all_events.keys())
             start_event = st.selectbox("Start Event", options=available_events, key="new_section_start")
         with col2:
-            end_event = st.selectbox("End Event", options=available_events, key="new_section_end")
+            end_events = st.multiselect(
+                "End Event(s)",
+                options=available_events,
+                default=[available_events[0]] if available_events else [],
+                key="new_section_end",
+                help="Select one or more events. Section ends when ANY of these events occurs."
+            )
+
+        col3, col4 = st.columns(2)
+        with col3:
+            expected_duration = st.number_input("Expected Duration (min)", min_value=0.0, max_value=300.0, value=5.0,
+                                               key="new_section_duration", help="Expected section duration in minutes")
+        with col4:
+            tolerance = st.number_input("Tolerance (min)", min_value=0.0, max_value=60.0, value=1.0,
+                                       key="new_section_tolerance", help="Acceptable deviation from expected duration")
 
         if new_section_name:
             if new_section_name in st.session_state.sections:
@@ -769,11 +795,16 @@ def _render_sections_section():
         def create_section():
             """Callback to create section."""
             if new_section_name and new_section_name not in st.session_state.sections:
+                if not end_events:
+                    show_toast("Please select at least one end event", icon="error")
+                    return
                 st.session_state.sections[new_section_name] = {
                     "label": new_section_label or new_section_name,
                     "description": new_section_desc or "",
                     "start_event": start_event,
-                    "end_event": end_event,
+                    "end_events": end_events,  # List of possible end events
+                    "expected_duration_min": expected_duration,
+                    "tolerance_min": tolerance,
                 }
                 auto_save_config()
                 show_toast(f"Created section '{new_section_name}'", icon="success")
@@ -792,12 +823,17 @@ def _render_sections_section():
     if st.session_state.sections:
         sections_list = []
         for section_name, section_data in st.session_state.sections.items():
+            # Support both old (end_event) and new (end_events) format
+            end_events = section_data.get("end_events", [])
+            if not end_events and "end_event" in section_data:
+                end_events = [section_data["end_event"]]
             sections_list.append({
                 "Code": section_name,
                 "Label": section_data.get("label", section_name),
-                "Description": section_data.get("description", ""),
                 "Start Event": section_data.get("start_event", ""),
-                "End Event": section_data.get("end_event", ""),
+                "End Event(s)": ", ".join(end_events),  # Show as comma-separated
+                "Duration (min)": section_data.get("expected_duration_min", 5.0),
+                "Tolerance (min)": section_data.get("tolerance_min", 1.0),
             })
 
         df_sections = pd.DataFrame(sections_list)
@@ -810,11 +846,12 @@ def _render_sections_section():
             num_rows="dynamic",
             key="sections_table",
             column_config={
-                "Code": st.column_config.TextColumn("Code", help="Internal identifier"),
-                "Label": st.column_config.TextColumn("Label", help="Short display name"),
-                "Description": st.column_config.TextColumn("Description", help="Detailed description", width="large"),
-                "Start Event": st.column_config.SelectboxColumn("Start Event", options=available_events, required=True),
-                "End Event": st.column_config.SelectboxColumn("End Event", options=available_events, required=True),
+                "Code": st.column_config.TextColumn("Code", help="Internal identifier", width="small"),
+                "Label": st.column_config.TextColumn("Label", help="Short display name", width="medium"),
+                "Start Event": st.column_config.SelectboxColumn("Start Event", options=available_events, required=True, width="medium"),
+                "End Event(s)": st.column_config.TextColumn("End Event(s)", help="Comma-separated list of events (any can end section)", width="medium"),
+                "Duration (min)": st.column_config.NumberColumn("Duration (min)", help="Expected duration in minutes", min_value=0.0, max_value=300.0, format="%.1f", width="small"),
+                "Tolerance (min)": st.column_config.NumberColumn("Tolerance (min)", help="Acceptable deviation", min_value=0.0, max_value=60.0, format="%.1f", width="small"),
             }
         )
 
@@ -824,11 +861,18 @@ def _render_sections_section():
             for _, row in edited_sections.iterrows():
                 section_code = row["Code"]
                 if section_code:  # Skip empty rows
+                    # Parse comma-separated end events
+                    end_events_str = row.get("End Event(s)", "")
+                    end_events_list = [e.strip() for e in end_events_str.split(",") if e.strip()]
+                    if not end_events_list:
+                        end_events_list = ["measurement_end"]  # Fallback
                     updated_sections[section_code] = {
                         "label": row["Label"],
-                        "description": row.get("Description", ""),
+                        "description": "",  # Description removed from table view
                         "start_event": row["Start Event"],
-                        "end_event": row["End Event"],
+                        "end_events": end_events_list,  # Store as list
+                        "expected_duration_min": row.get("Duration (min)", 5.0),
+                        "tolerance_min": row.get("Tolerance (min)", 1.0),
                     }
 
             st.session_state.sections = updated_sections

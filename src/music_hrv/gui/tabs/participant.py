@@ -1,4 +1,4 @@
-"""Participant tab - Batch processing and individual participant details.
+"""Participant tab - Individual participant inspection and event management.
 
 This module contains the render function for the Participant tab.
 Due to the complexity and tight integration with session state,
@@ -14,8 +14,9 @@ def render_participant_tab():
     """Render the Participant tab content.
 
     This tab contains:
-    - Batch processing operations (quality detection, music events)
     - Individual participant view (plot, events, quality metrics)
+    - Protocol & Timing configuration (auto-fill, validation)
+    - Event management and exclusion zones
 
     Note: The implementation is in app.py's main() function due to
     complex session state dependencies.

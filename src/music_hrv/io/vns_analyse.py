@@ -7,10 +7,16 @@ VNS Analyse exports a single .txt file per participant containing:
   - "RR-Intervalle - Korrigierte Werte (Aktiv)" = Corrected values
 - RR values are in SECONDS (not milliseconds!)
 - Each line: RR_value<tab> or RR_value<tab>Notiz: <note text>
+
+Filename format: "dd.mm.yyyy hh.mm <word> xh xxmin.txt"
+- dd.mm.yyyy = recording date
+- hh.mm = recording start time
+- xh xxmin = recording duration (informational)
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,6 +31,33 @@ from music_hrv.io.hrv_logger import (
 # VNS section identifiers
 VNS_RAW_SECTION = "RR-Intervalle - Rohwerte"
 VNS_CORRECTED_SECTION = "RR-Intervalle - Korrigierte Werte"
+
+# Regex to parse VNS filename: "dd.mm.yyyy hh.mm ..."
+VNS_FILENAME_PATTERN = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2})\.(\d{2})")
+
+
+def parse_vns_filename_datetime(filename: str) -> datetime | None:
+    """Parse recording date and time from VNS filename.
+
+    Filename format: "dd.mm.yyyy hh.mm <word> xh xxmin.txt"
+    Example: "05.12.2024 14.30 VP01 2h 15min.txt" -> datetime(2024, 12, 5, 14, 30)
+
+    Returns None if parsing fails.
+    """
+    match = VNS_FILENAME_PATTERN.search(filename)
+    if match:
+        day, month, year, hour, minute = match.groups()
+        try:
+            return datetime(
+                year=int(year),
+                month=int(month),
+                day=int(day),
+                hour=int(hour),
+                minute=int(minute),
+            )
+        except ValueError:
+            pass
+    return None
 
 
 @dataclass(slots=True)
@@ -101,8 +134,13 @@ def load_vns_recording(
     events: list[EventMarker] = []
 
     # Track cumulative time for timestamps
+    # Parse actual recording date/time from filename (format: "dd.mm.yyyy hh.mm ...")
+    # Fall back to fixed date if parsing fails
     cumulative_ms = 0
-    base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    base_time = parse_vns_filename_datetime(path.name)
+    if base_time is None:
+        # Fallback to fixed date if filename doesn't match expected format
+        base_time = datetime(2000, 1, 1, 0, 0, 0, 0)
 
     # Track which section we're in
     current_section: str | None = None

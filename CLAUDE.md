@@ -52,10 +52,10 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.2` | **Tests**: 18/18 passing
+**Version**: `v0.6.4` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
-- Tab 1: Data & Groups (import, plot, quality detection, batch processing, CSV import)
+- Tab 1: Data & Groups (import, plot, quality detection, CSV import)
 - Tab 2: Event Mapping (define events, synonyms)
 - Tab 3: Group Management (groups + playlist groups)
 - Tab 4: Sections (time ranges between events)
@@ -64,9 +64,9 @@ uv run ruff check src/ tests/ --fix            # Lint
 **Storage**: `~/.music_hrv/*.yml`
 
 **Data Sources**: HRV Logger (CSV) and VNS Analyse (TXT) supported
-- VNS loader: Only imports one RR section (raw by default, `use_corrected` option in Import Settings)
+- VNS loader: Parses date/time from filename (`dd.mm.yyyy hh.mm ...`), raw RR by default
 - VNS display: ALL intervals shown (no filtering) - cleaning only at analysis time
-- Participant view works for both HRV Logger and VNS data
+- Sections: Support multiple end events (any can end section)
 - Exclusion zones: Editable, vertical labels, auto-applied in analysis
 
 ## Performance Rules (CRITICAL)
@@ -90,9 +90,6 @@ uv run ruff check src/ tests/ --fix            # Lint
 ## TODOs
 
 **Next up:**
-- [ ] Fix batch processing
-- [ ] Remove redundant code/UI elements (cleanup)
-- [ ] Flexible section end events (end with any event, or selection of events)
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
 - [ ] Example simulated data for testing/demo
 - [ ] Tutorial videos
@@ -101,11 +98,11 @@ uv run ruff check src/ tests/ --fix            # Lint
 - [ ] Playlist group comparison (compare music types across playlists)
 
 **Done:**
+- [x] ~~Multiple end events for sections~~ (v0.6.4)
+- [x] ~~VNS timestamp parsing from filename~~ (v0.6.4)
+- [x] ~~Section-based validation (duration + tolerance)~~ (v0.6.3)
 - [x] ~~Editable exclusion zones~~ (v0.6.2)
-- [x] ~~Vertical exclusion labels~~ (v0.6.2)
-- [x] ~~Exclusion zones affect timing validation~~ (v0.6.2)
 - [x] ~~Auto-fill boundary events~~ (v0.6.1)
-- [x] ~~Custom events from plot click~~ (v0.6.1)
 - [x] ~~Music Section Analysis mode~~ (v0.6.0)
 
 ## References

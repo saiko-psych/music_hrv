@@ -201,13 +201,18 @@ if "all_events" not in st.session_state:
 if "sections" not in st.session_state:
     loaded_sections = load_sections()
     if not loaded_sections:
+        # Default sections - end_events is a list (any of these events can end the section)
         st.session_state.sections = {
-            "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_event": "rest_pre_end"},
-            "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_event": "measurement_end"},
-            "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_event": "pause_end"},
-            "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_event": "rest_post_end"},
+            "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_events": ["rest_pre_end"]},
+            "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_events": ["measurement_end"]},
+            "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_events": ["pause_end"]},
+            "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_events": ["rest_post_end"]},
         }
     else:
+        # Migrate old format (end_event) to new format (end_events)
+        for section_data in loaded_sections.values():
+            if "end_event" in section_data and "end_events" not in section_data:
+                section_data["end_events"] = [section_data.pop("end_event")]
         st.session_state.sections = loaded_sections
 
 # ISSUE 1 FIX: Create normalizer from GUI events only (not from sections.yml)
@@ -1692,7 +1697,7 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
 
     Args:
         recording: HRVLoggerRecording object
-        section_def: dict with 'start_event' and 'end_event' keys
+        section_def: dict with 'start_event' and 'end_events' keys
         normalizer: SectionNormalizer instance
 
     Returns:
@@ -1700,9 +1705,12 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
     """
 
     start_event_name = section_def.get("start_event")
-    end_event_name = section_def.get("end_event")
+    # Support both old (end_event) and new (end_events) format
+    end_event_names = section_def.get("end_events", [])
+    if not end_event_names and "end_event" in section_def:
+        end_event_names = [section_def["end_event"]]
 
-    if not start_event_name or not end_event_name:
+    if not start_event_name or not end_event_names:
         return None
 
     # Find start and end event timestamps
@@ -1713,8 +1721,10 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
         canonical = normalizer.normalize(event.label)
         if canonical == start_event_name and event.timestamp:
             start_ts = event.timestamp
-        elif canonical == end_event_name and event.timestamp:
-            end_ts = event.timestamp
+        elif canonical in end_event_names and event.timestamp:
+            # Use first matching end event
+            if end_ts is None:
+                end_ts = event.timestamp
 
     if not start_ts or not end_ts:
         return None
@@ -2320,6 +2330,49 @@ def main():
                                 'manual': st.session_state.manual_events.get(selected_participant, []).copy(),
                                 'exclusion_zones': [],
                             }
+
+                        # VNS FIX: Normalize all event timestamps to match filename date
+                        # This ensures saved events match fresh RR data timestamps
+                        # Events were saved with offset from midnight (2000-01-01 00:00:00)
+                        # RR data now uses filename datetime as base
+                        if source_app == "VNS Analyse" and getattr(summary, 'vns_path', None):
+                            from datetime import datetime, timedelta
+                            from music_hrv.io.vns_analyse import parse_vns_filename_datetime
+                            from pathlib import Path
+
+                            # Get the base datetime from the VNS filename
+                            vns_filename = Path(summary.vns_path).name
+                            vns_base_time = parse_vns_filename_datetime(vns_filename)
+                            if vns_base_time is None:
+                                vns_base_time = datetime(2000, 1, 1)  # Fallback
+
+                            def normalize_vns_timestamp(ts):
+                                if ts is None:
+                                    return None
+                                # Calculate offset from midnight of the timestamp's date
+                                # (events were stored with base_time = midnight)
+                                midnight = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+                                offset = ts - midnight
+                                # Apply offset to the filename base time
+                                return vns_base_time + offset
+
+                            def normalize_event(evt):
+                                if evt.first_timestamp:
+                                    evt.first_timestamp = normalize_vns_timestamp(evt.first_timestamp)
+                                if evt.last_timestamp:
+                                    evt.last_timestamp = normalize_vns_timestamp(evt.last_timestamp)
+                                return evt
+
+                            stored = st.session_state.participant_events[selected_participant]
+                            stored['events'] = [normalize_event(e) for e in stored.get('events', [])]
+                            stored['manual'] = [normalize_event(e) for e in stored.get('manual', [])]
+                            stored['music_events'] = [normalize_event(e) for e in stored.get('music_events', [])]
+                            # Also normalize exclusion zones
+                            for zone in stored.get('exclusion_zones', []):
+                                if zone.get('start'):
+                                    zone['start'] = normalize_vns_timestamp(zone['start'])
+                                if zone.get('end'):
+                                    zone['end'] = normalize_vns_timestamp(zone['end'])
 
                     # Get cleaned RR intervals using CACHED function
                     config_dict = {
@@ -3306,124 +3359,114 @@ def main():
 
                     st.markdown("---")
 
-                    # Auto-fill Boundary Events section
-                    st.markdown("### 🔄 Auto-fill Boundary Events")
-                    st.caption("Automatically calculate missing boundary events based on existing ones (90 min protocol: 45 min + pause + 45 min)")
+                    # Section Validation - validates sections defined in Sections tab
+                    with st.expander("⏱️ Section Validation", expanded=True):
+                        st.caption("Validates that all defined sections have required events and expected durations.")
 
-                    # Get existing boundary events
-                    stored_data = st.session_state.participant_events.get(selected_participant, {})
-                    all_evts = stored_data.get('events', []) + stored_data.get('manual', [])
+                        # Get participant's events
+                        stored_data = st.session_state.participant_events.get(selected_participant, {})
+                        all_evts = stored_data.get('events', []) + stored_data.get('manual', [])
 
-                    boundary_events = {}
-                    for evt in all_evts:
-                        if evt.canonical in ["measurement_start", "measurement_end", "pause_start", "pause_end"]:
-                            if evt.first_timestamp:
-                                boundary_events[evt.canonical] = evt.first_timestamp
+                        # Build event timestamp lookup
+                        event_timestamps = {}
+                        for evt in all_evts:
+                            if evt.canonical and evt.first_timestamp:
+                                event_timestamps[evt.canonical] = evt.first_timestamp
 
-                    # Show current status
-                    col_status1, col_status2 = st.columns(2)
-                    with col_status1:
-                        st.write("**Found:**")
-                        for evt_name in ["measurement_start", "pause_start", "pause_end", "measurement_end"]:
-                            if evt_name in boundary_events:
-                                st.write(f"✅ {evt_name}: {boundary_events[evt_name].strftime('%H:%M:%S')}")
-                            else:
-                                st.write(f"❌ {evt_name}: missing")
+                        # Get sections from session state
+                        sections = st.session_state.get("sections", {})
 
-                    with col_status2:
-                        st.write("**Protocol settings:**")
-                        pre_pause_min = st.number_input("Pre-pause duration (min)", min_value=1, max_value=120, value=45,
-                                                       key=f"auto_pre_pause_{selected_participant}")
-                        post_pause_min = st.number_input("Post-pause duration (min)", min_value=1, max_value=120, value=45,
-                                                        key=f"auto_post_pause_{selected_participant}")
-
-                    def auto_fill_boundaries():
-                        """Auto-fill missing boundary events based on existing ones."""
-                        from music_hrv.prep.summaries import EventStatus
-                        import datetime as dt
-
-                        events_added = 0
-                        new_events = []
-
-                        # Calculate missing events based on what we have
-                        if "measurement_start" in boundary_events:
-                            ms = boundary_events["measurement_start"]
-
-                            # Calculate pause_start if missing (measurement_start + pre_pause_min)
-                            if "pause_start" not in boundary_events:
-                                ps = ms + dt.timedelta(minutes=pre_pause_min)
-                                new_events.append(("pause_start", ps))
-
-                            # Calculate pause_end if missing (same as pause_start or slightly after)
-                            if "pause_end" not in boundary_events:
-                                pe = boundary_events.get("pause_start", ms + dt.timedelta(minutes=pre_pause_min))
-                                new_events.append(("pause_end", pe))
-
-                            # Calculate measurement_end if missing (measurement_start + total duration)
-                            if "measurement_end" not in boundary_events:
-                                me = ms + dt.timedelta(minutes=pre_pause_min + post_pause_min)
-                                new_events.append(("measurement_end", me))
-
-                        elif "measurement_end" in boundary_events:
-                            me = boundary_events["measurement_end"]
-
-                            # Work backwards
-                            if "measurement_start" not in boundary_events:
-                                ms = me - dt.timedelta(minutes=pre_pause_min + post_pause_min)
-                                new_events.append(("measurement_start", ms))
-
-                            if "pause_end" not in boundary_events:
-                                pe = me - dt.timedelta(minutes=post_pause_min)
-                                new_events.append(("pause_end", pe))
-
-                            if "pause_start" not in boundary_events:
-                                ps = me - dt.timedelta(minutes=post_pause_min)
-                                new_events.append(("pause_start", ps))
-
-                        elif "pause_start" in boundary_events:
-                            ps = boundary_events["pause_start"]
-
-                            if "measurement_start" not in boundary_events:
-                                ms = ps - dt.timedelta(minutes=pre_pause_min)
-                                new_events.append(("measurement_start", ms))
-
-                            if "pause_end" not in boundary_events:
-                                new_events.append(("pause_end", ps))
-
-                            if "measurement_end" not in boundary_events:
-                                me = ps + dt.timedelta(minutes=post_pause_min)
-                                new_events.append(("measurement_end", me))
-
-                        # Add the new events
-                        for label, timestamp in new_events:
-                            new_event = EventStatus(
-                                raw_label=label,
-                                canonical=label,
-                                count=1,
-                                first_timestamp=timestamp,
-                                last_timestamp=timestamp,
-                            )
-                            st.session_state.participant_events[selected_participant]['manual'].append(new_event)
-                            events_added += 1
-
-                        if events_added > 0:
-                            show_toast(f"Added {events_added} boundary event(s)", icon="success")
+                        if not sections:
+                            st.info("No sections defined. Define sections in the **Sections** tab (under Setup).")
                         else:
-                            show_toast("No events to add (need at least one existing boundary event)", icon="warning")
+                            # Helper to normalize timestamps
+                            def normalize_ts(ts):
+                                if ts is None:
+                                    return None
+                                if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+                                    return ts.replace(tzinfo=None)
+                                return ts
 
-                    # Only show button if we have at least one boundary event and some are missing
-                    missing_count = 4 - len(boundary_events)
-                    if len(boundary_events) > 0 and missing_count > 0:
-                        st.button(
-                            f"🔄 Auto-fill {missing_count} missing event(s)",
-                            key=f"auto_fill_{selected_participant}",
-                            on_click=auto_fill_boundaries,
-                            type="primary"
-                        )
-                    elif len(boundary_events) == 0:
-                        st.info("Add at least one boundary event first (measurement_start, pause_start, etc.)")
-                    else:
-                        st.success("✅ All boundary events present")
+                            # Get exclusion zones for duration calculation
+                            participant_exclusion_zones = stored_data.get('exclusion_zones', [])
+
+                            def calc_excluded_time(start_ts, end_ts):
+                                """Calculate excluded time in seconds."""
+                                if not participant_exclusion_zones or not start_ts or not end_ts:
+                                    return 0.0
+                                total = 0.0
+                                for zone in participant_exclusion_zones:
+                                    if not zone.get('exclude_from_duration', True):
+                                        continue
+                                    zs, ze = zone.get('start'), zone.get('end')
+                                    if not zs or not ze:
+                                        continue
+                                    zs = normalize_ts(zs)
+                                    ze = normalize_ts(ze)
+                                    overlap_s = max(zs, normalize_ts(start_ts))
+                                    overlap_e = min(ze, normalize_ts(end_ts))
+                                    if overlap_s < overlap_e:
+                                        total += (overlap_e - overlap_s).total_seconds()
+                                return total
+
+                            # Validate each section
+                            valid_count = 0
+                            issue_count = 0
+
+                            for section_code, section_data in sections.items():
+                                start_evt = section_data.get("start_event", "")
+                                # Support both old (end_event) and new (end_events) format
+                                end_evts = section_data.get("end_events", [])
+                                if not end_evts and "end_event" in section_data:
+                                    end_evts = [section_data["end_event"]]
+                                label = section_data.get("label", section_code)
+                                expected_dur = section_data.get("expected_duration_min", 0)
+                                tolerance = section_data.get("tolerance_min", 1)
+
+                                start_ts = event_timestamps.get(start_evt)
+
+                                # Find the first matching end event
+                                end_ts = None
+                                matched_end_evt = None
+                                for end_evt in end_evts:
+                                    if end_evt in event_timestamps:
+                                        end_ts = event_timestamps[end_evt]
+                                        matched_end_evt = end_evt
+                                        break
+
+                                # Check event presence
+                                end_evts_str = " | ".join(end_evts) if len(end_evts) > 1 else (end_evts[0] if end_evts else "none")
+                                if not start_ts and not end_ts:
+                                    st.write(f"❌ **{label}**: missing `{start_evt}` and `{end_evts_str}`")
+                                    issue_count += 1
+                                elif not start_ts:
+                                    st.write(f"❌ **{label}**: missing `{start_evt}`")
+                                    issue_count += 1
+                                elif not end_ts:
+                                    st.write(f"❌ **{label}**: missing any of `{end_evts_str}`")
+                                    issue_count += 1
+                                else:
+                                    # Calculate duration
+                                    raw_dur = (normalize_ts(end_ts) - normalize_ts(start_ts)).total_seconds()
+                                    excluded = calc_excluded_time(start_ts, end_ts)
+                                    actual_dur = (raw_dur - excluded) / 60
+
+                                    excl_note = f" (excl: {excluded/60:.1f}m)" if excluded > 0 else ""
+                                    end_evt_note = f" → {matched_end_evt}" if len(end_evts) > 1 else ""
+
+                                    # Check if within tolerance
+                                    if expected_dur > 0 and abs(actual_dur - expected_dur) > tolerance:
+                                        st.write(f"⚠️ **{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                        issue_count += 1
+                                    else:
+                                        st.write(f"✅ **{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note}")
+                                        valid_count += 1
+
+                            # Summary
+                            if issue_count == 0 and valid_count > 0:
+                                st.success(f"All {valid_count} section(s) valid")
+                            elif valid_count == 0 and issue_count > 0:
+                                st.error(f"All {issue_count} section(s) have issues")
 
                     st.markdown("---")
 
@@ -3747,151 +3790,6 @@ def main():
                         st.dataframe(df_mapping, use_container_width=True, hide_index=True)
                     else:
                         st.info(f"No expected events defined for group '{participant_group}'. Add them in the Event Mapping tab.")
-
-                    # Timing validation section
-                    st.markdown("---")
-                    st.markdown("##### ⏱️ Timing Validation")
-
-                    # Get exclusion zones for this participant
-                    participant_exclusion_zones = st.session_state.participant_events.get(
-                        selected_participant, {}
-                    ).get('exclusion_zones', [])
-
-                    # Helper to calculate excluded time within a range
-                    def calc_excluded_time_in_range(start_ts, end_ts, zones):
-                        """Calculate total excluded time (in seconds) between start and end."""
-                        if not zones or not start_ts or not end_ts:
-                            return 0.0
-                        total_excluded = 0.0
-                        for zone in zones:
-                            if not zone.get('exclude_from_duration', True):
-                                continue  # Skip zones not marked for duration exclusion
-                            zone_start = zone.get('start')
-                            zone_end = zone.get('end')
-                            if not zone_start or not zone_end:
-                                continue
-                            # Normalize timestamps (remove timezone)
-                            if hasattr(zone_start, 'tzinfo') and zone_start.tzinfo:
-                                zone_start = zone_start.replace(tzinfo=None)
-                            if hasattr(zone_end, 'tzinfo') and zone_end.tzinfo:
-                                zone_end = zone_end.replace(tzinfo=None)
-                            if hasattr(start_ts, 'tzinfo') and start_ts.tzinfo:
-                                start_ts = start_ts.replace(tzinfo=None)
-                            if hasattr(end_ts, 'tzinfo') and end_ts.tzinfo:
-                                end_ts = end_ts.replace(tzinfo=None)
-                            # Calculate overlap
-                            overlap_start = max(zone_start, start_ts)
-                            overlap_end = min(zone_end, end_ts)
-                            if overlap_start < overlap_end:
-                                total_excluded += (overlap_end - overlap_start).total_seconds()
-                        return total_excluded
-
-                    # Find boundary events from current events
-                    boundary_events = {}
-                    for evt in current_events:
-                        canonical = evt.canonical if hasattr(evt, 'canonical') else None
-                        if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end',
-                                        'rest_pre_start', 'rest_pre_end', 'rest_post_start', 'rest_post_end']:
-                            if evt.first_timestamp:
-                                boundary_events[canonical] = evt.first_timestamp
-
-                    if boundary_events:
-                        # Show detected boundaries
-                        with st.expander("Detected Boundary Events", expanded=False):
-                            # Normalize timestamps for sorting (remove timezone info if present)
-                            def sort_key(item):
-                                ts = item[1]
-                                if ts is None:
-                                    return pd.Timestamp.min
-                                # Convert to naive timestamp for comparison
-                                if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
-                                    return ts.replace(tzinfo=None)
-                                return ts
-                            for name, ts in sorted(boundary_events.items(), key=sort_key):
-                                st.write(f"- {name}: {ts.strftime('%H:%M:%S') if ts else 'N/A'}")
-
-                        # Calculate and validate durations
-                        validation_issues = []
-                        validation_ok = []
-
-                        # Helper to normalize timestamps for safe arithmetic
-                        def normalize_ts(ts):
-                            if ts is None:
-                                return None
-                            if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
-                                return ts.replace(tzinfo=None)
-                            return ts
-
-                        # Rest Pre duration (should be 3-5 min)
-                        if 'rest_pre_start' in boundary_events and 'rest_pre_end' in boundary_events:
-                            raw_dur = (normalize_ts(boundary_events['rest_pre_end']) - normalize_ts(boundary_events['rest_pre_start'])).total_seconds()
-                            excluded = calc_excluded_time_in_range(boundary_events['rest_pre_start'], boundary_events['rest_pre_end'], participant_exclusion_zones)
-                            rest_pre_dur = (raw_dur - excluded) / 60
-                            excl_note = f" (excl: {excluded/60:.1f} min)" if excluded > 0 else ""
-                            if rest_pre_dur < 3:
-                                validation_issues.append(f"⚠️ Rest Pre: {rest_pre_dur:.1f} min{excl_note} (should be ≥3 min)")
-                            elif rest_pre_dur < 5:
-                                validation_ok.append(f"🟡 Rest Pre: {rest_pre_dur:.1f} min{excl_note} (OK, but 5 min recommended)")
-                            else:
-                                validation_ok.append(f"✅ Rest Pre: {rest_pre_dur:.1f} min{excl_note}")
-
-                        # Rest Post duration (should be 3-5 min)
-                        if 'rest_post_start' in boundary_events and 'rest_post_end' in boundary_events:
-                            raw_dur = (normalize_ts(boundary_events['rest_post_end']) - normalize_ts(boundary_events['rest_post_start'])).total_seconds()
-                            excluded = calc_excluded_time_in_range(boundary_events['rest_post_start'], boundary_events['rest_post_end'], participant_exclusion_zones)
-                            rest_post_dur = (raw_dur - excluded) / 60
-                            excl_note = f" (excl: {excluded/60:.1f} min)" if excluded > 0 else ""
-                            if rest_post_dur < 3:
-                                validation_issues.append(f"⚠️ Rest Post: {rest_post_dur:.1f} min{excl_note} (should be ≥3 min)")
-                            elif rest_post_dur < 5:
-                                validation_ok.append(f"🟡 Rest Post: {rest_post_dur:.1f} min{excl_note} (OK, but 5 min recommended)")
-                            else:
-                                validation_ok.append(f"✅ Rest Post: {rest_post_dur:.1f} min{excl_note}")
-
-                        # Pre-pause measurement (should be ~90 min / 1.5 hours)
-                        if 'measurement_start' in boundary_events and 'pause_start' in boundary_events:
-                            raw_dur = (normalize_ts(boundary_events['pause_start']) - normalize_ts(boundary_events['measurement_start'])).total_seconds()
-                            excluded = calc_excluded_time_in_range(boundary_events['measurement_start'], boundary_events['pause_start'], participant_exclusion_zones)
-                            pre_pause_dur = (raw_dur - excluded) / 60
-                            expected_segments = int(pre_pause_dur / 5)
-                            excl_note = f" (excl: {excluded/60:.1f} min)" if excluded > 0 else ""
-                            if abs(pre_pause_dur - 90) > 10:
-                                validation_issues.append(f"⚠️ Pre-pause measurement: {pre_pause_dur:.1f} min{excl_note} (expected ~90 min)")
-                            else:
-                                validation_ok.append(f"✅ Pre-pause measurement: {pre_pause_dur:.1f} min{excl_note} ({expected_segments} × 5-min segments)")
-
-                            # Check if 5-min intervals fit evenly
-                            remainder = pre_pause_dur % 5
-                            if remainder > 0.5 and remainder < 4.5:
-                                validation_issues.append(f"⚠️ Pre-pause: {remainder:.1f} min leftover after 5-min segments")
-
-                        # Post-pause measurement (should be ~90 min / 1.5 hours)
-                        if 'pause_end' in boundary_events and 'measurement_end' in boundary_events:
-                            raw_dur = (normalize_ts(boundary_events['measurement_end']) - normalize_ts(boundary_events['pause_end'])).total_seconds()
-                            excluded = calc_excluded_time_in_range(boundary_events['pause_end'], boundary_events['measurement_end'], participant_exclusion_zones)
-                            post_pause_dur = (raw_dur - excluded) / 60
-                            expected_segments = int(post_pause_dur / 5)
-                            excl_note = f" (excl: {excluded/60:.1f} min)" if excluded > 0 else ""
-                            if abs(post_pause_dur - 90) > 10:
-                                validation_issues.append(f"⚠️ Post-pause measurement: {post_pause_dur:.1f} min{excl_note} (expected ~90 min)")
-                            else:
-                                validation_ok.append(f"✅ Post-pause measurement: {post_pause_dur:.1f} min{excl_note} ({expected_segments} × 5-min segments)")
-
-                            # Check if 5-min intervals fit evenly
-                            remainder = post_pause_dur % 5
-                            if remainder > 0.5 and remainder < 4.5:
-                                validation_issues.append(f"⚠️ Post-pause: {remainder:.1f} min leftover after 5-min segments")
-
-                        # Display validation results
-                        for msg in validation_ok:
-                            st.write(msg)
-                        for msg in validation_issues:
-                            st.warning(msg)
-
-                        if not validation_ok and not validation_issues:
-                            st.info("Waiting for more boundary events to validate timing...")
-                    else:
-                        st.info("No boundary events found yet. Events will be validated once measurement boundaries are detected.")
 
                     # Save/Reset participant events
                     st.markdown("---")

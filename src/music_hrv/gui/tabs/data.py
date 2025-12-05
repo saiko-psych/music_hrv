@@ -186,7 +186,7 @@ def render_data_tab():
            You can add manual events by clicking on the plot.
 
         4. **Quality Check**: The app automatically detects gaps in data and high variability segments.
-           Use "Batch Processing" to detect issues across all participants at once.
+           Review each participant individually in the Participants tab.
 
         ---
 
@@ -488,9 +488,10 @@ def render_data_tab():
         st.markdown("---")
         _render_participants_table()
 
-        # ==================== BATCH PROCESSING ====================
-        st.markdown("---")
-        _render_batch_processing()
+        # NOTE: Batch processing disabled - users should inspect participants individually
+        # Uncomment below to re-enable if needed
+        # st.markdown("---")
+        # _render_batch_processing()
 
 
 def _render_participants_table():

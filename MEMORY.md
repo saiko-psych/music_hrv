@@ -4,6 +4,59 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2025-12-05 (continued): Section-Based Validation
+
+### Version Tag: `v0.6.3`
+
+### Changes Made:
+
+#### 1. Section Definitions Now Include Duration & Tolerance
+- Each section now has `expected_duration_min` and `tolerance_min` fields
+- Default sections:
+  - rest_pre: 5 min ± 1 min
+  - pre_pause: 90 min ± 5 min
+  - post_pause: 90 min ± 5 min
+  - rest_post: 5 min ± 1 min
+
+#### 2. Sections Tab Updated
+- Data editor now shows Duration and Tolerance columns
+- Create Section form includes duration/tolerance inputs
+- Help text updated with validation info
+
+#### 3. Section Validation in Participants Tab
+- Replaced old "Protocol & Timing" with "Section Validation"
+- Validates ALL defined sections (not hardcoded boundary events)
+- For each section:
+  - ❌ Shows missing events
+  - ⚠️ Shows duration outside tolerance
+  - ✅ Shows valid sections
+- Accounts for exclusion zones in duration calculation
+
+#### 4. Batch Processing Disabled
+- Commented out `_render_batch_processing()` call in data.py
+- Users should inspect each participant individually
+
+### Files Modified:
+- `src/music_hrv/gui/app.py` - Section Validation replaces Protocol & Timing
+- `src/music_hrv/gui/tabs/setup.py` - Sections with duration/tolerance
+- `src/music_hrv/gui/tabs/data.py` - Disabled batch processing
+- `src/music_hrv/gui/tabs/participant.py` - Updated docstring
+
+### UI Structure (Participants Tab Sidebar):
+1. Quick Event Addition (collapsed expander)
+2. **Section Validation** (expanded by default):
+   - Validates each defined section
+   - Shows event presence and duration validity
+3. Event Management (cards for each event)
+4. Event Mapping Status
+5. Save/Reset buttons
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ No linting errors
+
+---
+
 ## Session 2025-12-05: Exclusion Zone UI Improvements & Documentation
 
 ### Version Tag: `v0.6.2`

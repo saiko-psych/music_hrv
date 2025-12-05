@@ -29,6 +29,10 @@ tests/data/
 !tests/fixtures/**/*_RR_*.csv
 !tests/fixtures/**/*_Events_*.csv
 
+# VNS Analyse data files (real participant data)
+# Pattern: dd.mm.yyyy hh.mm *.txt
+[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]*.txt
+
 # User config directory
 ~/.music_hrv/
 
