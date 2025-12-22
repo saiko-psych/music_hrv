@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.6` | **Tests**: 18/18 passing
+**Version**: `v0.6.7` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -95,6 +95,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 ## TODOs
 
 **Next up:**
+- [ ] Analysis plots refinement (WIP - needs more work)
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
 - [ ] Tutorial videos
 
