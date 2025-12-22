@@ -1,6 +1,6 @@
 [project]
 name = "music-hrv"
-version = "0.6.5"
+version = "0.6.6"
 description = "HRV segmentation and analysis pipeline built on neurokit2"
 requires-python = ">=3.11"
 dependencies = [

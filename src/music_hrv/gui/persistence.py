@@ -16,6 +16,23 @@ PLAYLIST_GROUPS_FILE = CONFIG_DIR / "playlist_groups.yml"
 MUSIC_LABELS_FILE = CONFIG_DIR / "music_labels.yml"
 PROTOCOL_FILE = CONFIG_DIR / "protocol.yml"
 PARTICIPANT_EVENTS_FILE = CONFIG_DIR / "participant_events.yml"
+SETTINGS_FILE = CONFIG_DIR / "settings.yml"
+
+# Default settings
+DEFAULT_SETTINGS = {
+    "data_folder": "",  # Empty = use file picker
+    "plot_resolution": 5000,
+    "plot_options": {
+        "show_events": True,
+        "show_exclusions": True,
+        "show_music_sections": True,
+        "show_music_events": False,
+        "show_artifacts": False,
+        "show_variability": False,
+        "show_gaps": True,
+        "gap_threshold": 15.0,
+    },
+}
 
 
 def ensure_config_dir() -> None:
@@ -298,3 +315,60 @@ def list_saved_participant_events() -> list[str]:
         all_events = yaml.safe_load(f) or {}
 
     return list(all_events.keys())
+
+
+def save_settings(settings: dict[str, Any]) -> None:
+    """Save application settings to YAML.
+
+    Format:
+    {
+        "data_folder": "/path/to/data",
+        "plot_resolution": 5000,
+        "plot_options": {
+            "show_events": true,
+            "show_exclusions": true,
+            ...
+        }
+    }
+    """
+    ensure_config_dir()
+    # Merge with defaults to ensure all keys exist
+    merged = {**DEFAULT_SETTINGS, **settings}
+    if "plot_options" in settings:
+        merged["plot_options"] = {**DEFAULT_SETTINGS["plot_options"], **settings["plot_options"]}
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(merged, f, default_flow_style=False, allow_unicode=True)
+
+
+def load_settings() -> dict[str, Any]:
+    """Load application settings from YAML, with defaults for missing keys."""
+    if not SETTINGS_FILE.exists():
+        return DEFAULT_SETTINGS.copy()
+
+    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        saved = yaml.safe_load(f) or {}
+
+    # Merge with defaults to handle missing keys
+    result = {**DEFAULT_SETTINGS, **saved}
+    if "plot_options" in saved:
+        result["plot_options"] = {**DEFAULT_SETTINGS["plot_options"], **saved.get("plot_options", {})}
+    else:
+        result["plot_options"] = DEFAULT_SETTINGS["plot_options"].copy()
+
+    return result
+
+
+def get_setting(key: str, default: Any = None) -> Any:
+    """Get a single setting value."""
+    settings = load_settings()
+    if "." in key:
+        # Support nested keys like "plot_options.show_events"
+        parts = key.split(".")
+        value = settings
+        for part in parts:
+            if isinstance(value, dict):
+                value = value.get(part)
+            else:
+                return default
+        return value if value is not None else default
+    return settings.get(key, default)

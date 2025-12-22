@@ -25,6 +25,9 @@ from music_hrv.gui.persistence import (
     load_playlist_groups,
     save_playlist_groups,
     load_music_labels,
+    load_settings,
+    save_settings,
+    DEFAULT_SETTINGS,
 )
 from music_hrv.gui.tabs.setup import render_setup_tab
 from music_hrv.gui.tabs.data import render_data_tab
@@ -128,8 +131,14 @@ def create_gui_normalizer(gui_events_dict):
     return SectionNormalizer(config=config, fallback_label="unknown")
 
 # Initialize session state with persistent storage
+# Load app settings first (used for defaults below)
+if "app_settings" not in st.session_state:
+    st.session_state.app_settings = load_settings()
+
 if "data_dir" not in st.session_state:
-    st.session_state.data_dir = None
+    # Use saved default folder, or None to use file picker
+    saved_folder = st.session_state.app_settings.get("data_folder", "")
+    st.session_state.data_dir = saved_folder if saved_folder else None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
 if "participant_events" not in st.session_state:
@@ -500,6 +509,62 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple):
     except Exception:
         return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                 "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {}}
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_gap_detection(timestamps_tuple, rr_values_tuple, gap_threshold_s: float):
+    """Cache gap detection results to avoid recalculation on every slider change."""
+    import numpy as np
+
+    timestamps = list(timestamps_tuple)
+    rr_values = list(rr_values_tuple) if rr_values_tuple else None
+
+    if len(timestamps) < 2:
+        return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
+
+    try:
+        valid_mask = np.array([t is not None for t in timestamps])
+        if not np.any(valid_mask):
+            return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
+
+        ts_seconds = np.array([t.timestamp() if t else np.nan for t in timestamps])
+        ts_diff = np.diff(ts_seconds)
+
+        if rr_values is not None and len(rr_values) == len(timestamps):
+            rr_array = np.array(rr_values, dtype=float) / 1000.0
+            expected_diff = rr_array[1:]
+            unexplained_time = ts_diff - expected_diff
+            gap_mask = unexplained_time > gap_threshold_s
+        else:
+            gap_mask = ts_diff > gap_threshold_s
+            unexplained_time = ts_diff
+
+        gap_indices = np.where(gap_mask)[0]
+        gaps = []
+        total_gap_duration = 0.0
+
+        for idx in gap_indices:
+            gap_duration = float(unexplained_time[idx]) if rr_values else float(ts_diff[idx])
+            if gap_duration > 0:
+                gaps.append({
+                    "start_time": timestamps[idx],
+                    "end_time": timestamps[idx + 1],
+                    "duration_s": gap_duration,
+                    "start_idx": int(idx),
+                    "end_idx": int(idx + 1)
+                })
+                total_gap_duration += gap_duration
+
+        recording_duration = float(ts_seconds[-1] - ts_seconds[0]) if not np.isnan(ts_seconds[0]) else 0.0
+
+        return {
+            "gaps": gaps,
+            "total_gaps": len(gaps),
+            "total_gap_duration_s": total_gap_duration,
+            "gap_ratio": total_gap_duration / recording_duration if recording_duration > 0 else 0.0
+        }
+    except Exception:
+        return {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0}
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -1131,6 +1196,76 @@ def validate_regex_pattern(pattern):
         return str(e)
 
 
+def render_settings_panel():
+    """Render the settings panel in the sidebar."""
+    # Load current settings
+    if "app_settings" not in st.session_state:
+        st.session_state.app_settings = load_settings()
+
+    settings = st.session_state.app_settings
+    plot_opts = settings.get("plot_options", DEFAULT_SETTINGS["plot_options"])
+
+    st.caption("**Default Data Folder**")
+    new_folder = st.text_input(
+        "Data folder path",
+        value=settings.get("data_folder", ""),
+        key="settings_data_folder",
+        placeholder="Leave empty for file picker",
+        label_visibility="collapsed"
+    )
+
+    st.caption("**Plot Defaults**")
+    new_resolution = st.slider(
+        "Default resolution",
+        min_value=1000,
+        max_value=100000,
+        value=settings.get("plot_resolution", 5000),
+        step=1000,
+        key="settings_resolution",
+        help="Default number of points to show (higher values for long recordings)"
+    )
+
+    new_gap_threshold = st.slider(
+        "Gap threshold (s)",
+        min_value=1.0,
+        max_value=60.0,
+        value=float(plot_opts.get("gap_threshold", 15.0)),
+        step=1.0,
+        key="settings_gap_threshold"
+    )
+
+    st.caption("**Show by default**")
+    col1, col2 = st.columns(2)
+    with col1:
+        new_show_events = st.checkbox("Events", value=plot_opts.get("show_events", True), key="settings_show_events")
+        new_show_exclusions = st.checkbox("Exclusions", value=plot_opts.get("show_exclusions", True), key="settings_show_exclusions")
+        new_show_gaps = st.checkbox("Gaps", value=plot_opts.get("show_gaps", True), key="settings_show_gaps")
+    with col2:
+        new_show_music_sec = st.checkbox("Music sections", value=plot_opts.get("show_music_sections", True), key="settings_show_music_sec")
+        new_show_artifacts = st.checkbox("Artifacts", value=plot_opts.get("show_artifacts", False), key="settings_show_artifacts")
+        new_show_variability = st.checkbox("Variability", value=plot_opts.get("show_variability", False), key="settings_show_variability")
+
+    # Save button
+    if st.button("💾 Save Settings", key="save_settings_btn", use_container_width=True):
+        new_settings = {
+            "data_folder": new_folder,
+            "plot_resolution": new_resolution,
+            "plot_options": {
+                "show_events": new_show_events,
+                "show_exclusions": new_show_exclusions,
+                "show_music_sections": new_show_music_sec,
+                "show_music_events": plot_opts.get("show_music_events", False),
+                "show_artifacts": new_show_artifacts,
+                "show_variability": new_show_variability,
+                "show_gaps": new_show_gaps,
+                "gap_threshold": new_gap_threshold,
+            }
+        }
+        save_settings(new_settings)
+        st.session_state.app_settings = new_settings
+        st.toast("✅ Settings saved!")
+
+
 @st.fragment
 def render_rr_plot_fragment(participant_id: str):
     """Render the RR interval plot as a fragment to prevent full page reruns.
@@ -1169,35 +1304,36 @@ def render_rr_plot_fragment(participant_id: str):
             "gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True
         }
 
-    # Plot display options
+    # Plot display options - use saved defaults
+    plot_defaults = st.session_state.get("app_settings", {}).get("plot_options", {})
     st.markdown("**Plot Options:**")
     col_opt1, col_opt2, col_opt3, col_opt4 = st.columns(4)
     with col_opt1:
-        show_events = st.checkbox("Show events", value=True,
+        show_events = st.checkbox("Show events", value=plot_defaults.get("show_events", True),
                                   key=f"frag_show_events_{participant_id}",
                                   help="Show boundary events on plot")
-        show_exclusions = st.checkbox("Show exclusions", value=True,
+        show_exclusions = st.checkbox("Show exclusions", value=plot_defaults.get("show_exclusions", True),
                                       key=f"frag_show_exclusions_{participant_id}",
                                       help="Show exclusion zones as red rectangles")
     with col_opt2:
-        show_music_sections = st.checkbox("Show music sections", value=True,
+        show_music_sections = st.checkbox("Show music sections", value=plot_defaults.get("show_music_sections", True),
                                           key=f"frag_show_music_sec_{participant_id}")
-        show_music_events = st.checkbox("Show music events", value=False,
+        show_music_events = st.checkbox("Show music events", value=plot_defaults.get("show_music_events", False),
                                         key=f"frag_show_music_evt_{participant_id}")
     with col_opt3:
-        show_artifacts = st.checkbox("Show artifacts (NeuroKit2)", value=False,
+        show_artifacts = st.checkbox("Show artifacts (NeuroKit2)", value=plot_defaults.get("show_artifacts", False),
                                      key=f"frag_show_artifacts_{participant_id}",
                                      help="Detect ectopic, missed, extra beats using Kubios algorithm")
-        show_variability = st.checkbox("Show variability segments", value=False,
+        show_variability = st.checkbox("Show variability segments", value=plot_defaults.get("show_variability", False),
                                        key=f"frag_show_var_{participant_id}",
                                        help="Detect variance changepoints")
     with col_opt4:
-        show_gaps = st.checkbox("Show time gaps", value=True,
+        show_gaps = st.checkbox("Show time gaps", value=plot_defaults.get("show_gaps", True),
                                 key=f"frag_show_gaps_{participant_id}",
                                 disabled=is_vns_data)
         gap_threshold = st.number_input(
             "Gap threshold (s)",
-            min_value=1.0, max_value=60.0, value=15.0, step=1.0,
+            min_value=1.0, max_value=60.0, value=float(plot_defaults.get("gap_threshold", 15.0)), step=1.0,
             key=f"frag_gap_thresh_{participant_id}",
             help="Threshold for detecting gaps in data",
             disabled=is_vns_data
@@ -1331,14 +1467,15 @@ def render_rr_plot_fragment(participant_id: str):
                     font=dict(color=color, size=10)
                 )
 
-    # Gap detection (fast) - skip for VNS data (synthesized timestamps)
-    timestamps_list = list(plot_data['timestamps'])
-    rr_list = list(plot_data['rr_values'])
+    # Gap detection (CACHED) - skip for VNS data (synthesized timestamps)
+    timestamps_list = plot_data['timestamps']
+    rr_list = plot_data['rr_values']
     if is_vns_data:
         # VNS timestamps are synthesized from RR intervals, so gaps are meaningless
         gap_result = {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True}
     else:
-        gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=gap_threshold)
+        # Use cached version to avoid recalculation on every threshold change
+        gap_result = cached_gap_detection(tuple(timestamps_list), tuple(rr_list), gap_threshold)
     st.session_state[f"gaps_{participant_id}"] = gap_result
 
     # Variability analysis (slow - only if enabled)
@@ -1392,8 +1529,17 @@ def render_rr_plot_fragment(participant_id: str):
                     )
 
     # Visualize gaps (skip for VNS data - timestamps are synthesized)
+    # PERFORMANCE: Limit gaps shown to prevent plot slowdown
+    MAX_GAPS_SHOWN = 50
     if show_gaps and gap_result.get("gaps") and not is_vns_data:
-        for gap in gap_result["gaps"]:
+        gaps_to_show = gap_result["gaps"]
+        total_gaps = len(gaps_to_show)
+        if total_gaps > MAX_GAPS_SHOWN:
+            # Show largest gaps only when there are too many
+            gaps_to_show = sorted(gaps_to_show, key=lambda g: g["duration_s"], reverse=True)[:MAX_GAPS_SHOWN]
+            st.caption(f"⚠️ Showing {MAX_GAPS_SHOWN} largest gaps of {total_gaps} total (raise threshold to reduce)")
+
+        for gap in gaps_to_show:
             fig.add_shape(
                 type="rect", x0=gap["start_time"], x1=gap["end_time"],
                 y0=y_min - 0.05 * y_range, y1=y_max + 0.05 * y_range,
@@ -2061,6 +2207,11 @@ def main():
         if st.session_state.get("last_render_time"):
             st.caption(f"{st.session_state.last_render_time:.0f}ms render")
 
+        # Settings section
+        st.markdown("---")
+        with st.expander("⚙️ Settings", expanded=False):
+            render_settings_panel()
+
     # Get selected page for content rendering
     selected_page = st.session_state.active_page
 
@@ -2359,11 +2510,17 @@ def main():
                             timestamps, rr_values = zip(*rr_with_timestamps)
                             flags = None
 
+                        # Get plot resolution from session state (use saved settings as default)
+                        resolution_key = f"plot_resolution_{selected_participant}"
+                        saved_resolution = st.session_state.get("app_settings", {}).get("plot_resolution", 5000)
+                        plot_resolution = st.session_state.get(resolution_key, saved_resolution)
+
                         # Get CACHED plot data and store in session state for fragment
                         plot_data = cached_get_plot_data(
                             tuple(timestamps),
                             tuple(rr_values),
                             selected_participant,
+                            downsample_threshold=plot_resolution,
                             flags_tuple=tuple(flags) if flags else None
                         )
                         # Add source_app for gap detection logic
@@ -2373,7 +2530,7 @@ def main():
 
                         # Mode selector for plot interaction (Events vs Exclusions)
                         st.markdown("---")
-                        col_mode1, col_mode2 = st.columns([1, 3])
+                        col_mode1, col_mode2, col_mode3 = st.columns([1, 2, 1])
                         with col_mode1:
                             interaction_mode = st.radio(
                                 "Plot interaction",
@@ -2387,6 +2544,28 @@ def main():
                                 # Clear exclusion method when not in exclusion mode
                                 if f"exclusion_method_{selected_participant}" in st.session_state:
                                     del st.session_state[f"exclusion_method_{selected_participant}"]
+                        with col_mode3:
+                            # Plot resolution slider - allow up to all points
+                            n_total = plot_data['n_original']
+                            # Only show slider if dataset is large enough to benefit from downsampling
+                            if n_total > 1000:
+                                max_points = n_total  # Allow showing all points
+                                # Use saved resolution as default, but show all for small datasets
+                                if n_total <= saved_resolution:
+                                    default_points = n_total
+                                else:
+                                    default_points = saved_resolution
+                                st.slider(
+                                    "Plot resolution",
+                                    min_value=1000,
+                                    max_value=max_points,
+                                    value=min(default_points, max_points),
+                                    step=1000,
+                                    key=resolution_key,
+                                    help=f"Number of points to display ({n_total:,} total). Higher = more detail but slower."
+                                )
+                            else:
+                                st.caption(f"Showing all {n_total:,} points")
 
                         # Render plot using fragment (click handling is inside the fragment)
                         render_rr_plot_fragment(selected_participant)

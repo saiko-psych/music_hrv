@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.5` | **Tests**: 18/18 passing
+**Version**: `v0.6.6` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -61,7 +61,12 @@ uv run ruff check src/ tests/ --fix            # Lint
 - Tab 4: Sections (time ranges between events)
 - Tab 5: Analysis (NeuroKit2 HRV metrics)
 
-**Storage**: `~/.music_hrv/*.yml`
+**Storage**: `~/.music_hrv/*.yml` (groups, events, sections, participants, settings)
+
+**Settings**: Sidebar expander with persistent defaults for:
+- Default data folder
+- Plot resolution (1000-20000 points)
+- Plot options (events, exclusions, gaps, artifacts, etc.)
 
 **Data Sources**: HRV Logger (CSV) and VNS Analyse (TXT) supported
 - VNS loader: Parses date/time from filename (`dd.mm.yyyy hh.mm ...`), raw RR by default
@@ -92,6 +97,10 @@ uv run ruff check src/ tests/ --fix            # Lint
 **Next up:**
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
 - [ ] Tutorial videos
+
+**Known limitations:**
+- Plot zoom doesn't auto-load detail (Streamlit/Plotly limitation - no relayout events)
+  - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Future:**
 - [ ] Playlist group comparison (compare music types across playlists)
