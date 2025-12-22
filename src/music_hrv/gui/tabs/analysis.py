@@ -1206,8 +1206,22 @@ def _render_single_participant_analysis():
                     # Reconstruct recording object from cached data
                     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                     for ts, rr, elapsed in recording_data['rr_intervals']]
+
+                    # Combine file events with manual events from participant_events
                     events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                               for label, ts in recording_data['events']]
+
+                    # Add manual events from Participants tab
+                    stored_events = st.session_state.participant_events.get(selected_participant, {})
+                    all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
+                    for evt in all_stored:
+                        if hasattr(evt, 'first_timestamp') and evt.first_timestamp:
+                            # Use raw_label if available, otherwise canonical
+                            label = getattr(evt, 'raw_label', None) or getattr(evt, 'canonical', 'unknown')
+                            events.append(EventMarker(label=label, timestamp=evt.first_timestamp, offset_s=None))
+
+                    st.write(f"📌 Found {len(events)} events (file + manual)")
+
                     recording = HRVLoggerRecording(
                         participant_id=selected_participant,
                         rr_intervals=rr_intervals,
@@ -1496,8 +1510,19 @@ def _render_group_analysis():
                             # Reconstruct recording object
                             rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                             for ts, rr, elapsed in recording_data['rr_intervals']]
+
+                            # Combine file events with manual events from participant_events
                             events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                                       for label, ts in recording_data['events']]
+
+                            # Add manual events from Participants tab
+                            stored_events = st.session_state.participant_events.get(participant_id, {})
+                            all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
+                            for evt in all_stored:
+                                if hasattr(evt, 'first_timestamp') and evt.first_timestamp:
+                                    label = getattr(evt, 'raw_label', None) or getattr(evt, 'canonical', 'unknown')
+                                    events.append(EventMarker(label=label, timestamp=evt.first_timestamp, offset_s=None))
+
                             recording = HRVLoggerRecording(
                                 participant_id=participant_id,
                                 rr_intervals=rr_intervals,
