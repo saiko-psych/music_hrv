@@ -15,6 +15,7 @@ __pycache__/
 .mypy_cache/
 
 # Data artifacts
+# Real participant data (excluded)
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
@@ -23,11 +24,17 @@ local_test_data/
 test_data/
 tests/data/
 
+# Demo data (included in repo)
+!data/demo/
+!data/demo/**
+
 # HRV data files (real participant data)
 *_RR_*.csv
 *_Events_*.csv
 !tests/fixtures/**/*_RR_*.csv
 !tests/fixtures/**/*_Events_*.csv
+!data/demo/**/*_RR_*.csv
+!data/demo/**/*_Events_*.csv
 
 # VNS Analyse data files (real participant data)
 # Pattern: dd.mm.yyyy hh.mm *.txt

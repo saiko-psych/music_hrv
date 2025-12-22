@@ -384,35 +384,40 @@ def cached_load_vns_recording(vns_path_str: str, participant_id: str, use_correc
 def cached_clean_rr_intervals(rr_data_tuple, config_dict, is_vns_data: bool = False):
     """Cache cleaned RR intervals to avoid recomputation.
 
-    For VNS data, returns ALL intervals with flag status (for display).
-    Flagged intervals are shown in RED but timestamps are preserved.
+    For VNS data, returns ALL intervals without filtering or flagging.
+    Artifact detection is handled by NeuroKit2 at analysis time.
 
     Returns:
         tuple: (rr_data, stats, extra_info)
         - For HRV Logger: rr_data = [(timestamp, rr_ms), ...], cleaned data
-        - For VNS: rr_data = [(timestamp, rr_ms, is_flagged), ...], ALL data with flags
+        - For VNS: rr_data = [(timestamp, rr_ms, is_flagged=False), ...], ALL data, no flags
     """
-    from music_hrv.cleaning.rr import clean_rr_intervals, clean_rr_intervals_with_flags, RRInterval
+    from music_hrv.cleaning.rr import clean_rr_intervals, CleaningStats, RRInterval
 
     # Reconstruct RR intervals from cached data
     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                     for ts, rr, elapsed in rr_data_tuple]
-    config = CleaningConfig(
-        rr_min_ms=config_dict["rr_min_ms"],
-        rr_max_ms=config_dict["rr_max_ms"],
-        sudden_change_pct=config_dict["sudden_change_pct"]
-    )
 
     if is_vns_data:
-        # For VNS data, keep ALL intervals with flag status (original timestamps preserved)
-        # Timestamps are synthesized from cumulative RR, so we can't remove any
-        flagged_intervals, stats = clean_rr_intervals_with_flags(rr_intervals, config)
-        # Return as tuples: (timestamp, rr_ms, is_flagged)
-        result = [(fi.interval.timestamp, fi.interval.rr_ms, fi.is_flagged)
-                  for fi in flagged_intervals if fi.interval.timestamp]
+        # For VNS data: NO filtering, NO flagging
+        # - All intervals are kept (timestamps are cumulative, can't remove any)
+        # - No visual flagging (artifact detection done by NeuroKit2 at analysis time)
+        result = [(rr.timestamp, rr.rr_ms, False) for rr in rr_intervals if rr.timestamp]
+        stats = CleaningStats(
+            total_samples=len(rr_intervals),
+            retained_samples=len(rr_intervals),
+            removed_samples=0,
+            artifact_ratio=0.0,
+            reasons={"out_of_range": 0, "sudden_change": 0}
+        )
         return result, stats, {}
     else:
         # For HRV Logger, apply cleaning (real timestamps are independent of RR values)
+        config = CleaningConfig(
+            rr_min_ms=config_dict["rr_min_ms"],
+            rr_max_ms=config_dict["rr_max_ms"],
+            sudden_change_pct=config_dict["sudden_change_pct"]
+        )
         cleaned, stats = clean_rr_intervals(rr_intervals, config)
         return [(rr.timestamp, rr.rr_ms) for rr in cleaned if rr.timestamp], stats, {}
 
@@ -1275,7 +1280,7 @@ def render_rr_plot_fragment(participant_id: str):
     y_range = plot_data['y_range']
 
     fig.update_layout(
-        title=f"RR Intervals - {participant_id}",
+        title=f"Tachogram - {participant_id}",
         xaxis=dict(title="Time", tickformat='%H:%M:%S'),
         yaxis=dict(title="RR Interval (ms)"),
         hovermode='closest',
@@ -2324,55 +2329,14 @@ def main():
                                 'exclusion_zones': exclusion_zones,
                             }
                         else:
-                            # Load from original recording
+                            # Load from original recording - VNS events already have correct
+                            # timestamps from the VNS loader (based on cumulative RR intervals
+                            # from filename datetime)
                             st.session_state.participant_events[selected_participant] = {
                                 'events': list(summary.events),
                                 'manual': st.session_state.manual_events.get(selected_participant, []).copy(),
                                 'exclusion_zones': [],
                             }
-
-                        # VNS FIX: Normalize all event timestamps to match filename date
-                        # This ensures saved events match fresh RR data timestamps
-                        # Events were saved with offset from midnight (2000-01-01 00:00:00)
-                        # RR data now uses filename datetime as base
-                        if source_app == "VNS Analyse" and getattr(summary, 'vns_path', None):
-                            from datetime import datetime, timedelta
-                            from music_hrv.io.vns_analyse import parse_vns_filename_datetime
-                            from pathlib import Path
-
-                            # Get the base datetime from the VNS filename
-                            vns_filename = Path(summary.vns_path).name
-                            vns_base_time = parse_vns_filename_datetime(vns_filename)
-                            if vns_base_time is None:
-                                vns_base_time = datetime(2000, 1, 1)  # Fallback
-
-                            def normalize_vns_timestamp(ts):
-                                if ts is None:
-                                    return None
-                                # Calculate offset from midnight of the timestamp's date
-                                # (events were stored with base_time = midnight)
-                                midnight = ts.replace(hour=0, minute=0, second=0, microsecond=0)
-                                offset = ts - midnight
-                                # Apply offset to the filename base time
-                                return vns_base_time + offset
-
-                            def normalize_event(evt):
-                                if evt.first_timestamp:
-                                    evt.first_timestamp = normalize_vns_timestamp(evt.first_timestamp)
-                                if evt.last_timestamp:
-                                    evt.last_timestamp = normalize_vns_timestamp(evt.last_timestamp)
-                                return evt
-
-                            stored = st.session_state.participant_events[selected_participant]
-                            stored['events'] = [normalize_event(e) for e in stored.get('events', [])]
-                            stored['manual'] = [normalize_event(e) for e in stored.get('manual', [])]
-                            stored['music_events'] = [normalize_event(e) for e in stored.get('music_events', [])]
-                            # Also normalize exclusion zones
-                            for zone in stored.get('exclusion_zones', []):
-                                if zone.get('start'):
-                                    zone['start'] = normalize_vns_timestamp(zone['start'])
-                                if zone.get('end'):
-                                    zone['end'] = normalize_vns_timestamp(zone['end'])
 
                     # Get cleaned RR intervals using CACHED function
                     config_dict = {

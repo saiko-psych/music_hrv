@@ -30,7 +30,10 @@
       "Bash(git checkout:*)",
       "Bash(git reset:*)",
       "Bash(wc:*)",
-      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)"
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "Bash(git push:*)",
+      "Bash(echo:*)",
+      "Bash(head:*)"
     ],
     "deny": [],
     "ask": []

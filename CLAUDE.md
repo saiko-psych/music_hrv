@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.4` | **Tests**: 18/18 passing
+**Version**: `v0.6.5` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -91,13 +91,15 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 **Next up:**
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
-- [ ] Example simulated data for testing/demo
 - [ ] Tutorial videos
 
 **Future:**
 - [ ] Playlist group comparison (compare music types across playlists)
 
 **Done:**
+- [x] ~~Demo data for testing~~ (v0.6.5)
+- [x] ~~VNS event alignment fix~~ (v0.6.5)
+- [x] ~~Tachogram plot naming~~ (v0.6.5)
 - [x] ~~Multiple end events for sections~~ (v0.6.4)
 - [x] ~~VNS timestamp parsing from filename~~ (v0.6.4)
 - [x] ~~Section-based validation (duration + tolerance)~~ (v0.6.3)

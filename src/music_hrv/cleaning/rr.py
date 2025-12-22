@@ -135,11 +135,15 @@ def clean_rr_intervals_with_flags(
             flag_reason=flag_reason
         ))
 
-        # Only update previous_rr for non-flagged intervals
-        # (so sudden change detection works correctly)
         if not is_flagged:
-            previous_rr = rr
             retained += 1
+
+        # Update previous_rr for non-out_of_range intervals
+        # - out_of_range: Skip (don't compare next interval against an implausible value)
+        # - sudden_change: Update (the value itself is plausible, just changed quickly)
+        # This prevents cascade flagging while still skipping truly invalid values
+        if flag_reason != "out_of_range":
+            previous_rr = rr
 
     total = len(samples)
     stats = CleaningStats(

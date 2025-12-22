@@ -700,7 +700,7 @@ def _display_single_participant_results(selected_participant: str):
                 ax.plot(rr_intervals, marker='o', markersize=2, linestyle='-', linewidth=0.5)
                 ax.set_xlabel("Beat Index")
                 ax.set_ylabel("RR Interval (ms)")
-                ax.set_title(f"RR Intervals - {section_label}")
+                ax.set_title(f"Tachogram - {section_label}")
                 ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
                 plt.close(fig)
