@@ -889,7 +889,7 @@ def render_participant_table_fragment():
                 help="Number of duplicate event occurrences",
             ),
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key="participants_table",
         disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates", "Artifacts (%)", "Duration (min)", "Events", "Total Events", "Duplicate Events", "RR Range (ms)", "Mean RR (ms)"]
@@ -1161,7 +1161,7 @@ def render_participant_table_fragment():
         data=csv_participants,
         file_name="participants_overview.csv",
         mime="text/csv",
-        use_container_width=False,
+        width='content',
     )
     st.caption("Group and randomization assignments save automatically when changed in the table.")
 
@@ -1246,7 +1246,7 @@ def render_settings_panel():
         new_show_variability = st.checkbox("Variability", value=plot_opts.get("show_variability", False), key="settings_show_variability")
 
     # Save button
-    if st.button("💾 Save Settings", key="save_settings_btn", use_container_width=True):
+    if st.button("💾 Save Settings", key="save_settings_btn", width='stretch'):
         new_settings = {
             "data_folder": new_folder,
             "plot_resolution": new_resolution,
@@ -1869,13 +1869,21 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
     end_ts = None
 
     for event in recording.events:
-        canonical = normalizer.normalize(event.label)
-        if canonical == start_event_name and event.timestamp:
+        label = event.label
+        # First check if label is already a canonical name (for manual events)
+        if label == start_event_name and event.timestamp:
             start_ts = event.timestamp
-        elif canonical in end_event_names and event.timestamp:
-            # Use first matching end event
+        elif label in end_event_names and event.timestamp:
             if end_ts is None:
                 end_ts = event.timestamp
+        else:
+            # Try normalizing for raw labels from file
+            canonical = normalizer.normalize(label)
+            if canonical == start_event_name and event.timestamp:
+                start_ts = event.timestamp
+            elif canonical in end_event_names and event.timestamp:
+                if end_ts is None:
+                    end_ts = event.timestamp
 
     if not start_ts or not end_ts:
         return None
@@ -2183,9 +2191,9 @@ def main():
         for page_id in pages:
             # Highlight active page with primary button
             if st.session_state.active_page == page_id:
-                st.button(page_id, key=f"nav_{page_id}", use_container_width=True, type="primary")
+                st.button(page_id, key=f"nav_{page_id}", width='stretch', type="primary")
             else:
-                if st.button(page_id, key=f"nav_{page_id}", use_container_width=True, type="secondary"):
+                if st.button(page_id, key=f"nav_{page_id}", width='stretch', type="secondary"):
                     st.session_state.active_page = page_id
                     st.rerun()
 
@@ -2297,7 +2305,7 @@ def main():
                     "Previous",
                     disabled=current_idx == 0,
                     key="prev_btn",
-                    use_container_width=True,
+                    width='stretch',
                     on_click=go_previous
                 )
 
@@ -2314,7 +2322,7 @@ def main():
                     "Next",
                     disabled=current_idx >= len(participant_list) - 1,
                     key="next_btn",
-                    use_container_width=True,
+                    width='stretch',
                     on_click=go_next
                 )
 
@@ -2929,7 +2937,7 @@ def main():
                                             "Duration (s)": f"{gap['duration_s']:.1f}",
                                             "Beat Index": f"{gap['start_idx']} → {gap['end_idx']}"
                                         })
-                                    st.dataframe(pd.DataFrame(gap_data), use_container_width=True, hide_index=True)
+                                    st.dataframe(pd.DataFrame(gap_data), width='stretch', hide_index=True)
 
                                     # Recommendations for gaps
                                     st.markdown("##### 💡 Recommendations for Gaps:")
@@ -3027,7 +3035,7 @@ def main():
                                         "CV (%)": f"{cv_pct:.1f}",
                                         "Quality": quality
                                     })
-                                st.dataframe(pd.DataFrame(seg_data), use_container_width=True, hide_index=True)
+                                st.dataframe(pd.DataFrame(seg_data), width='stretch', hide_index=True)
 
                                 # Check for high variability segments
                                 high_var_segments = [s for s in cp_info['segment_stats'] if s['cv'] > 0.15]
@@ -3497,7 +3505,7 @@ def main():
                             key=f"add_event_{selected_participant}",
                             on_click=add_quick_event,
                             type="primary",
-                            use_container_width=True
+                            width='stretch'
                         )
 
                     st.markdown("---")
@@ -3891,7 +3899,7 @@ def main():
                             data=csv_events,
                             file_name=f"events_{selected_participant}.csv",
                             mime="text/csv",
-                            use_container_width=True,
+                            width='stretch',
                             key=f"download_events_{selected_participant}",
                         )
 
@@ -3930,7 +3938,7 @@ def main():
                             })
 
                         df_mapping = pd.DataFrame(mapping_data)
-                        st.dataframe(df_mapping, use_container_width=True, hide_index=True)
+                        st.dataframe(df_mapping, width='stretch', hide_index=True)
                     else:
                         st.info(f"No expected events defined for group '{participant_group}'. Add them in the Event Mapping tab.")
 
@@ -4000,7 +4008,7 @@ def main():
                     "Previous",
                     disabled=st.session_state.current_participant_idx == 0,
                     key="prev_btn_bottom",
-                    use_container_width=True,
+                    width='stretch',
                     on_click=go_previous_bottom
                 )
             with col_nav3:
@@ -4015,7 +4023,7 @@ def main():
                     "Next",
                     disabled=st.session_state.current_participant_idx >= len(participant_list) - 1,
                     key="next_btn_bottom",
-                    use_container_width=True,
+                    width='stretch',
                     on_click=go_next_bottom
                 )
 

@@ -53,15 +53,17 @@ PLOT_COLORS = {
 
 
 def create_professional_tachogram(rr_intervals: list, section_label: str,
-                                   artifact_indices: list = None) -> go.Figure:
-    """Create a professional tachogram with statistics overlay.
+                                   artifact_indices: list = None) -> tuple[go.Figure, dict]:
+    """Create a professional tachogram with clean layout.
 
     Features:
     - RR intervals as connected scatter plot
     - Mean line with ±1 SD and ±2 SD bands
     - Artifact markers if provided
-    - Statistics annotation box
-    - Professional styling
+    - Professional styling with legend below plot
+
+    Returns:
+        Tuple of (figure, stats_dict) for external display of statistics
     """
     rr = np.array(rr_intervals)
     n_beats = len(rr)
@@ -71,9 +73,16 @@ def create_professional_tachogram(rr_intervals: list, section_label: str,
     std_rr = np.std(rr)
     min_rr = np.min(rr)
     max_rr = np.max(rr)
-
-    # Convert to HR for display
     mean_hr = 60000 / mean_rr
+
+    # Stats for external display
+    stats = {
+        "N beats": n_beats,
+        "Mean RR": f"{mean_rr:.1f} ms",
+        "SD": f"{std_rr:.1f} ms",
+        "Mean HR": f"{mean_hr:.1f} bpm",
+        "Range": f"{min_rr:.0f}–{max_rr:.0f} ms",
+    }
 
     # Create figure
     fig = go.Figure()
@@ -135,31 +144,9 @@ def create_professional_tachogram(rr_intervals: list, section_label: str,
             name=f'Artifacts ({len(artifact_indices)})',
             hovertemplate='Artifact at beat %{x}<br>RR: %{y:.0f} ms<extra></extra>'
         ))
+        stats["Artifacts"] = len(artifact_indices)
 
-    # Add statistics annotation
-    stats_text = (
-        f"<b>Statistics</b><br>"
-        f"N = {n_beats} beats<br>"
-        f"Mean RR = {mean_rr:.1f} ms<br>"
-        f"SD = {std_rr:.1f} ms<br>"
-        f"Mean HR = {mean_hr:.1f} bpm<br>"
-        f"Range = {min_rr:.0f}-{max_rr:.0f} ms"
-    )
-
-    fig.add_annotation(
-        x=0.02, y=0.98,
-        xref='paper', yref='paper',
-        text=stats_text,
-        showarrow=False,
-        font=dict(size=11, family="monospace"),
-        align='left',
-        bgcolor='rgba(255,255,255,0.9)',
-        bordercolor=PLOT_COLORS["neutral"],
-        borderwidth=1,
-        borderpad=8
-    )
-
-    # Update layout
+    # Update layout - legend below plot
     fig.update_layout(
         title=dict(
             text=f"<b>Tachogram</b> — {section_label}",
@@ -178,40 +165,50 @@ def create_professional_tachogram(rr_intervals: list, section_label: str,
             zeroline=False
         ),
         height=400,
-        margin=dict(l=60, r=20, t=60, b=50),
+        margin=dict(l=60, r=20, t=50, b=80),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5
         ),
         hovermode='x unified',
         plot_bgcolor='white'
     )
 
-    return fig
+    return fig, stats
 
 
-def create_poincare_plot(rr_intervals: list, section_label: str) -> go.Figure:
+def create_poincare_plot(rr_intervals: list, section_label: str) -> tuple[go.Figure, dict]:
     """Create a Poincaré plot (RR[n] vs RR[n+1]) with SD1/SD2 ellipse.
 
     The Poincaré plot visualizes short-term (SD1) and long-term (SD2) HRV.
     - SD1: Perpendicular to identity line - short-term variability
     - SD2: Along identity line - long-term variability
+
+    Returns:
+        Tuple of (figure, stats_dict) for external display of statistics
     """
     rr = np.array(rr_intervals)
     rr_n = rr[:-1]   # RR[n]
     rr_n1 = rr[1:]   # RR[n+1]
 
     # Calculate SD1 and SD2
-    # SD1 = std of points projected onto line perpendicular to identity
-    # SD2 = std of points projected onto identity line
     diff_rr = rr_n1 - rr_n
     sum_rr = rr_n1 + rr_n
 
     sd1 = np.std(diff_rr) / np.sqrt(2)
     sd2 = np.std(sum_rr) / np.sqrt(2)
+    sd_ratio = sd1/sd2 if sd2 > 0 else 0
+
+    # Stats for external display
+    stats = {
+        "SD1 (short-term)": f"{sd1:.1f} ms",
+        "SD2 (long-term)": f"{sd2:.1f} ms",
+        "SD1/SD2": f"{sd_ratio:.2f}",
+        "N pairs": len(rr_n),
+    }
 
     # Center of ellipse
     center_x = np.mean(rr_n)
@@ -219,11 +216,9 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> go.Figure:
 
     # Create ellipse points (rotated 45 degrees)
     theta = np.linspace(0, 2*np.pi, 100)
-    # Ellipse in standard position, then rotate 45 degrees
     a = sd2  # Semi-major axis (along identity line)
     b = sd1  # Semi-minor axis (perpendicular to identity line)
 
-    # Rotation by 45 degrees (pi/4)
     cos_45 = np.cos(np.pi/4)
     sin_45 = np.sin(np.pi/4)
 
@@ -253,7 +248,7 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> go.Figure:
         fill='toself',
         fillcolor='rgba(46, 134, 171, 0.2)',
         line=dict(color=PLOT_COLORS["primary"], width=2),
-        name=f'SD1={sd1:.1f}, SD2={sd2:.1f}',
+        name='SD1/SD2 Ellipse',
         hoverinfo='name'
     ))
 
@@ -281,30 +276,7 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> go.Figure:
         hovertemplate=f'Center<br>RR[n]: {center_x:.0f} ms<br>RR[n+1]: {center_y:.0f} ms<extra></extra>'
     ))
 
-    # Add interpretation annotation
-    sd_ratio = sd1/sd2 if sd2 > 0 else 0
-    interpretation = (
-        f"<b>Poincaré Analysis</b><br>"
-        f"SD1 = {sd1:.1f} ms (short-term)<br>"
-        f"SD2 = {sd2:.1f} ms (long-term)<br>"
-        f"SD1/SD2 = {sd_ratio:.2f}<br>"
-        f"N = {len(rr_n)} pairs"
-    )
-
-    fig.add_annotation(
-        x=0.02, y=0.98,
-        xref='paper', yref='paper',
-        text=interpretation,
-        showarrow=False,
-        font=dict(size=11, family="monospace"),
-        align='left',
-        bgcolor='rgba(255,255,255,0.9)',
-        bordercolor=PLOT_COLORS["neutral"],
-        borderwidth=1,
-        borderpad=8
-    )
-
-    # Update layout
+    # Update layout - legend below plot
     fig.update_layout(
         title=dict(
             text=f"<b>Poincaré Plot</b> — {section_label}",
@@ -323,49 +295,47 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> go.Figure:
             gridcolor='rgba(0,0,0,0.1)'
         ),
         height=450,
-        margin=dict(l=60, r=20, t=60, b=50),
+        margin=dict(l=60, r=20, t=50, b=80),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            yanchor="top",
+            y=-0.12,
+            xanchor="center",
+            x=0.5
         ),
         plot_bgcolor='white'
     )
 
-    return fig
+    return fig, stats
 
 
 def create_frequency_domain_plot(rr_intervals: list, section_label: str,
-                                  sampling_rate: int = 4) -> go.Figure:
+                                  sampling_rate: int = 4) -> tuple[go.Figure, dict] | tuple[None, None]:
     """Create a power spectral density plot with frequency bands highlighted.
 
     Frequency bands (standard):
     - VLF: 0.0033-0.04 Hz (very low frequency)
     - LF: 0.04-0.15 Hz (low frequency - sympathetic + parasympathetic)
     - HF: 0.15-0.4 Hz (high frequency - parasympathetic/vagal)
+
+    Returns:
+        Tuple of (figure, stats_dict) for external display, or (None, None) on error
     """
     nk = get_neurokit()
     if nk is None:
-        return None
+        return None, None
 
     try:
         rr = np.array(rr_intervals)
 
         # Interpolate RR intervals to uniform time series
-        # Create cumulative time in seconds
-        time_rr = np.cumsum(rr) / 1000.0  # Convert to seconds
-        time_rr = time_rr - time_rr[0]  # Start from 0
+        time_rr = np.cumsum(rr) / 1000.0
+        time_rr = time_rr - time_rr[0]
 
-        # Create uniform time grid
         duration = time_rr[-1]
         time_uniform = np.arange(0, duration, 1/sampling_rate)
 
-        # Interpolate RR to uniform sampling
         rr_interp = np.interp(time_uniform, time_rr, rr)
-
-        # Detrend
         rr_detrend = rr_interp - np.mean(rr_interp)
 
         # Compute PSD using Welch's method
@@ -376,7 +346,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
 
         freqs, psd = signal.welch(rr_detrend, fs=sampling_rate, nperseg=nperseg)
 
-        # Filter to relevant frequency range (0-0.5 Hz)
+        # Filter to relevant frequency range
         mask = freqs <= 0.5
         freqs = freqs[mask]
         psd = psd[mask]
@@ -386,18 +356,27 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
         lf_mask = (freqs >= 0.04) & (freqs < 0.15)
         hf_mask = (freqs >= 0.15) & (freqs <= 0.4)
 
-        # Integrate power in each band (trapezoidal)
         vlf_power = np.trapz(psd[vlf_mask], freqs[vlf_mask]) if np.any(vlf_mask) else 0
         lf_power = np.trapz(psd[lf_mask], freqs[lf_mask]) if np.any(lf_mask) else 0
         hf_power = np.trapz(psd[hf_mask], freqs[hf_mask]) if np.any(hf_mask) else 0
         total_power = vlf_power + lf_power + hf_power
 
         lf_hf_ratio = lf_power / hf_power if hf_power > 0 else 0
+        lf_pct = 100*lf_power/total_power if total_power > 0 else 0
+        hf_pct = 100*hf_power/total_power if total_power > 0 else 0
+
+        # Stats for external display
+        stats = {
+            "VLF Power": f"{vlf_power:.0f} ms²",
+            "LF Power": f"{lf_power:.0f} ms² ({lf_pct:.0f}%)",
+            "HF Power": f"{hf_power:.0f} ms² ({hf_pct:.0f}%)",
+            "LF/HF Ratio": f"{lf_hf_ratio:.2f}",
+            "Total Power": f"{total_power:.0f} ms²",
+        }
 
         # Create figure
         fig = go.Figure()
 
-        # Add frequency band shading
         max_psd = np.max(psd) * 1.1
 
         # VLF band
@@ -407,7 +386,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["vlf_band"],
             line=dict(width=0),
-            name='VLF (0.003-0.04 Hz)',
+            name='VLF',
             hoverinfo='name'
         ))
 
@@ -418,7 +397,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["lf_band"],
             line=dict(width=0),
-            name='LF (0.04-0.15 Hz)',
+            name='LF',
             hoverinfo='name'
         ))
 
@@ -429,7 +408,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["hf_band"],
             line=dict(width=0),
-            name='HF (0.15-0.4 Hz)',
+            name='HF',
             hoverinfo='name'
         ))
 
@@ -443,31 +422,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             hovertemplate='Freq: %{x:.3f} Hz<br>Power: %{y:.1f} ms²/Hz<extra></extra>'
         ))
 
-        # Add band power annotation
-        power_text = (
-            f"<b>Frequency Domain</b><br>"
-            f"VLF: {vlf_power:.0f} ms²<br>"
-            f"LF: {lf_power:.0f} ms² ({100*lf_power/total_power:.0f}%)<br>"
-            f"HF: {hf_power:.0f} ms² ({100*hf_power/total_power:.0f}%)<br>"
-            f"LF/HF: {lf_hf_ratio:.2f}<br>"
-            f"Total: {total_power:.0f} ms²"
-        )
-
-        fig.add_annotation(
-            x=0.98, y=0.98,
-            xref='paper', yref='paper',
-            text=power_text,
-            showarrow=False,
-            font=dict(size=11, family="monospace"),
-            align='left',
-            bgcolor='rgba(255,255,255,0.9)',
-            bordercolor=PLOT_COLORS["neutral"],
-            borderwidth=1,
-            borderpad=8,
-            xanchor='right'
-        )
-
-        # Update layout
+        # Update layout - legend below plot
         fig.update_layout(
             title=dict(
                 text=f"<b>Power Spectral Density</b> — {section_label}",
@@ -486,26 +441,30 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
                 rangemode='tozero'
             ),
             height=400,
-            margin=dict(l=60, r=20, t=60, b=50),
+            margin=dict(l=60, r=20, t=50, b=80),
             legend=dict(
                 orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
+                yanchor="top",
+                y=-0.15,
+                xanchor="center",
+                x=0.5
             ),
             plot_bgcolor='white'
         )
 
-        return fig
+        return fig, stats
 
     except Exception as e:
         st.warning(f"Could not create frequency plot: {e}")
-        return None
+        return None, None
 
 
-def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Figure:
-    """Create a heart rate distribution histogram with density curve."""
+def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> tuple[go.Figure, dict]:
+    """Create a heart rate distribution histogram with density curve.
+
+    Returns:
+        Tuple of (figure, stats_dict) for external display of statistics
+    """
     rr = np.array(rr_intervals)
     hr = 60000 / rr  # Convert to beats per minute
 
@@ -514,6 +473,15 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Fi
     std_hr = np.std(hr)
     min_hr = np.min(hr)
     max_hr = np.max(hr)
+
+    # Stats for external display
+    stats = {
+        "Mean HR": f"{mean_hr:.1f} bpm",
+        "SD": f"{std_hr:.1f} bpm",
+        "Min": f"{min_hr:.0f} bpm",
+        "Max": f"{max_hr:.0f} bpm",
+        "Range": f"{max_hr-min_hr:.0f} bpm",
+    }
 
     # Create figure with secondary y-axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -533,12 +501,11 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Fi
 
     # Add KDE (kernel density estimate) curve
     try:
-        from scipy import stats
-        kde = stats.gaussian_kde(hr)
+        from scipy import stats as sp_stats
+        kde = sp_stats.gaussian_kde(hr)
         x_kde = np.linspace(min_hr - 5, max_hr + 5, 200)
         y_kde = kde(x_kde)
-        # Scale KDE to match histogram
-        y_kde_scaled = y_kde * len(hr) * (max_hr - min_hr) / 30  # Approximate bin width
+        y_kde_scaled = y_kde * len(hr) * (max_hr - min_hr) / 30
 
         fig.add_trace(
             go.Scatter(
@@ -552,7 +519,7 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Fi
             secondary_y=False
         )
     except ImportError:
-        pass  # Skip KDE if scipy not available
+        pass
 
     # Add mean line
     fig.add_vline(
@@ -562,31 +529,7 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Fi
         annotation_position="top"
     )
 
-    # Add statistics annotation
-    stats_text = (
-        f"<b>Heart Rate Stats</b><br>"
-        f"Mean: {mean_hr:.1f} bpm<br>"
-        f"SD: {std_hr:.1f} bpm<br>"
-        f"Min: {min_hr:.0f} bpm<br>"
-        f"Max: {max_hr:.0f} bpm<br>"
-        f"Range: {max_hr-min_hr:.0f} bpm"
-    )
-
-    fig.add_annotation(
-        x=0.98, y=0.98,
-        xref='paper', yref='paper',
-        text=stats_text,
-        showarrow=False,
-        font=dict(size=11, family="monospace"),
-        align='left',
-        bgcolor='rgba(255,255,255,0.9)',
-        bordercolor=PLOT_COLORS["neutral"],
-        borderwidth=1,
-        borderpad=8,
-        xanchor='right'
-    )
-
-    # Update layout
+    # Update layout - legend below plot
     fig.update_layout(
         title=dict(
             text=f"<b>Heart Rate Distribution</b> — {section_label}",
@@ -603,20 +546,20 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> go.Fi
             gridcolor='rgba(0,0,0,0.1)'
         ),
         height=350,
-        margin=dict(l=60, r=20, t=60, b=50),
+        margin=dict(l=60, r=20, t=50, b=70),
         showlegend=True,
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5
         ),
         plot_bgcolor='white',
         bargap=0.05
     )
 
-    return fig
+    return fig, stats
 
 
 def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
@@ -988,7 +931,7 @@ def _render_music_section_analysis():
                     })
 
                 df_sections = pd.DataFrame(section_data)
-                st.dataframe(df_sections, use_container_width=True, hide_index=True)
+                st.dataframe(df_sections, width='stretch', hide_index=True)
 
                 # HRV Analysis for valid sections
                 st.markdown("### HRV Metrics by Section")
@@ -1045,7 +988,7 @@ def _render_music_section_analysis():
 
                 if hrv_results:
                     df_hrv = pd.DataFrame(hrv_results)
-                    st.dataframe(df_hrv, use_container_width=True, hide_index=True)
+                    st.dataframe(df_hrv, width='stretch', hide_index=True)
 
                     # Download button
                     csv_hrv = df_hrv.to_csv(index=False)
@@ -1065,7 +1008,7 @@ def _render_music_section_analysis():
                             type_results = [r for r in hrv_results if r["Music"] == music_type]
                             if type_results:
                                 df_type = pd.DataFrame(type_results)
-                                st.dataframe(df_type, use_container_width=True, hide_index=True)
+                                st.dataframe(df_type, width='stretch', hide_index=True)
 
                                 # Compute averages
                                 try:
@@ -1324,6 +1267,17 @@ def _render_single_participant_analysis():
         _display_single_participant_results(selected_participant)
 
 
+def _display_stats_row(stats: dict, key_prefix: str = ""):
+    """Display statistics as a row of metrics below a plot."""
+    if not stats:
+        return
+    n_cols = min(len(stats), 5)  # Max 5 columns
+    cols = st.columns(n_cols)
+    for i, (label, value) in enumerate(stats.items()):
+        with cols[i % n_cols]:
+            st.metric(label, value)
+
+
 def _display_single_participant_results(selected_participant: str):
     """Display HRV analysis results for a single participant with professional visualizations."""
     st.markdown("---")
@@ -1353,19 +1307,19 @@ def _display_single_participant_results(selected_participant: str):
                     artifact_indices = None
                     if artifact_info and 'artifact_indices' in artifact_info:
                         artifact_indices = artifact_info['artifact_indices']
-                    fig_tach = create_professional_tachogram(rr_intervals, section_label, artifact_indices)
-                    st.plotly_chart(fig_tach, use_container_width=True)
+                    fig_tach, tach_stats = create_professional_tachogram(rr_intervals, section_label, artifact_indices)
+                    st.plotly_chart(fig_tach, width='stretch')
+                    _display_stats_row(tach_stats, f"tach_{section_name}")
 
                 with plot_tabs[1]:
                     # Poincaré Plot
                     if len(rr_intervals) > 20:
-                        fig_poincare = create_poincare_plot(rr_intervals, section_label)
-                        st.plotly_chart(fig_poincare, use_container_width=True)
+                        fig_poincare, poincare_stats = create_poincare_plot(rr_intervals, section_label)
+                        st.plotly_chart(fig_poincare, width='stretch')
+                        _display_stats_row(poincare_stats, f"poincare_{section_name}")
                         st.caption("""
-                        **Interpretation:** The Poincaré plot shows beat-to-beat variability.
-                        - **SD1** (width): Short-term variability, reflects parasympathetic activity
-                        - **SD2** (length): Long-term variability, reflects overall HRV
-                        - **SD1/SD2 ratio**: Values <1 indicate healthy HRV patterns
+                        **Interpretation:** SD1 reflects short-term (parasympathetic) variability, SD2 reflects long-term variability.
+                        SD1/SD2 < 1 indicates healthy HRV patterns.
                         """)
                     else:
                         st.warning("Not enough data points for Poincaré plot (need >20 beats)")
@@ -1373,28 +1327,27 @@ def _display_single_participant_results(selected_participant: str):
                 with plot_tabs[2]:
                     # Frequency Domain Plot
                     if len(rr_intervals) > 100:
-                        fig_freq = create_frequency_domain_plot(rr_intervals, section_label)
+                        fig_freq, freq_stats = create_frequency_domain_plot(rr_intervals, section_label)
                         if fig_freq:
-                            st.plotly_chart(fig_freq, use_container_width=True)
+                            st.plotly_chart(fig_freq, width='stretch')
+                            _display_stats_row(freq_stats, f"freq_{section_name}")
                             st.caption("""
-                            **Frequency Bands:**
-                            - **VLF** (0.003-0.04 Hz): Thermoregulation, hormonal systems
-                            - **LF** (0.04-0.15 Hz): Mix of sympathetic and parasympathetic
-                            - **HF** (0.15-0.4 Hz): Parasympathetic (vagal) activity, respiratory sinus arrhythmia
+                            **Bands:** VLF (thermoregulation), LF (sympathetic+parasympathetic), HF (vagal/parasympathetic)
                             """)
                     else:
                         st.warning("Not enough data for reliable frequency analysis (need >100 beats, ideally >300)")
 
                 with plot_tabs[3]:
                     # Heart Rate Distribution
-                    fig_hr = create_hr_distribution_plot(rr_intervals, section_label)
-                    st.plotly_chart(fig_hr, use_container_width=True)
+                    fig_hr, hr_stats = create_hr_distribution_plot(rr_intervals, section_label)
+                    st.plotly_chart(fig_hr, width='stretch')
+                    _display_stats_row(hr_stats, f"hr_{section_name}")
 
                 with plot_tabs[4]:
                     # Full results table and download
                     if not hrv_results.empty:
                         st.markdown("**Complete HRV Metrics:**")
-                        st.dataframe(hrv_results.T, use_container_width=True)
+                        st.dataframe(hrv_results.T, width='stretch')
 
                         # Download buttons
                         col_dl1, col_dl2 = st.columns(2)
@@ -1430,7 +1383,7 @@ def _display_single_participant_results(selected_participant: str):
                             with cols[i]:
                                 st.metric(label, f"{hrv_results[col_name].iloc[0]:.2f}")
 
-                    st.dataframe(hrv_results.T, use_container_width=True)
+                    st.dataframe(hrv_results.T, width='stretch')
 
                 # Simple matplotlib plot
                 st.markdown("**Tachogram:**")
@@ -1602,11 +1555,11 @@ def _render_group_analysis():
 
                                 # Summary statistics
                                 st.markdown("**Summary Statistics:**")
-                                st.dataframe(df_results.describe(), use_container_width=True)
+                                st.dataframe(df_results.describe(), width='stretch')
 
                                 # Individual results
                                 st.markdown("**Individual Results:**")
-                                st.dataframe(df_results, use_container_width=True)
+                                st.dataframe(df_results, width='stretch')
 
                                 # Download
                                 csv_data = df_results.to_csv(index=False)

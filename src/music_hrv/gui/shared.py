@@ -268,13 +268,21 @@ def extract_section_rr_intervals(recording, section_def, normalizer):
     end_ts = None
 
     for event in recording.events:
-        canonical = normalizer.normalize(event.label)
-        if canonical == start_event_name and event.timestamp:
+        label = event.label
+        # First check if label is already a canonical name (for manual events)
+        if label == start_event_name and event.timestamp:
             start_ts = event.timestamp
-        elif canonical in end_event_names and event.timestamp:
-            # Use first matching end event
+        elif label in end_event_names and event.timestamp:
             if end_ts is None:
                 end_ts = event.timestamp
+        else:
+            # Try normalizing for raw labels from file
+            canonical = normalizer.normalize(label)
+            if canonical == start_event_name and event.timestamp:
+                start_ts = event.timestamp
+            elif canonical in end_event_names and event.timestamp:
+                if end_ts is None:
+                    end_ts = event.timestamp
 
     if not start_ts or not end_ts:
         return None

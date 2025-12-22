@@ -167,7 +167,7 @@ def _render_events_section():
                         on_click=rename_event,
                         args=(event_name, new_event_name_edit),
                         disabled=not name_valid or new_event_name_edit == event_name,
-                        use_container_width=True,
+                        width='stretch',
                     )
 
                 # Show used in groups
@@ -465,7 +465,7 @@ def _render_groups_section():
                     })
 
                 df_group_events = pd.DataFrame(events_list)
-                st.dataframe(df_group_events, use_container_width=True, hide_index=True)
+                st.dataframe(df_group_events, width='stretch', hide_index=True)
 
                 csv_group_events = df_group_events.to_csv(index=False)
                 st.download_button(
@@ -677,7 +677,7 @@ def _render_playlists_section():
 
         edited_music = st.data_editor(
             df_music,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             key="music_labels_table",
             column_config={
@@ -841,7 +841,7 @@ def _render_sections_section():
         available_events = list(st.session_state.all_events.keys())
         edited_sections = st.data_editor(
             df_sections,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             num_rows="dynamic",
             key="sections_table",
@@ -972,7 +972,7 @@ def _render_sections_section():
 
     if st.button("Generate Codebook", key="generate_codebook_btn"):
         df_codebook = generate_codebook()
-        st.dataframe(df_codebook, use_container_width=True, hide_index=True)
+        st.dataframe(df_codebook, width='stretch', hide_index=True)
 
         csv_codebook = df_codebook.to_csv(index=False)
         st.download_button(

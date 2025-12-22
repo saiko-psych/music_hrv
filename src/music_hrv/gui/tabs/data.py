@@ -334,7 +334,7 @@ def render_data_tab():
     with col2:
         st.write("")  # Spacer
         st.write("")  # Spacer
-        analyze_clicked = st.button("Analyze Folder", type="secondary", use_container_width=True)
+        analyze_clicked = st.button("Analyze Folder", type="secondary", width='stretch')
 
     # Analyze folder structure when button clicked or path changes
     data_path = Path(data_dir_input).expanduser()
@@ -414,7 +414,7 @@ def render_data_tab():
                     st.session_state.vns_use_corrected = vns_use_corrected
 
                 # Load button
-                if st.button("Load Selected Sources", type="primary", use_container_width=True):
+                if st.button("Load Selected Sources", type="primary", width='stretch'):
                     with st.status("Loading recordings...", expanded=True) as status:
                         try:
                             all_summaries = []
@@ -656,7 +656,7 @@ def _render_participants_table():
             "Total Events": st.column_config.NumberColumn("Total Events", disabled=True, format="%d"),
             "Duplicate Events": st.column_config.NumberColumn("Duplicate Events", disabled=True, format="%d"),
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key="participants_table",
         disabled=["Participant", "CSV", "Saved", "App", "Device", "Date/Time", "Total Beats", "Retained", "Duplicates",
@@ -726,7 +726,7 @@ def _render_participants_table():
             data=csv_participants,
             file_name="participants_overview.csv",
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
 
     with col_import:
@@ -872,7 +872,7 @@ def _render_participants_table():
                     preview_df = import_df[reordered_cols]
 
                     # Preview the data (scrollable with max height)
-                    st.dataframe(preview_df, use_container_width=True, height=200)
+                    st.dataframe(preview_df, width='stretch', height=200)
 
                     # Validate participant column exists
                     if participant_col not in csv_columns:
