@@ -1150,23 +1150,57 @@ def _render_single_participant_analysis():
                     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                     for ts, rr, elapsed in recording_data['rr_intervals']]
 
-                    # Combine file events with manual events from participant_events
-                    events = [EventMarker(label=label, timestamp=ts, offset_s=None)
-                              for label, ts in recording_data['events']]
-
-                    # Add stored/manual events from Participants tab
-                    # Load from YAML if not already in session state
+                    # Load stored/saved events from YAML - REQUIRED for analysis
+                    # User must review and save events in Participants tab first
                     if selected_participant not in st.session_state.participant_events:
                         from music_hrv.gui.persistence import load_participant_events
+                        from music_hrv.prep.summaries import EventStatus
+                        from datetime import datetime as dt
+
                         saved = load_participant_events(selected_participant)
                         if saved:
-                            st.session_state.participant_events[selected_participant] = saved
-                            st.write(f"📥 Loaded saved events from storage for {selected_participant}")
+                            # Convert dicts to EventStatus objects (same as app.py)
+                            def dict_to_event(d):
+                                ts = d.get("first_timestamp")
+                                if ts and isinstance(ts, str):
+                                    ts = dt.fromisoformat(ts)
+                                last_ts = d.get("last_timestamp")
+                                if last_ts and isinstance(last_ts, str):
+                                    last_ts = dt.fromisoformat(last_ts)
+                                return EventStatus(
+                                    raw_label=d.get("raw_label", ""),
+                                    canonical=d.get("canonical"),
+                                    first_timestamp=ts,
+                                    last_timestamp=last_ts,
+                                )
 
-                    # These are stored as dicts in YAML, not objects
+                            st.session_state.participant_events[selected_participant] = {
+                                'events': [dict_to_event(e) for e in saved.get('events', [])],
+                                'manual': [dict_to_event(e) for e in saved.get('manual', [])],
+                                'music_events': [dict_to_event(e) for e in saved.get('music_events', [])],
+                                'exclusion_zones': saved.get('exclusion_zones', []),
+                            }
+
                     stored_events = st.session_state.participant_events.get(selected_participant, {})
                     all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
-                    n_file_events = len(events)
+
+                    if not all_stored:
+                        # No saved events - STOP and warn user
+                        st.error(f"⚠️ No saved events found for {selected_participant}!")
+                        st.warning(
+                            "**Please review and save the participant's data first:**\n"
+                            "1. Go to the **Participants** tab\n"
+                            "2. Select this participant\n"
+                            "3. Review and edit events as needed\n"
+                            "4. Click **Save Events** to save your changes\n\n"
+                            "Analysis requires processed/saved events to ensure data quality."
+                        )
+                        status.update(label="Analysis stopped - no saved events", state="error")
+                        return
+
+                    # Use saved/processed events (with canonical labels)
+                    st.write(f"📥 Using {len(all_stored)} saved events for {selected_participant}")
+                    events = []
                     for evt in all_stored:
                         # Handle both dict (from YAML) and object formats
                         if isinstance(evt, dict):
@@ -1182,8 +1216,6 @@ def _render_single_participant_analysis():
                                 from datetime import datetime
                                 ts = datetime.fromisoformat(ts)
                             events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
-
-                    st.write(f"📌 Found {len(events)} events ({n_file_events} from file, {len(all_stored)} from session)")
 
                     # Debug: show event labels
                     with st.expander("🔍 Debug: Event labels", expanded=False):
@@ -1477,6 +1509,7 @@ def _render_group_analysis():
 
                     progress = st.progress(0)
                     total_steps = len(group_participants)
+                    skipped_participants = []  # Track participants without saved events
 
                     for idx, participant_id in enumerate(group_participants):
                         st.write(f"📊 Processing {participant_id} ({idx + 1}/{total_steps})")
@@ -1493,21 +1526,46 @@ def _render_group_analysis():
                             rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                                             for ts, rr, elapsed in recording_data['rr_intervals']]
 
-                            # Combine file events with manual events from participant_events
-                            events = [EventMarker(label=label, timestamp=ts, offset_s=None)
-                                      for label, ts in recording_data['events']]
-
-                            # Add stored/manual events from Participants tab
-                            # Load from YAML if not already in session state
+                            # Load stored/saved events from YAML - REQUIRED for analysis
                             if participant_id not in st.session_state.participant_events:
                                 from music_hrv.gui.persistence import load_participant_events
+                                from music_hrv.prep.summaries import EventStatus
+                                from datetime import datetime as dt
+
                                 saved = load_participant_events(participant_id)
                                 if saved:
-                                    st.session_state.participant_events[participant_id] = saved
+                                    # Convert dicts to EventStatus objects
+                                    def dict_to_event(d):
+                                        ts = d.get("first_timestamp")
+                                        if ts and isinstance(ts, str):
+                                            ts = dt.fromisoformat(ts)
+                                        last_ts = d.get("last_timestamp")
+                                        if last_ts and isinstance(last_ts, str):
+                                            last_ts = dt.fromisoformat(last_ts)
+                                        return EventStatus(
+                                            raw_label=d.get("raw_label", ""),
+                                            canonical=d.get("canonical"),
+                                            first_timestamp=ts,
+                                            last_timestamp=last_ts,
+                                        )
 
-                            # These are stored as dicts in YAML, not objects
+                                    st.session_state.participant_events[participant_id] = {
+                                        'events': [dict_to_event(e) for e in saved.get('events', [])],
+                                        'manual': [dict_to_event(e) for e in saved.get('manual', [])],
+                                        'music_events': [dict_to_event(e) for e in saved.get('music_events', [])],
+                                        'exclusion_zones': saved.get('exclusion_zones', []),
+                                    }
+
                             stored_events = st.session_state.participant_events.get(participant_id, {})
                             all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
+
+                            if not all_stored:
+                                # No saved events - skip this participant with warning
+                                skipped_participants.append(participant_id)
+                                continue
+
+                            # Use saved/processed events (with canonical labels)
+                            events = []
                             for evt in all_stored:
                                 # Handle both dict (from YAML) and object formats
                                 if isinstance(evt, dict):
@@ -1586,6 +1644,14 @@ def _render_group_analysis():
                     progress.progress(100)
                     status.update(label="✅ Group analysis complete!", state="complete")
                     show_toast(f"Group analysis complete for {len(group_participants)} participants", icon="success")
+
+                    # Warn about skipped participants (no saved events)
+                    if skipped_participants:
+                        st.warning(
+                            f"⚠️ **{len(skipped_participants)} participant(s) skipped** - no saved events:\n"
+                            f"`{', '.join(skipped_participants)}`\n\n"
+                            "Please review and save their data in the **Participants** tab first."
+                        )
 
                     # Display results by section
                     st.subheader(f"Group HRV Results - {selected_group}")

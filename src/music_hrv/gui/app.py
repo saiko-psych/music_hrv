@@ -3150,15 +3150,23 @@ def main():
 
                         # Get existing events to find measurement boundaries
                         stored_data = st.session_state.participant_events.get(selected_participant, {'events': [], 'manual': []})
-                        all_current_events = stored_data.get('events', []) + stored_data.get('manual', [])
+                        raw_events = stored_data.get('events', []) + stored_data.get('manual', [])
+
+                        # Helper to handle dicts (defensive for stale session state)
+                        def get_event_attr(evt, attr, default=None):
+                            """Get attribute from EventStatus or dict."""
+                            if isinstance(evt, dict):
+                                return evt.get(attr, default)
+                            return getattr(evt, attr, default)
 
                         # Find all relevant boundary events for music generation
                         boundary_events = {}
-                        for evt in all_current_events:
-                            canonical = evt.canonical if hasattr(evt, 'canonical') else None
+                        for evt in raw_events:
+                            canonical = get_event_attr(evt, 'canonical')
                             if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end']:
-                                if evt.first_timestamp:
-                                    boundary_events[canonical] = evt.first_timestamp
+                                first_ts = get_event_attr(evt, 'first_timestamp')
+                                if first_ts:
+                                    boundary_events[canonical] = first_ts
 
                         st.markdown("**Music Change Settings:**")
 
@@ -3350,7 +3358,29 @@ def main():
 
                     # Get events from session state (already initialized above for the plot)
                     stored_data = st.session_state.participant_events[selected_participant]
-                    all_events = stored_data['events'] + stored_data['manual']
+
+                    # Helper to ensure items are EventStatus objects (handles stale session state with dicts)
+                    def ensure_event_status(item):
+                        """Convert dict to EventStatus if needed."""
+                        if isinstance(item, dict):
+                            from music_hrv.prep.summaries import EventStatus
+                            from datetime import datetime as dt
+                            ts = item.get("first_timestamp")
+                            if ts and isinstance(ts, str):
+                                ts = dt.fromisoformat(ts)
+                            last_ts = item.get("last_timestamp")
+                            if last_ts and isinstance(last_ts, str):
+                                last_ts = dt.fromisoformat(last_ts)
+                            return EventStatus(
+                                raw_label=item.get("raw_label", ""),
+                                canonical=item.get("canonical"),
+                                first_timestamp=ts,
+                                last_timestamp=last_ts,
+                            )
+                        return item
+
+                    # Ensure all events are EventStatus objects, not dicts
+                    all_events = [ensure_event_status(e) for e in stored_data['events'] + stored_data['manual']]
 
                     if all_events:
 
@@ -3818,7 +3848,7 @@ def main():
 
                     # Refresh all_events from session state
                     stored_data = st.session_state.participant_events[selected_participant]
-                    all_events = stored_data['events'] + stored_data['manual']
+                    all_events = [ensure_event_status(e) for e in stored_data['events'] + stored_data['manual']]
 
                     # Section 2: Event Order with Move Buttons
                     st.markdown("### 🔄 Event Order")
