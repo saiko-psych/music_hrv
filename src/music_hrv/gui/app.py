@@ -37,6 +37,10 @@ from music_hrv.gui.help_text import (
     VNS_DATA_HELP,
 )
 
+# Parse command line arguments (passed via: streamlit run app.py -- --test-mode)
+import sys
+TEST_MODE = "--test-mode" in sys.argv or "--test" in sys.argv
+
 # Lazy import for neurokit2 and matplotlib (saves ~0.9s on startup)
 NEUROKIT_AVAILABLE = True
 _nk = None
@@ -75,8 +79,8 @@ except ImportError:
 
 # Page configuration
 st.set_page_config(
-    page_title="Music HRV Toolkit",
-    page_icon="🎵",
+    page_title="Music HRV Toolkit" + (" [TEST MODE]" if TEST_MODE else ""),
+    page_icon="🧪" if TEST_MODE else "🎵",
     layout="wide",
 )
 
@@ -136,9 +140,17 @@ if "app_settings" not in st.session_state:
     st.session_state.app_settings = load_settings()
 
 if "data_dir" not in st.session_state:
-    # Use saved default folder, or None to use file picker
-    saved_folder = st.session_state.app_settings.get("data_folder", "")
-    st.session_state.data_dir = saved_folder if saved_folder else None
+    if TEST_MODE:
+        # In test mode, auto-load demo data for faster testing
+        demo_path = Path(__file__).parent.parent.parent.parent / "data" / "demo" / "hrv_logger"
+        if demo_path.exists():
+            st.session_state.data_dir = str(demo_path)
+        else:
+            st.session_state.data_dir = None
+    else:
+        # Use saved default folder, or None to use file picker
+        saved_folder = st.session_state.app_settings.get("data_folder", "")
+        st.session_state.data_dir = saved_folder if saved_folder else None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
 if "participant_events" not in st.session_state:
@@ -2179,7 +2191,11 @@ def main():
     import time as _time
     _script_start = _time.time()
 
-    st.title("🎵 Music HRV Toolkit")
+    if TEST_MODE:
+        st.title("🧪 Music HRV Toolkit [TEST MODE]")
+        st.info("**Test mode active** - Using demo data from `data/demo/hrv_logger`")
+    else:
+        st.title("🎵 Music HRV Toolkit")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
     # Sidebar navigation using buttons (fast - only renders active page)
