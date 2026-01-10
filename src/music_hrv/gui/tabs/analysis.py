@@ -1157,7 +1157,7 @@ def _render_single_participant_analysis():
                         from music_hrv.prep.summaries import EventStatus
                         from datetime import datetime as dt
 
-                        saved = load_participant_events(selected_participant)
+                        saved = load_participant_events(selected_participant, st.session_state.data_dir)
                         if saved:
                             # Convert dicts to EventStatus objects (same as app.py)
                             def dict_to_event(d):
@@ -1533,7 +1533,7 @@ def _render_group_analysis():
                                 from music_hrv.prep.summaries import EventStatus
                                 from datetime import datetime as dt
 
-                                saved = load_participant_events(participant_id)
+                                saved = load_participant_events(participant_id, st.session_state.data_dir)
                                 if saved:
                                     # Convert dicts to EventStatus objects
                                     def dict_to_event(d):

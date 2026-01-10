@@ -201,8 +201,12 @@ def load_protocol() -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def save_participant_events(participant_id: str, events_data: dict[str, Any]) -> None:
+def save_participant_events(participant_id: str, events_data: dict[str, Any], data_dir: str | None = None) -> None:
     """Save participant events (edited events) to YAML.
+
+    Saves to TWO locations:
+    1. ~/.music_hrv/participant_events.yml (app config - for persistence across sessions)
+    2. {data_dir}/../processed/{participant_id}_events.yml (project folder - for data portability)
 
     Format per participant:
     {
@@ -222,7 +226,7 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any]) ->
     """
     ensure_config_dir()
 
-    # Load existing data
+    # Load existing data from app config
     all_events = {}
     if PARTICIPANT_EVENTS_FILE.exists():
         with open(PARTICIPANT_EVENTS_FILE, "r", encoding="utf-8") as f:
@@ -263,15 +267,59 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any]) ->
 
     all_events[participant_id] = serialized
 
+    # Save to app config (always)
     with open(PARTICIPANT_EVENTS_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
 
+    # Also save to processed folder if data_dir is provided
+    # This creates portable per-participant files in a standardized format
+    if data_dir:
+        data_path = Path(data_dir)
+        # Go up one level from data folder (e.g., data/hrv_logger -> data/processed)
+        processed_dir = data_path.parent / "processed"
+        processed_dir.mkdir(parents=True, exist_ok=True)
 
-def load_participant_events(participant_id: str) -> dict[str, Any] | None:
+        # Save per-participant file in standardized format
+        # Format: {participant_id}_events.yml
+        participant_file = processed_dir / f"{participant_id}_events.yml"
+
+        # Add metadata for data portability
+        output_data = {
+            "participant_id": participant_id,
+            "format_version": "1.0",
+            "source_type": "music_hrv_toolkit",
+            **serialized
+        }
+
+        with open(participant_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(output_data, f, default_flow_style=False, allow_unicode=True)
+
+
+def load_participant_events(participant_id: str, data_dir: str | None = None) -> dict[str, Any] | None:
     """Load saved participant events from YAML.
+
+    Checks TWO locations (processed folder takes priority):
+    1. {data_dir}/../processed/{participant_id}_events.yml (project folder - preferred)
+    2. ~/.music_hrv/participant_events.yml (app config - fallback)
 
     Returns None if no saved events exist for this participant.
     """
+    # First, try to load from processed folder (preferred source for data portability)
+    if data_dir:
+        data_path = Path(data_dir)
+        processed_dir = data_path.parent / "processed"
+        participant_file = processed_dir / f"{participant_id}_events.yml"
+
+        if participant_file.exists():
+            with open(participant_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            # Remove metadata fields before returning
+            data.pop("participant_id", None)
+            data.pop("format_version", None)
+            data.pop("source_type", None)
+            return data
+
+    # Fall back to app config
     if not PARTICIPANT_EVENTS_FILE.exists():
         return None
 

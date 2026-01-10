@@ -2432,7 +2432,7 @@ def main():
                         from music_hrv.prep.summaries import EventStatus
                         from datetime import datetime
 
-                        saved_events = load_participant_events(selected_participant)
+                        saved_events = load_participant_events(selected_participant, st.session_state.data_dir)
                         if saved_events:
                             # Load from saved YAML - convert dicts back to EventStatus
                             def dict_to_event(d):
@@ -2700,7 +2700,7 @@ def main():
                         with col_save:
                             if st.button("💾 Save", key=f"save_exclusions_{selected_participant}", type="primary", help="Save exclusion zones to disk"):
                                 from music_hrv.gui.persistence import save_participant_events
-                                save_participant_events(selected_participant, st.session_state.participant_events[selected_participant])
+                                save_participant_events(selected_participant, st.session_state.participant_events[selected_participant], st.session_state.data_dir)
                                 show_toast("💾 Exclusion zones saved", icon="success")
 
                         for idx, zone in enumerate(exclusion_zones):
@@ -3966,7 +3966,7 @@ def main():
                         def save_events_to_yaml():
                             """Save participant events to YAML persistence."""
                             stored_data = st.session_state.participant_events.get(selected_participant, {})
-                            save_participant_events(selected_participant, stored_data)
+                            save_participant_events(selected_participant, stored_data, st.session_state.data_dir)
                             show_toast(f"Saved events for {selected_participant}", icon="success")
 
                         st.button("💾 Save Events",
