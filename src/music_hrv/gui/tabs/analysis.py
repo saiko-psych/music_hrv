@@ -1169,6 +1169,10 @@ def _render_single_participant_analysis():
                             label = getattr(evt, 'canonical', None) or getattr(evt, 'raw_label', 'unknown')
 
                         if ts:
+                            # Convert string timestamps from YAML to datetime
+                            if isinstance(ts, str):
+                                from datetime import datetime
+                                ts = datetime.fromisoformat(ts)
                             events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
 
                     st.write(f"📌 Found {len(events)} events ({n_file_events} from file, {len(all_stored)} from session)")
@@ -1499,6 +1503,10 @@ def _render_group_analysis():
                                     label = getattr(evt, 'canonical', None) or getattr(evt, 'raw_label', 'unknown')
 
                                 if ts:
+                                    # Convert string timestamps from YAML to datetime
+                                    if isinstance(ts, str):
+                                        from datetime import datetime
+                                        ts = datetime.fromisoformat(ts)
                                     events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
 
                             recording = HRVLoggerRecording(

@@ -1573,6 +1573,10 @@ def render_rr_plot_fragment(participant_id: str):
                 timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
             if not timestamp:
                 continue
+            # Convert string timestamps from YAML to datetime
+            if isinstance(timestamp, str):
+                from datetime import datetime
+                timestamp = datetime.fromisoformat(timestamp)
             if label.endswith('_start'):
                 music_type = label.replace('_start', '')
                 if music_type not in music_sections:
@@ -1616,6 +1620,10 @@ def render_rr_plot_fragment(participant_id: str):
                 label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
                 timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
             if timestamp:
+                # Convert string timestamps from YAML to datetime
+                if isinstance(timestamp, str):
+                    from datetime import datetime
+                    timestamp = datetime.fromisoformat(timestamp)
                 music_type = label.replace('_start', '').replace('_end', '')
                 color = music_line_colors.get(music_type, '#808080')
                 fig.add_shape(
