@@ -1154,15 +1154,22 @@ def _render_single_participant_analysis():
                     events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                               for label, ts in recording_data['events']]
 
-                    # Add manual events from Participants tab
+                    # Add stored/manual events from Participants tab
+                    # These are stored as dicts in YAML, not objects
                     stored_events = st.session_state.participant_events.get(selected_participant, {})
                     all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
                     n_file_events = len(events)
                     for evt in all_stored:
-                        if hasattr(evt, 'first_timestamp') and evt.first_timestamp:
-                            # Use canonical name for manual events (they're already normalized)
+                        # Handle both dict (from YAML) and object formats
+                        if isinstance(evt, dict):
+                            ts = evt.get('first_timestamp')
+                            label = evt.get('canonical') or evt.get('raw_label', 'unknown')
+                        else:
+                            ts = getattr(evt, 'first_timestamp', None)
                             label = getattr(evt, 'canonical', None) or getattr(evt, 'raw_label', 'unknown')
-                            events.append(EventMarker(label=label, timestamp=evt.first_timestamp, offset_s=None))
+
+                        if ts:
+                            events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
 
                     st.write(f"📌 Found {len(events)} events ({n_file_events} from file, {len(all_stored)} from session)")
 
@@ -1478,13 +1485,21 @@ def _render_group_analysis():
                             events = [EventMarker(label=label, timestamp=ts, offset_s=None)
                                       for label, ts in recording_data['events']]
 
-                            # Add manual events from Participants tab
+                            # Add stored/manual events from Participants tab
+                            # These are stored as dicts in YAML, not objects
                             stored_events = st.session_state.participant_events.get(participant_id, {})
                             all_stored = stored_events.get('events', []) + stored_events.get('manual', [])
                             for evt in all_stored:
-                                if hasattr(evt, 'first_timestamp') and evt.first_timestamp:
-                                    label = getattr(evt, 'raw_label', None) or getattr(evt, 'canonical', 'unknown')
-                                    events.append(EventMarker(label=label, timestamp=evt.first_timestamp, offset_s=None))
+                                # Handle both dict (from YAML) and object formats
+                                if isinstance(evt, dict):
+                                    ts = evt.get('first_timestamp')
+                                    label = evt.get('canonical') or evt.get('raw_label', 'unknown')
+                                else:
+                                    ts = getattr(evt, 'first_timestamp', None)
+                                    label = getattr(evt, 'canonical', None) or getattr(evt, 'raw_label', 'unknown')
+
+                                if ts:
+                                    events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
 
                             recording = HRVLoggerRecording(
                                 participant_id=participant_id,

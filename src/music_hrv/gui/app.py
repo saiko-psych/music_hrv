@@ -1564,8 +1564,13 @@ def render_rr_plot_fragment(participant_id: str):
         }
         music_sections = {}
         for evt in music_events:
-            label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
-            timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
+            # Handle both dict (from YAML) and object formats
+            if isinstance(evt, dict):
+                label = evt.get('raw_label') or str(evt)
+                timestamp = evt.get('first_timestamp')
+            else:
+                label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
+                timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
             if not timestamp:
                 continue
             if label.endswith('_start'):
@@ -1603,8 +1608,13 @@ def render_rr_plot_fragment(participant_id: str):
             'music_1': '#4169E1', 'music_2': '#32CD32', 'music_3': '#FF8C00',
         }
         for evt in music_events:
-            label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
-            timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
+            # Handle both dict (from YAML) and object formats
+            if isinstance(evt, dict):
+                label = evt.get('raw_label') or str(evt)
+                timestamp = evt.get('first_timestamp')
+            else:
+                label = evt.raw_label if hasattr(evt, 'raw_label') else str(evt)
+                timestamp = evt.first_timestamp if hasattr(evt, 'first_timestamp') else None
             if timestamp:
                 music_type = label.replace('_start', '').replace('_end', '')
                 color = music_line_colors.get(music_type, '#808080')
