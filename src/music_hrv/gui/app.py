@@ -434,63 +434,45 @@ def apply_custom_css():
     }
 
     /* ============================================
-       HORIZONTAL RADIO BUTTONS (Segmented Controls)
+       HORIZONTAL RADIO BUTTONS - Simple styling
        ============================================ */
 
-    /* Hide the radio circles completely */
-    .stRadio [data-testid="stMarkdownContainer"] + div [role="radiogroup"] > div > label > div:first-child,
-    .stRadio [role="radiogroup"] label > div:first-child:has(input[type="radio"]),
-    .stRadio [role="radiogroup"] label > div[data-testid="stMarkdownContainer"]:first-child ~ div:empty,
-    .stRadio div[data-baseweb="radio"] {
-        display: none !important;
+    /* FORCE remove ALL backgrounds from radio buttons */
+    .stRadio label,
+    .stRadio label *,
+    .stRadio [role="radiogroup"] label,
+    .stRadio [role="radiogroup"] > div,
+    .stRadio [role="radiogroup"] > div > label,
+    .stRadio [role="radiogroup"] > div > label > div,
+    .stRadio [data-baseweb="radio"],
+    .stRadio [class*="st-"],
+    .stApp .stRadio label,
+    .stApp .stRadio [role="radiogroup"] label {
+        background-color: transparent !important;
+        background: none !important;
     }
 
-    /* Container for horizontal radio */
-    .stRadio [role="radiogroup"] {
-        border: 1px solid var(--border-color) !important;
-        border-radius: 6px !important;
-        overflow: hidden !important;
-        gap: 0 !important;
+    /* Unselected radio circle - black border */
+    .stRadio [data-baseweb="radio"] > div:first-child {
+        border-color: #31333F !important;
+        background-color: transparent !important;
     }
 
-    /* Individual segment buttons */
-    .stRadio [role="radiogroup"] > div {
-        border-right: 1px solid var(--border-color) !important;
+    :root.dark-theme .stRadio [data-baseweb="radio"] > div:first-child {
+        border-color: #FAFAFA !important;
     }
 
-    .stRadio [role="radiogroup"] > div:last-child {
-        border-right: none !important;
-    }
-
-    .stRadio [role="radiogroup"] label {
-        padding: 8px 16px !important;
-        background-color: #E8EAED !important;
-        color: var(--text-primary) !important;
-        font-weight: 500 !important;
-        cursor: pointer !important;
-        transition: background-color 0.15s ease !important;
-        margin: 0 !important;
-    }
-
-    /* Dark theme unselected */
-    :root.dark-theme .stRadio [role="radiogroup"] label {
-        background-color: #3D3D4D !important;
-    }
-
-    /* Hover state */
-    .stRadio [role="radiogroup"] label:hover {
-        background-color: #D0D3D8 !important;
-    }
-
-    :root.dark-theme .stRadio [role="radiogroup"] label:hover {
-        background-color: #4D4D5D !important;
-    }
-
-    /* Selected segment - use data-checked attribute */
-    .stRadio [role="radiogroup"] > div:has(input:checked) label,
-    .stRadio [role="radiogroup"] label:has(input:checked) {
+    /* Selected radio circle - accent color filled */
+    .stRadio [data-baseweb="radio"][aria-checked="true"] > div:first-child {
         background-color: var(--accent-primary) !important;
-        color: white !important;
+        border-color: var(--accent-primary) !important;
+    }
+
+    /* Selected button - border highlight around the whole option */
+    .stRadio [role="radiogroup"] > div:has([aria-checked="true"]) {
+        outline: 2px solid var(--accent-primary) !important;
+        outline-offset: 2px !important;
+        border-radius: 4px !important;
     }
 
     /* ============================================
@@ -1298,12 +1280,86 @@ def apply_custom_css():
                         background-color: var(--bg-secondary) !important;
                         color: var(--text-primary) !important;
                     }
+                    /* RADIO BUTTONS - remove all background highlighting */
+                    .stRadio label,
+                    .stRadio label span,
+                    .stRadio label > div,
+                    .stRadio [role="radiogroup"] label,
+                    .stRadio [role="radiogroup"] > div > label,
+                    .stRadio [data-baseweb="radio"],
+                    .stRadio [class*="st-e"],
+                    .stRadio [class*="st-f"],
+                    .stRadio [class*="st-g"],
+                    .stRadio [class*="st-h"] {
+                        background-color: transparent !important;
+                        background: none !important;
+                    }
+                    /* Radio circle - black when unselected */
+                    .stRadio [data-baseweb="radio"] > div:first-child {
+                        border-color: #31333F !important;
+                        background-color: transparent !important;
+                    }
+                    /* Radio circle - blue when selected */
+                    .stRadio [data-baseweb="radio"][aria-checked="true"] > div:first-child {
+                        background-color: ${savedAccent} !important;
+                        border-color: ${savedAccent} !important;
+                    }
+                    /* Selected option - outline border */
+                    .stRadio [role="radiogroup"] > div:has([aria-checked="true"]) {
+                        outline: 2px solid ${savedAccent} !important;
+                        outline-offset: 2px !important;
+                        border-radius: 4px !important;
+                    }
                 `;
                 parentDoc.head.appendChild(styleTag);
             }
 
             // Inject CSS after a short delay to ensure DOM is ready
             setTimeout(injectAccentCSS, 100);
+
+            // Style horizontal radio buttons (remove background highlight, show circles)
+            function styleRadioButtons() {
+                var isDark = root.classList.contains('dark-theme');
+                var borderColor = isDark ? '#FAFAFA' : '#31333F';
+                var radioLabels = parentDoc.querySelectorAll('.stRadio [role="radiogroup"] label');
+
+                radioLabels.forEach(function(label) {
+                    var input = label.querySelector('input[type="radio"]');
+                    var textDiv = label.querySelector('[data-testid="stMarkdownContainer"]');
+                    if (textDiv) textDiv = textDiv.parentElement;
+                    var circleOuter = label.querySelector('div:first-child');
+
+                    // Remove background from text
+                    if (textDiv) {
+                        textDiv.style.setProperty('background-color', 'transparent', 'important');
+                        textDiv.style.setProperty('background', 'none', 'important');
+                    }
+
+                    // Style radio circle
+                    if (circleOuter) {
+                        circleOuter.style.setProperty('border', '2px solid ' + borderColor, 'important');
+                        circleOuter.style.setProperty('border-radius', '50%', 'important');
+
+                        if (input && input.checked) {
+                            circleOuter.style.setProperty('background-color', savedAccent, 'important');
+                            circleOuter.style.setProperty('border-color', savedAccent, 'important');
+                            label.style.setProperty('outline', '2px solid ' + savedAccent, 'important');
+                            label.style.setProperty('outline-offset', '4px', 'important');
+                            label.style.setProperty('border-radius', '4px', 'important');
+                        } else {
+                            circleOuter.style.setProperty('background-color', 'transparent', 'important');
+                            label.style.removeProperty('outline');
+                        }
+                    }
+                });
+            }
+
+            // Run initially and observe for changes
+            setTimeout(styleRadioButtons, 200);
+            var radioObserver = new MutationObserver(function(mutations) {
+                setTimeout(styleRadioButtons, 50);
+            });
+            radioObserver.observe(parentDoc.body, { childList: true, subtree: true, attributes: true });
 
             // Update Plotly charts for current theme (both dark AND light, including iframes)
             function updatePlotsForTheme() {
