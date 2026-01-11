@@ -2506,6 +2506,10 @@ def main():
                 st.subheader("RR Interval Visualization")
 
                 try:
+                    # Initialize interaction_mode with default (used for plot mode selection)
+                    # This prevents UnboundLocalError if plot data loading fails or is skipped
+                    interaction_mode = "Add Events"
+
                     # Load recording data based on source app (HRV Logger or VNS)
                     source_app = getattr(summary, 'source_app', 'HRV Logger')
 
