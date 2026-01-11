@@ -4,6 +4,127 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2026-01-11: Analysis Tab Fixes & Processed Folder Storage
+
+### Version Tag: `v0.6.7`
+
+### Issues Fixed:
+
+#### 1. Analysis Tab Event Detection (Critical Fix)
+**Problem**: Analysis tab couldn't find events for sections like 'first_measurement'. The error showed "Section not detected" even when events were present.
+
+**Root Cause**: Two issues discovered:
+1. `extract_section_rr_intervals()` in `shared.py` was using `recording.events` (raw file events) instead of saved/edited events with canonical names
+2. Session state contained raw dicts from YAML instead of EventStatus objects, causing `AttributeError: 'dict' object has no attribute 'first_timestamp'`
+
+**Solution**:
+- Added `saved_events` parameter to `extract_section_rr_intervals()` function
+- Updated Analysis tab to pass saved events from session state
+- Added `ensure_event_status()` helper in `app.py` to convert dicts to EventStatus objects on-the-fly
+
+```python
+# shared.py - extract_section_rr_intervals now accepts saved_events
+def extract_section_rr_intervals(recording, section_def, normalizer, saved_events=None):
+    # Use saved events if provided, otherwise fall back to recording.events
+    if saved_events:
+        for event in saved_events:
+            # Handle both EventStatus objects and dicts
+            if isinstance(event, dict):
+                canonical = event.get("canonical")
+                timestamp = event.get("first_timestamp")
+            else:
+                canonical = getattr(event, "canonical", None)
+                timestamp = getattr(event, "first_timestamp", None)
+            # ... matching logic
+
+# analysis.py - pass saved events
+section_rr = extract_section_rr_intervals(
+    recording, section_def, st.session_state.normalizer,
+    saved_events=all_stored  # Use saved/edited events, not raw file events
+)
+```
+
+#### 2. Processed Folder for Events Storage
+**Problem**: Events were only saved to `~/.music_hrv/participant_events.yml`, making data non-portable.
+
+**Solution**: Events now saved to TWO locations:
+1. `~/.music_hrv/participant_events.yml` (app config - persistence across sessions)
+2. `{data_dir}/../processed/{participant_id}_events.yml` (project folder - data portability)
+
+**Standardized Format**:
+```yaml
+participant_id: 0123ABCD
+format_version: '1.0'
+source_type: music_hrv_toolkit
+events:
+  - canonical: rest_pre_start
+    first_timestamp: '2025-03-20T09:00:15+00:00'
+    last_timestamp: '2025-03-20T09:00:15+00:00'
+    raw_label: ruhe pre start
+  # ... more events
+exclusion_zones: []
+manual: []
+music_events: []
+```
+
+This format works for both HRV Logger and VNS Analyse data.
+
+#### 3. --test-mode Flag
+**Feature**: Added `--test-mode` command line flag for faster testing.
+
+```bash
+uv run streamlit run src/music_hrv/gui/app.py -- --test-mode
+```
+
+When enabled:
+- Auto-loads demo data from `data/demo/hrv_logger`
+- Shows "[TEST MODE]" in browser tab title
+- Skips manual folder selection
+
+**Implementation**: Parse `sys.argv` in app.py (Streamlit passes args after `--`)
+
+#### 4. Python Version Compatibility
+**Problem**: Users on Python 3.14 got pyarrow build failures (no pre-built wheels).
+
+**Solution**: Updated `pyproject.toml` to require `>=3.11,<3.14`
+
+```toml
+requires-python = ">=3.11,<3.14"
+```
+
+Added README troubleshooting section for Python 3.14 users.
+
+#### 5. README Improvements
+- Updated version badge to 0.6.7
+- Fixed GitHub clone URL to `saiko-psych`
+- Added Prerequisites section with Python/uv installation links
+- Added reference links (Quigley 2024 DOI, Lipponen 2019 DOI)
+- Documented processed folder storage format
+
+### Files Modified:
+- `src/music_hrv/gui/app.py` - TEST_MODE flag, ensure_event_status() helper
+- `src/music_hrv/gui/shared.py` - extract_section_rr_intervals saved_events param
+- `src/music_hrv/gui/tabs/analysis.py` - Pass saved events, data_dir to load functions
+- `src/music_hrv/gui/persistence.py` - Dual storage (app config + processed folder)
+- `pyproject.toml` - Python version constraint
+- `README.md` - Documentation updates
+
+### Verified Working:
+- ✅ HRV Logger events saved to `data/processed/0123ABCD_events.yml`
+- ✅ VNS events saved to `data/processed/0312CLTM_events.yml`
+- ✅ Analysis tab loads saved events with canonical names
+- ✅ Section detection uses canonical event names (e.g., `rest_pre_start`)
+- ✅ All 18 tests passing
+- ✅ Cross-platform: Windows, macOS, Linux
+
+### Key Learnings:
+1. **Session state serialization**: EventStatus objects become dicts when stored in YAML - need conversion when loading
+2. **Data portability**: Saving to project folder (not just user config) makes data shareable
+3. **Dual storage pattern**: Save to both locations for best of both worlds (persistence + portability)
+4. **Event detection flow**: Raw file events → normalize to canonical → save to YAML → load with canonical names → use in analysis
+
+---
+
 ## Session 2025-12-05 (continued): Section-Based Validation
 
 ### Version Tag: `v0.6.3`
