@@ -1444,9 +1444,75 @@ def apply_custom_css():
             });
             radioObserver.observe(parentDoc.body, { childList: true, subtree: true, attributes: true });
 
-            // NOTE: Plotly chart colors are now handled by CSS filter (invert in dark mode)
-            // This avoids double-inversion issues where JS sets dark colors and CSS inverts again
-            // The CSS filter at :root.dark-theme .stPlotlyChart handles all Plotly charts instantly
+            // Update Plotly charts for current theme (both dark AND light, including iframes)
+            function updatePlotsForTheme() {
+                // Check current theme state (not captured value)
+                var currentIsDark = root.classList.contains('dark-theme');
+                var bgColor = currentIsDark ? '#0E1117' : '#FFFFFF';
+                var gridColor = currentIsDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
+                var textColor = currentIsDark ? '#FAFAFA' : '#31333F';
+                var lineColor = currentIsDark ? '#3D3D4D' : '#E5E5E5';
+
+                function updatePlot(plot, Plotly) {
+                    if (Plotly && plot.data) {
+                        try {
+                            Plotly.relayout(plot, {
+                                'paper_bgcolor': bgColor,
+                                'plot_bgcolor': bgColor,
+                                'xaxis.gridcolor': gridColor,
+                                'yaxis.gridcolor': gridColor,
+                                'xaxis.linecolor': lineColor,
+                                'yaxis.linecolor': lineColor,
+                                'xaxis.tickfont.color': textColor,
+                                'yaxis.tickfont.color': textColor,
+                                'xaxis.title.font.color': textColor,
+                                'yaxis.title.font.color': textColor,
+                                'font.color': textColor,
+                                'title.font.color': textColor,
+                                'legend.font.color': textColor
+                            });
+                        } catch(e) {}
+                    }
+                }
+
+                // Update plots in main document
+                var plots = parentDoc.querySelectorAll('.js-plotly-plot');
+                plots.forEach(function(plot) {
+                    updatePlot(plot, window.parent.Plotly);
+                });
+
+                // Also update plots inside iframes (for plotly_events component)
+                var iframes = parentDoc.querySelectorAll('iframe');
+                iframes.forEach(function(iframe) {
+                    try {
+                        var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                        var iframePlots = iframeDoc.querySelectorAll('.js-plotly-plot');
+                        var iframePlotly = iframe.contentWindow.Plotly;
+                        iframePlots.forEach(function(plot) {
+                            updatePlot(plot, iframePlotly);
+                        });
+                    } catch(e) {} // Cross-origin iframes will throw
+                });
+            }
+
+            // Initial update for any existing plots (MutationObserver handles new ones)
+            setTimeout(updatePlotsForTheme, 300);
+
+            // Debounced observer for new plots (avoid excessive updates)
+            var plotUpdateTimeout = null;
+            var observer = new MutationObserver(function(mutations) {
+                var hasPlotlyChange = mutations.some(function(m) {
+                    return m.addedNodes.length > 0 &&
+                           Array.from(m.addedNodes).some(function(n) {
+                               return n.nodeType === 1 && (n.classList?.contains('js-plotly-plot') || n.querySelector?.('.js-plotly-plot'));
+                           });
+                });
+                if (hasPlotlyChange) {
+                    clearTimeout(plotUpdateTimeout);
+                    plotUpdateTimeout = setTimeout(updatePlotsForTheme, 200);
+                }
+            });
+            observer.observe(parentDoc.body, { childList: true, subtree: true });
         })();
     </script>
     """
@@ -1455,14 +1521,6 @@ def apply_custom_css():
 
 # Apply CSS styling (theme colors handled by Streamlit natively)
 apply_custom_css()
-
-# Sync theme from localStorage to session state via query params
-# This allows Python to know the current theme for rendering plots correctly
-if "theme" in st.query_params:
-    st.session_state["_current_theme"] = st.query_params["theme"]
-    del st.query_params["theme"]  # Clean up URL
-elif "_current_theme" not in st.session_state:
-    st.session_state["_current_theme"] = "light"  # Default
 
 # Restore session state from query params (after theme switch)
 # Check for restore_participant param and apply it
@@ -2743,7 +2801,7 @@ def render_settings_panel():
                     };
                     window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(lightTheme));
                     updateButtons();
-                    // Note: Plotly charts are now handled by CSS filter (no JS update needed)
+                    updatePlotlyTheme('light');
                 };
 
                 // Switch to dark theme
@@ -2763,13 +2821,67 @@ def render_settings_panel():
                     };
                     window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(darkTheme));
                     updateButtons();
-                    // Note: Plotly charts are now handled by CSS filter (no JS update needed)
+                    updatePlotlyTheme('dark');
                 };
+
+                // Update Plotly charts to match theme (including those in iframes)
+                function updatePlotlyTheme(theme) {
+                    var isDark = theme === 'dark';
+                    var bgColor = isDark ? '#0E1117' : '#FFFFFF';
+                    var gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+                    var textColor = isDark ? '#FAFAFA' : '#31333F';
+                    var lineColor = isDark ? '#3D3D4D' : '#E5E5E5';
+
+                    function updatePlot(plot, Plotly) {
+                        if (Plotly && plot.data) {
+                            try {
+                                Plotly.relayout(plot, {
+                                    'paper_bgcolor': bgColor,
+                                    'plot_bgcolor': bgColor,
+                                    'font.color': textColor,
+                                    'title.font.color': textColor,
+                                    'xaxis.gridcolor': gridColor,
+                                    'xaxis.linecolor': lineColor,
+                                    'xaxis.tickfont.color': textColor,
+                                    'xaxis.title.font.color': textColor,
+                                    'yaxis.gridcolor': gridColor,
+                                    'yaxis.linecolor': lineColor,
+                                    'yaxis.tickfont.color': textColor,
+                                    'yaxis.title.font.color': textColor,
+                                    'legend.font.color': textColor
+                                });
+                            } catch(e) {}
+                        }
+                    }
+
+                    // Update plots in main document
+                    var plots = parentDoc.querySelectorAll('.js-plotly-plot');
+                    plots.forEach(function(plot) {
+                        updatePlot(plot, window.parent.Plotly);
+                    });
+
+                    // Also update plots inside iframes (for plotly_events component)
+                    var iframes = parentDoc.querySelectorAll('iframe');
+                    iframes.forEach(function(iframe) {
+                        try {
+                            var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                            var iframePlots = iframeDoc.querySelectorAll('.js-plotly-plot');
+                            var iframePlotly = iframe.contentWindow.Plotly;
+                            iframePlots.forEach(function(plot) {
+                                updatePlot(plot, iframePlotly);
+                            });
+                        } catch(e) {} // Cross-origin iframes will throw
+                    });
+                }
 
                 // Initialize on load
                 setTimeout(function() {
                     updateButtons();
+                    // Apply saved theme to any existing Plotly charts
+                    var savedTheme = window.parent.localStorage.getItem('music-hrv-theme') || 'light';
+                    updatePlotlyTheme(savedTheme);
                 }, 100);
+                // Note: MutationObserver for Plotly updates is in apply_custom_css() - no need to duplicate
             })();
         </script>
         <div class="theme-toggle-container">

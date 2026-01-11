@@ -28,10 +28,6 @@ hier schreibe ich rein was zu tun ist für mich (nicht für CLAUDE)
 - [x] fix it so that the first_measurement section is properly analyzed ✅ 2026-01-11
 
 
-https://github.com/Aura-healthcare/hrv-analysis#
-https://github.com/PGomes92/pyhrv?tab=readme-ov-file
-
-
 
 ### organisation
 
