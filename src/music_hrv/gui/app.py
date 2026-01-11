@@ -1276,9 +1276,11 @@ def render_settings_panel():
     # Theme toggle - uses Streamlit's native theming via localStorage
     st.caption("**Theme**")
     import streamlit.components.v1 as components
+    import json
 
-    # Get current participant to preserve across theme switch
+    # Get current participant to preserve across theme switch (JSON-escape for safe JS)
     current_participant = st.session_state.get("selected_participant", "")
+    safe_participant_js = json.dumps(current_participant)  # Properly escapes quotes, backslashes, etc.
 
     # JavaScript to switch themes and preserve state
     components.html(f"""
@@ -1290,6 +1292,7 @@ def render_settings_panel():
                 cursor: pointer;
                 font-size: 14px;
                 font-family: inherit;
+                transition: opacity 0.2s;
             }}
             .light-btn {{
                 background: #f0f2f6;
@@ -1303,29 +1306,49 @@ def render_settings_panel():
             }}
             .theme-btn:hover {{ opacity: 0.8; }}
         </style>
-        <div style="display: flex; gap: 8px;">
-            <button class="theme-btn light-btn" onclick="
-                window.parent.localStorage.removeItem('stActiveTheme-/-v1');
-                var url = new URL(window.parent.location.href);
-                url.searchParams.set('restore_participant', '{current_participant}');
-                window.parent.location.href = url.toString();
-            ">Light</button>
-            <button class="theme-btn dark-btn" onclick="
-                var darkTheme = {{
-                    name: 'Dark',
-                    themeInput: {{
-                        primaryColor: '#2E86AB',
-                        backgroundColor: '#0E1117',
-                        secondaryBackgroundColor: '#262730',
-                        textColor: '#FAFAFA',
-                        base: 'dark'
+        <script>
+            function switchToLightTheme() {{
+                try {{
+                    window.parent.localStorage.removeItem('stActiveTheme-/-v1');
+                    var url = new URL(window.parent.location.href);
+                    var participant = {safe_participant_js};
+                    if (participant) {{
+                        url.searchParams.set('restore_participant', participant);
                     }}
-                }};
-                window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(darkTheme));
-                var url = new URL(window.parent.location.href);
-                url.searchParams.set('restore_participant', '{current_participant}');
-                window.parent.location.href = url.toString();
-            ">Dark</button>
+                    window.parent.location.href = url.toString();
+                }} catch (e) {{
+                    console.error('Theme switch error:', e);
+                    window.parent.location.reload();
+                }}
+            }}
+            function switchToDarkTheme() {{
+                try {{
+                    var darkTheme = {{
+                        name: 'Dark',
+                        themeInput: {{
+                            primaryColor: '#2E86AB',
+                            backgroundColor: '#0E1117',
+                            secondaryBackgroundColor: '#262730',
+                            textColor: '#FAFAFA',
+                            base: 'dark'
+                        }}
+                    }};
+                    window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(darkTheme));
+                    var url = new URL(window.parent.location.href);
+                    var participant = {safe_participant_js};
+                    if (participant) {{
+                        url.searchParams.set('restore_participant', participant);
+                    }}
+                    window.parent.location.href = url.toString();
+                }} catch (e) {{
+                    console.error('Theme switch error:', e);
+                    window.parent.location.reload();
+                }}
+            }}
+        </script>
+        <div style="display: flex; gap: 8px;">
+            <button class="theme-btn light-btn" onclick="switchToLightTheme()">Light</button>
+            <button class="theme-btn dark-btn" onclick="switchToDarkTheme()">Dark</button>
         </div>
     """, height=45)
 
@@ -2606,7 +2629,11 @@ def main():
                         is_vns_data=is_vns
                     )
 
-                    if rr_with_timestamps and PLOTLY_AVAILABLE:
+                    if not PLOTLY_AVAILABLE:
+                        st.warning("Plotly is not installed. Please install it with: `pip install plotly streamlit-plotly-events`")
+                    elif not rr_with_timestamps:
+                        st.warning("No RR interval data available for visualization. The data may be empty or all intervals were filtered out.")
+                    else:
                         # Unpack cached data - VNS has 3 elements (with flag), HRV Logger has 2
                         if is_vns:
                             timestamps, rr_values, flags = zip(*rr_with_timestamps)
@@ -3559,6 +3586,9 @@ def main():
                             help="Enter time as offset (minutes:seconds) from recording start"
                         )
 
+                        # Initialize offset values (prevents UnboundLocalError in callback)
+                        offset_min = 0
+                        offset_sec = 0
                         if use_offset:
                             col_min, col_sec = st.columns(2)
                             with col_min:
