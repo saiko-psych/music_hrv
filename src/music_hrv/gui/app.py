@@ -1323,7 +1323,17 @@ def render_settings_panel():
         <script>
             function switchToLightTheme() {{
                 try {{
-                    window.parent.localStorage.removeItem('stActiveTheme-/-v1');
+                    var lightTheme = {{
+                        name: 'Light',
+                        themeInput: {{
+                            primaryColor: '#2E86AB',
+                            backgroundColor: '#FFFFFF',
+                            secondaryBackgroundColor: '#F0F2F6',
+                            textColor: '#31333F',
+                            base: 'light'
+                        }}
+                    }};
+                    window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(lightTheme));
                     var url = new URL(window.parent.location.href);
                     var participant = {safe_participant_js};
                     if (participant) {{
