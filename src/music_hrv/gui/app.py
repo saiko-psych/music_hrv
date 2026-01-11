@@ -3826,15 +3826,24 @@ def main():
                                     if current_value not in canonical_options:
                                         current_value = "unmatched"
 
-                                    def update_canonical():
-                                        key = f"canonical_{selected_participant}_{idx}"
+                                    def update_canonical(participant_id, event_idx):
+                                        """Update canonical mapping and save to persistence."""
+                                        key = f"canonical_{participant_id}_{event_idx}"
                                         if key in st.session_state:
                                             new_val = st.session_state[key]
-                                            stored_data = st.session_state.participant_events[selected_participant]
-                                            all_evts = stored_data['events'] + stored_data['manual']
-                                            all_evts[idx].canonical = new_val if new_val != "unmatched" else None
-                                            st.session_state.participant_events[selected_participant]['events'] = all_evts
-                                            st.session_state.participant_events[selected_participant]['manual'] = []
+                                            stored_data = st.session_state.participant_events[participant_id]
+                                            all_evts = stored_data['events'] + stored_data.get('manual', [])
+                                            if event_idx < len(all_evts):
+                                                all_evts[event_idx].canonical = new_val if new_val != "unmatched" else None
+                                                st.session_state.participant_events[participant_id]['events'] = all_evts
+                                                st.session_state.participant_events[participant_id]['manual'] = []
+                                                # Save to persistence so changes persist across reruns
+                                                from music_hrv.gui.persistence import save_participant_events
+                                                save_participant_events(
+                                                    participant_id,
+                                                    st.session_state.participant_events[participant_id],
+                                                    st.session_state.data_dir
+                                                )
 
                                     st.selectbox(
                                         "Canonical",
@@ -3842,7 +3851,8 @@ def main():
                                         index=canonical_options.index(current_value),
                                         key=f"canonical_{selected_participant}_{idx}",
                                         label_visibility="collapsed",
-                                        on_change=update_canonical
+                                        on_change=update_canonical,
+                                        args=(selected_participant, idx)
                                     )
 
                                 with col_syn:
