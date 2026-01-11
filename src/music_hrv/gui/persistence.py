@@ -21,6 +21,8 @@ SETTINGS_FILE = CONFIG_DIR / "settings.yml"
 # Default settings
 DEFAULT_SETTINGS = {
     "data_folder": "",  # Empty = use file picker
+    "auto_load": False,  # Auto-load from default folder on startup
+    "accent_color": "#2E86AB",  # UI accent color
     "plot_resolution": 5000,
     "plot_options": {
         "show_events": True,
@@ -31,6 +33,10 @@ DEFAULT_SETTINGS = {
         "show_variability": False,
         "show_gaps": True,
         "gap_threshold": 15.0,
+        "colors": {
+            "line": "#2E86AB",  # RR interval line color
+            "artifact": "#FF6B6B",  # Artifact marker color
+        },
     },
 }
 
@@ -384,6 +390,14 @@ def save_settings(settings: dict[str, Any]) -> None:
     merged = {**DEFAULT_SETTINGS, **settings}
     if "plot_options" in settings:
         merged["plot_options"] = {**DEFAULT_SETTINGS["plot_options"], **settings["plot_options"]}
+        # Also merge nested colors within plot_options
+        if "colors" in settings["plot_options"]:
+            merged["plot_options"]["colors"] = {
+                **DEFAULT_SETTINGS["plot_options"]["colors"],
+                **settings["plot_options"]["colors"]
+            }
+        else:
+            merged["plot_options"]["colors"] = DEFAULT_SETTINGS["plot_options"]["colors"].copy()
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump(merged, f, default_flow_style=False, allow_unicode=True)
 
@@ -400,6 +414,12 @@ def load_settings() -> dict[str, Any]:
     result = {**DEFAULT_SETTINGS, **saved}
     if "plot_options" in saved:
         result["plot_options"] = {**DEFAULT_SETTINGS["plot_options"], **saved.get("plot_options", {})}
+        # Also merge nested colors within plot_options
+        saved_colors = saved.get("plot_options", {}).get("colors", {})
+        result["plot_options"]["colors"] = {
+            **DEFAULT_SETTINGS["plot_options"]["colors"],
+            **saved_colors
+        }
     else:
         result["plot_options"] = DEFAULT_SETTINGS["plot_options"].copy()
 
