@@ -53,6 +53,22 @@ from music_hrv.gui.help_text import ANALYSIS_HELP  # noqa: E402
 # PROFESSIONAL HRV VISUALIZATION FUNCTIONS
 # =============================================================================
 
+
+def _format_power(value: float, unit: str = "ms²") -> str:
+    """Format power values smartly - show decimals for small values.
+
+    Avoids showing "0 ms²" when actual value is e.g. 0.3 ms².
+    """
+    if value >= 10:
+        return f"{value:.0f} {unit}"
+    elif value >= 1:
+        return f"{value:.1f} {unit}"
+    elif value >= 0.1:
+        return f"{value:.2f} {unit}"
+    else:
+        return f"{value:.3f} {unit}"
+
+
 # Educational resources for HRV visualizations
 VISUALIZATION_RESOURCES = {
     "tachogram": {
@@ -579,13 +595,13 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
         lf_pct = 100*lf_power/total_power if total_power > 0 else 0
         hf_pct = 100*hf_power/total_power if total_power > 0 else 0
 
-        # Stats for external display
+        # Stats for external display (tuples for values with percentage delta)
         stats = {
-            "VLF Power": f"{vlf_power:.0f} ms²",
-            "LF Power": f"{lf_power:.0f} ms² ({lf_pct:.0f}%)",
-            "HF Power": f"{hf_power:.0f} ms² ({hf_pct:.0f}%)",
+            "VLF Power": _format_power(vlf_power),
+            "LF Power": (_format_power(lf_power), f"{lf_pct:.0f}%"),
+            "HF Power": (_format_power(hf_power), f"{hf_pct:.0f}%"),
             "LF/HF Ratio": f"{lf_hf_ratio:.2f}",
-            "Total Power": f"{total_power:.0f} ms²",
+            "Total Power": _format_power(total_power),
         }
 
         # Create figure
@@ -600,7 +616,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["vlf_band"],
             line=dict(width=0),
-            name=f'VLF ({vlf_power:.0f} ms²)',
+            name=f'VLF ({_format_power(vlf_power)})',
             hoverinfo='name'
         ))
 
@@ -611,7 +627,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["lf_band"],
             line=dict(width=0),
-            name=f'LF ({lf_power:.0f} ms², {lf_pct:.0f}%)',
+            name=f'LF ({_format_power(lf_power)}, {lf_pct:.0f}%)',
             hoverinfo='name'
         ))
 
@@ -622,7 +638,7 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             fill='toself',
             fillcolor=PLOT_COLORS["hf_band"],
             line=dict(width=0),
-            name=f'HF ({hf_power:.0f} ms², {hf_pct:.0f}%)',
+            name=f'HF ({_format_power(hf_power)}, {hf_pct:.0f}%)',
             hoverinfo='name'
         ))
 
@@ -963,7 +979,7 @@ def display_hrv_metrics_professional(hrv_results: pd.DataFrame, n_beats: int,
     with col1:
         st.metric(
             "LF Power",
-            f"{lf:.0f} ms²",
+            _format_power(lf),
             delta=f"{lf_pct:.0f}%",
             delta_color="off",
             help="Low Frequency (0.04–0.15 Hz). Mixed sympathetic/parasympathetic."
@@ -972,7 +988,7 @@ def display_hrv_metrics_professional(hrv_results: pd.DataFrame, n_beats: int,
     with col2:
         st.metric(
             "HF Power",
-            f"{hf:.0f} ms²",
+            _format_power(hf),
             delta=f"{hf_pct:.0f}%",
             delta_color="off",
             help="High Frequency (0.15–0.4 Hz). Parasympathetic/vagal activity."
@@ -1975,14 +1991,23 @@ def _render_single_participant_analysis():
 
 
 def _display_stats_row(stats: dict, key_prefix: str = ""):
-    """Display statistics as a row of metrics below a plot."""
+    """Display statistics as a row of metrics below a plot.
+
+    Stats can be either:
+    - Simple string values: {"Label": "123 ms"}
+    - Tuple with delta: {"Label": ("123 ms", "45%")} for value with delta
+    """
     if not stats:
         return
     n_cols = min(len(stats), 5)  # Max 5 columns
     cols = st.columns(n_cols)
     for i, (label, value) in enumerate(stats.items()):
         with cols[i % n_cols]:
-            st.metric(label, value)
+            if isinstance(value, tuple) and len(value) == 2:
+                # Value with delta (e.g., ("651 ms²", "38%"))
+                st.metric(label, value[0], delta=value[1], delta_color="off")
+            else:
+                st.metric(label, value)
 
 
 def _display_single_participant_results(selected_participant: str):
