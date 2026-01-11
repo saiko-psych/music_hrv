@@ -5,7 +5,7 @@ events:
   raw_label: Start Ruhe
 - canonical: rest_pre_end
   first_timestamp: '2025-03-15T11:08:00+00:00'
-  last_timestamp: '2025-03-15T12:48:00+00:00'
+  last_timestamp: '2025-03-15T11:08:00+00:00'
   raw_label: Ruhe Ende
 - canonical: measurement_start
   first_timestamp: '2025-03-15T11:08:30+00:00'

@@ -4041,16 +4041,29 @@ def main():
         st.components.v1.html(
             """
             <script>
-                // Try multiple selectors for different Streamlit versions
-                var mainSection = window.parent.document.querySelector('[data-testid="stMainBlockContainer"]');
-                if (!mainSection) mainSection = window.parent.document.querySelector('section.main');
-                if (!mainSection) mainSection = window.parent.document.querySelector('.main');
-                if (mainSection) {
-                    mainSection.scrollTo({top: 0, behavior: 'instant'});
-                }
-                // Also try scrolling the whole document
-                window.parent.document.documentElement.scrollTo({top: 0, behavior: 'instant'});
-                window.parent.scrollTo({top: 0, behavior: 'instant'});
+                // Delay scroll to ensure page content is rendered
+                setTimeout(function() {
+                    // Try multiple selectors for different Streamlit versions
+                    var mainSection = window.parent.document.querySelector('[data-testid="stMainBlockContainer"]');
+                    if (!mainSection) mainSection = window.parent.document.querySelector('section.main');
+                    if (!mainSection) mainSection = window.parent.document.querySelector('.main');
+                    if (mainSection) {
+                        mainSection.scrollTop = 0;
+                    }
+                    // Also scroll the whole document
+                    window.parent.document.documentElement.scrollTop = 0;
+                    window.parent.document.body.scrollTop = 0;
+
+                    // Find and scroll the main scrollable container
+                    var appViewContainer = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                    if (appViewContainer) {
+                        appViewContainer.scrollTop = 0;
+                    }
+                    var stMain = window.parent.document.querySelector('.stMain');
+                    if (stMain) {
+                        stMain.scrollTop = 0;
+                    }
+                }, 100);  // 100ms delay for content to render
             </script>
             """,
             height=0

@@ -44,7 +44,8 @@
       "Bash(timeout:*)",
       "Bash(ping:*)",
       "WebFetch(domain:docs.streamlit.io)",
-      "WebFetch(domain:discuss.streamlit.io)"
+      "WebFetch(domain:discuss.streamlit.io)",
+      "WebFetch(domain:baseweb.design)"
     ],
     "deny": [],
     "ask": []
