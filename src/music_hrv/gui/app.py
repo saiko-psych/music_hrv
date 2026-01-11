@@ -611,10 +611,11 @@ def apply_custom_css():
         filter: invert(0.93) hue-rotate(180deg);
     }
 
-    /* Dark mode: invert Plotly charts (rendered with light theme by Python) */
-    :root.dark-theme .stPlotlyChart,
-    :root.dark-theme [data-testid="stPlotlyChart"],
-    :root.dark-theme .js-plotly-plot,
+    /* Dark mode for Plotly charts: JavaScript handles color updates via Plotly.relayout()
+       CSS filter removed to avoid double-inversion when JS updates colors.
+       The MutationObserver in apply_custom_css() detects new plots and updates them. */
+
+    /* For plotly_events component (iframe) - still needs CSS filter since JS can't access cross-origin */
     :root.dark-theme .stCustomComponentV1 {
         filter: invert(0.93) hue-rotate(180deg);
     }
@@ -1495,21 +1496,35 @@ def apply_custom_css():
                 });
             }
 
-            // Initial update for any existing plots (MutationObserver handles new ones)
-            setTimeout(updatePlotsForTheme, 300);
+            // Initial update for any existing plots - multiple calls to catch async renders
+            setTimeout(updatePlotsForTheme, 100);
+            setTimeout(updatePlotsForTheme, 500);
+            setTimeout(updatePlotsForTheme, 1000);
 
             // Debounced observer for new plots (avoid excessive updates)
             var plotUpdateTimeout = null;
             var observer = new MutationObserver(function(mutations) {
+                // Check for any DOM changes that might include Plotly charts
                 var hasPlotlyChange = mutations.some(function(m) {
-                    return m.addedNodes.length > 0 &&
-                           Array.from(m.addedNodes).some(function(n) {
-                               return n.nodeType === 1 && (n.classList?.contains('js-plotly-plot') || n.querySelector?.('.js-plotly-plot'));
-                           });
+                    if (m.addedNodes.length > 0) {
+                        return Array.from(m.addedNodes).some(function(n) {
+                            if (n.nodeType !== 1) return false;
+                            // Check for Plotly-related classes
+                            return n.classList?.contains('js-plotly-plot') ||
+                                   n.classList?.contains('stPlotlyChart') ||
+                                   n.querySelector?.('.js-plotly-plot') ||
+                                   n.querySelector?.('[data-testid="stPlotlyChart"]');
+                        });
+                    }
+                    return false;
                 });
                 if (hasPlotlyChange) {
                     clearTimeout(plotUpdateTimeout);
-                    plotUpdateTimeout = setTimeout(updatePlotsForTheme, 200);
+                    // Multiple updates to catch Plotly async rendering
+                    plotUpdateTimeout = setTimeout(function() {
+                        updatePlotsForTheme();
+                        setTimeout(updatePlotsForTheme, 300);
+                    }, 100);
                 }
             });
             observer.observe(parentDoc.body, { childList: true, subtree: true });
