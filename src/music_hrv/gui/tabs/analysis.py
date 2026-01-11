@@ -51,6 +51,50 @@ PLOT_COLORS = {
     "vlf_band": "rgba(108, 117, 125, 0.2)",  # Gray - VLF band
 }
 
+# Reference values for HRV interpretation (Shaffer & Ginsberg, 2017; Nunan et al., 2010)
+# These are population means for healthy adults at rest (5-minute recordings)
+HRV_REFERENCE_VALUES = {
+    "RMSSD": {
+        "low": 20,      # Below this suggests reduced vagal tone
+        "normal": 42,   # Population mean ~42 ms
+        "high": 70,     # Above this indicates high vagal activity
+        "unit": "ms",
+        "interpretation": {
+            "low": "Reduced parasympathetic activity",
+            "normal": "Normal vagal tone",
+            "high": "High parasympathetic activity",
+        }
+    },
+    "SDNN": {
+        "low": 50,      # Below this may indicate health risk
+        "normal": 141,  # Population mean ~141 ms (24h), ~50 ms (5-min)
+        "high": 200,
+        "unit": "ms",
+        "interpretation": {
+            "low": "Reduced overall HRV",
+            "normal": "Normal overall variability",
+            "high": "High overall variability",
+        }
+    },
+    "pNN50": {
+        "low": 3,
+        "normal": 20,
+        "high": 40,
+        "unit": "%",
+    },
+    "LF_HF": {
+        "low": 0.5,     # Parasympathetic dominant
+        "normal": 1.5,  # Balanced
+        "high": 3.0,    # Sympathetic dominant
+        "unit": "",
+    },
+}
+
+# Minimum data requirements per Quigley et al. (2024)
+MIN_BEATS_TIME_DOMAIN = 100
+MIN_BEATS_FREQUENCY_DOMAIN = 300
+MIN_DURATION_FREQUENCY_DOMAIN_SEC = 120  # 2 minutes minimum, 5 minutes recommended
+
 
 def create_professional_tachogram(rr_intervals: list, section_label: str,
                                    artifact_indices: list = None) -> tuple[go.Figure, dict]:
@@ -276,6 +320,30 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> tuple[go.Fig
         hovertemplate=f'Center<br>RR[n]: {center_x:.0f} ms<br>RR[n+1]: {center_y:.0f} ms<extra></extra>'
     ))
 
+    # Add SD1 line (perpendicular to identity - short-term variability)
+    sd1_x = [center_x - sd1 * sin_45, center_x + sd1 * sin_45]
+    sd1_y = [center_y + sd1 * cos_45, center_y - sd1 * cos_45]
+    fig.add_trace(go.Scatter(
+        x=sd1_x,
+        y=sd1_y,
+        mode='lines',
+        line=dict(color='#e74c3c', width=2),
+        name=f'SD1 = {sd1:.1f} ms',
+        hoverinfo='name'
+    ))
+
+    # Add SD2 line (along identity - long-term variability)
+    sd2_x = [center_x - sd2 * cos_45, center_x + sd2 * cos_45]
+    sd2_y = [center_y - sd2 * sin_45, center_y + sd2 * sin_45]
+    fig.add_trace(go.Scatter(
+        x=sd2_x,
+        y=sd2_y,
+        mode='lines',
+        line=dict(color='#3498db', width=2),
+        name=f'SD2 = {sd2:.1f} ms',
+        hoverinfo='name'
+    ))
+
     # Update layout - legend below plot
     fig.update_layout(
         title=dict(
@@ -294,8 +362,8 @@ def create_poincare_plot(rr_intervals: list, section_label: str) -> tuple[go.Fig
             showgrid=True,
             gridcolor='rgba(0,0,0,0.1)'
         ),
-        height=450,
-        margin=dict(l=60, r=20, t=50, b=80),
+        height=480,
+        margin=dict(l=60, r=20, t=50, b=90),
         legend=dict(
             orientation="h",
             yanchor="top",
@@ -379,36 +447,36 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
 
         max_psd = np.max(psd) * 1.1
 
-        # VLF band
+        # VLF band with label
         fig.add_trace(go.Scatter(
             x=[0.0033, 0.04, 0.04, 0.0033],
             y=[0, 0, max_psd, max_psd],
             fill='toself',
             fillcolor=PLOT_COLORS["vlf_band"],
             line=dict(width=0),
-            name='VLF',
+            name=f'VLF ({vlf_power:.0f} ms²)',
             hoverinfo='name'
         ))
 
-        # LF band
+        # LF band with label
         fig.add_trace(go.Scatter(
             x=[0.04, 0.15, 0.15, 0.04],
             y=[0, 0, max_psd, max_psd],
             fill='toself',
             fillcolor=PLOT_COLORS["lf_band"],
             line=dict(width=0),
-            name='LF',
+            name=f'LF ({lf_power:.0f} ms², {lf_pct:.0f}%)',
             hoverinfo='name'
         ))
 
-        # HF band
+        # HF band with label
         fig.add_trace(go.Scatter(
             x=[0.15, 0.4, 0.4, 0.15],
             y=[0, 0, max_psd, max_psd],
             fill='toself',
             fillcolor=PLOT_COLORS["hf_band"],
             line=dict(width=0),
-            name='HF',
+            name=f'HF ({hf_power:.0f} ms², {hf_pct:.0f}%)',
             hoverinfo='name'
         ))
 
@@ -417,10 +485,19 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             x=freqs.tolist(),
             y=psd.tolist(),
             mode='lines',
-            line=dict(color=PLOT_COLORS["primary"], width=2),
+            line=dict(color=PLOT_COLORS["primary"], width=2.5),
             name='PSD',
             hovertemplate='Freq: %{x:.3f} Hz<br>Power: %{y:.1f} ms²/Hz<extra></extra>'
         ))
+
+        # Add band boundary lines and labels
+        for freq, label in [(0.04, 'VLF|LF'), (0.15, 'LF|HF'), (0.4, 'HF')]:
+            fig.add_vline(
+                x=freq, line=dict(color='gray', width=1, dash='dot'),
+                annotation_text=f'{freq}',
+                annotation_position='top',
+                annotation=dict(font_size=9, font_color='gray')
+            )
 
         # Update layout - legend below plot
         fig.update_layout(
@@ -432,7 +509,9 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
                 title="Frequency (Hz)",
                 showgrid=True,
                 gridcolor='rgba(0,0,0,0.1)',
-                range=[0, 0.5]
+                range=[0, 0.5],
+                tickvals=[0, 0.04, 0.15, 0.4, 0.5],
+                ticktext=['0', '0.04', '0.15', '0.4', '0.5']
             ),
             yaxis=dict(
                 title="Power (ms²/Hz)",
@@ -440,12 +519,12 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
                 gridcolor='rgba(0,0,0,0.1)',
                 rangemode='tozero'
             ),
-            height=400,
-            margin=dict(l=60, r=20, t=50, b=80),
+            height=420,
+            margin=dict(l=60, r=20, t=50, b=90),
             legend=dict(
                 orientation="h",
                 yanchor="top",
-                y=-0.15,
+                y=-0.18,
                 xanchor="center",
                 x=0.5
             ),
@@ -563,8 +642,17 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> tuple
 
 
 def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
-                            artifact_info: dict = None) -> str:
-    """Create HTML card with key HRV metrics interpretation."""
+                            artifact_info: dict = None,
+                            recording_duration_sec: float = None) -> str:
+    """Create HTML card with key HRV metrics interpretation.
+
+    Includes:
+    - Key metrics with reference-based interpretation
+    - Data quality warnings if insufficient data
+    - Artifact correction info if applied
+
+    Reference values based on Shaffer & Ginsberg (2017) and Nunan et al. (2010).
+    """
 
     # Extract key metrics
     rmssd = hrv_results.get('HRV_RMSSD', [0]).iloc[0] if 'HRV_RMSSD' in hrv_results.columns else 0
@@ -574,75 +662,154 @@ def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
     hf = hrv_results.get('HRV_HF', [0]).iloc[0] if 'HRV_HF' in hrv_results.columns else 0
     lf = hrv_results.get('HRV_LF', [0]).iloc[0] if 'HRV_LF' in hrv_results.columns else 0
 
-    # Interpret RMSSD (vagal tone indicator)
-    if rmssd > 50:
+    # Interpret RMSSD using reference values
+    rmssd_ref = HRV_REFERENCE_VALUES["RMSSD"]
+    if rmssd >= rmssd_ref["high"]:
         rmssd_color = "#28a745"  # Green
-        rmssd_interp = "High parasympathetic activity"
-    elif rmssd > 25:
-        rmssd_color = "#ffc107"  # Yellow
-        rmssd_interp = "Moderate parasympathetic activity"
+        rmssd_interp = rmssd_ref["interpretation"]["high"]
+    elif rmssd >= rmssd_ref["low"]:
+        rmssd_color = "#17a2b8"  # Blue (normal)
+        rmssd_interp = rmssd_ref["interpretation"]["normal"]
     else:
         rmssd_color = "#dc3545"  # Red
-        rmssd_interp = "Low parasympathetic activity"
+        rmssd_interp = rmssd_ref["interpretation"]["low"]
+
+    # Interpret SDNN
+    sdnn_ref = HRV_REFERENCE_VALUES["SDNN"]
+    if sdnn >= sdnn_ref["low"]:
+        sdnn_color = "#17a2b8"  # Blue (normal/good)
+        sdnn_interp = "Normal range"
+    else:
+        sdnn_color = "#ffc107"  # Yellow (caution)
+        sdnn_interp = "Below typical"
 
     # Interpret LF/HF ratio
-    if lf_hf < 1:
+    lf_hf_ref = HRV_REFERENCE_VALUES["LF_HF"]
+    if lf_hf < lf_hf_ref["low"]:
         lfhf_interp = "Parasympathetic dominant"
-    elif lf_hf < 2:
+        lfhf_color = "#28a745"
+    elif lf_hf < lf_hf_ref["high"]:
         lfhf_interp = "Balanced ANS"
+        lfhf_color = "#17a2b8"
     else:
         lfhf_interp = "Sympathetic dominant"
+        lfhf_color = "#ffc107"
+
+    # Build data quality warnings
+    warnings_html = ""
+    warnings = []
+
+    if n_beats < MIN_BEATS_TIME_DOMAIN:
+        warnings.append(f"⚠️ Low beat count ({n_beats}) - time domain metrics may be unreliable (min: {MIN_BEATS_TIME_DOMAIN})")
+
+    if n_beats < MIN_BEATS_FREQUENCY_DOMAIN:
+        warnings.append(f"⚠️ Insufficient beats for frequency domain ({n_beats}/{MIN_BEATS_FREQUENCY_DOMAIN}) - LF/HF values may be unreliable")
+
+    if recording_duration_sec and recording_duration_sec < MIN_DURATION_FREQUENCY_DOMAIN_SEC:
+        warnings.append(f"⚠️ Short recording ({recording_duration_sec/60:.1f} min) - frequency domain requires ≥2 min, ideally 5 min")
+
+    if warnings:
+        warnings_html = f"""
+        <div style="background:#fff3cd; padding:10px; border-radius:6px; margin-top:12px; border-left:4px solid #ffc107;">
+            <div style="font-size:11px; color:#856404;">
+                {'<br>'.join(warnings)}
+            </div>
+        </div>
+        """
 
     # Build artifact info if available
     artifact_html = ""
     if artifact_info:
+        artifact_pct = artifact_info.get('artifact_ratio', 0) * 100
+        if artifact_pct > 10:
+            artifact_bg = "#f8d7da"  # Red - high artifact rate
+            artifact_border = "#dc3545"
+        elif artifact_pct > 2:
+            artifact_bg = "#fff3cd"  # Yellow - moderate
+            artifact_border = "#ffc107"
+        else:
+            artifact_bg = "#d4edda"  # Green - low
+            artifact_border = "#28a745"
+
         artifact_html = f"""
-        <div style="background:#fff3cd; padding:8px; border-radius:4px; margin-top:10px;">
-            <b>⚠️ Artifact Correction:</b> {artifact_info['total_artifacts']} corrected
-            ({artifact_info['artifact_ratio']*100:.1f}%)
+        <div style="background:{artifact_bg}; padding:10px; border-radius:6px; margin-top:12px; border-left:4px solid {artifact_border};">
+            <div style="font-size:12px; color:#333;">
+                <b>Artifact Correction:</b> {artifact_info.get('total_artifacts', 0)} corrected ({artifact_pct:.1f}%)
+            </div>
         </div>
         """
 
+    # Calculate recording duration from RR intervals if not provided
+    duration_display = ""
+    if recording_duration_sec:
+        duration_display = f" | {recording_duration_sec/60:.1f} min"
+
     html = f"""
     <div style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding:20px; border-radius:12px; color:white; margin-bottom:20px;">
-        <h3 style="margin:0 0 15px 0; font-size:18px;">📊 HRV Summary ({n_beats} beats)</h3>
-        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:15px;">
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{rmssd:.1f}</div>
-                <div style="font-size:12px; opacity:0.9;">RMSSD (ms)</div>
+                padding:20px; border-radius:12px; color:white; margin-bottom:20px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h3 style="margin:0 0 15px 0; font-size:18px; font-weight:600;">
+            📊 HRV Analysis Summary
+            <span style="font-size:13px; font-weight:normal; opacity:0.9;">({n_beats} beats{duration_display})</span>
+        </h3>
+
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;">
+            <!-- RMSSD -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{rmssd:.1f}</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">RMSSD (ms)</div>
                 <div style="font-size:10px; color:{rmssd_color}; background:white;
-                            padding:2px 6px; border-radius:4px; margin-top:5px; display:inline-block;">
+                            padding:3px 8px; border-radius:4px; display:inline-block;">
                     {rmssd_interp}
                 </div>
+                <div style="font-size:9px; opacity:0.6; margin-top:4px;">Ref: {rmssd_ref['normal']} ms (mean)</div>
             </div>
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{sdnn:.1f}</div>
-                <div style="font-size:12px; opacity:0.9;">SDNN (ms)</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:5px;">Overall variability</div>
+
+            <!-- SDNN -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{sdnn:.1f}</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">SDNN (ms)</div>
+                <div style="font-size:10px; color:{sdnn_color}; background:white;
+                            padding:3px 8px; border-radius:4px; display:inline-block;">
+                    {sdnn_interp}
+                </div>
+                <div style="font-size:9px; opacity:0.6; margin-top:4px;">Overall variability</div>
             </div>
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{pnn50:.1f}%</div>
-                <div style="font-size:12px; opacity:0.9;">pNN50</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:5px;">% successive RR diff &gt;50ms</div>
+
+            <!-- pNN50 -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{pnn50:.1f}%</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">pNN50</div>
+                <div style="font-size:10px; opacity:0.7; margin-top:4px;">% successive RR diff &gt;50ms</div>
             </div>
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{lf:.0f}</div>
-                <div style="font-size:12px; opacity:0.9;">LF Power (ms²)</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:5px;">0.04-0.15 Hz</div>
+
+            <!-- LF Power -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{lf:.0f}</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF Power (ms²)</div>
+                <div style="font-size:10px; opacity:0.7;">0.04–0.15 Hz</div>
             </div>
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{hf:.0f}</div>
-                <div style="font-size:12px; opacity:0.9;">HF Power (ms²)</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:5px;">0.15-0.4 Hz (vagal)</div>
+
+            <!-- HF Power -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{hf:.0f}</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">HF Power (ms²)</div>
+                <div style="font-size:10px; opacity:0.7;">0.15–0.4 Hz (vagal)</div>
             </div>
-            <div style="background:rgba(255,255,255,0.15); padding:12px; border-radius:8px;">
-                <div style="font-size:24px; font-weight:bold;">{lf_hf:.2f}</div>
-                <div style="font-size:12px; opacity:0.9;">LF/HF Ratio</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:5px;">{lfhf_interp}</div>
+
+            <!-- LF/HF Ratio -->
+            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+                <div style="font-size:28px; font-weight:bold;">{lf_hf:.2f}</div>
+                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF/HF Ratio</div>
+                <div style="font-size:10px; color:{lfhf_color}; background:white;
+                            padding:3px 8px; border-radius:4px; display:inline-block;">
+                    {lfhf_interp}
+                </div>
             </div>
         </div>
+
         {artifact_html}
+        {warnings_html}
     </div>
     """
     return html
@@ -1354,10 +1521,16 @@ def _display_single_participant_results(selected_participant: str):
         n_beats = result_data["n_beats"]
         artifact_info = result_data.get("artifact_info")
 
-        with st.expander(f"📈 {section_label} ({n_beats} beats)", expanded=True):
+        # Calculate recording duration from RR intervals (sum of intervals)
+        recording_duration_sec = sum(rr_intervals) / 1000.0 if rr_intervals else 0
+
+        with st.expander(f"📈 {section_label} ({n_beats} beats, {recording_duration_sec/60:.1f} min)", expanded=True):
             # Display HRV metrics summary card
             if not hrv_results.empty:
-                metrics_card = create_hrv_metrics_card(hrv_results, n_beats, artifact_info)
+                metrics_card = create_hrv_metrics_card(
+                    hrv_results, n_beats, artifact_info,
+                    recording_duration_sec=recording_duration_sec
+                )
                 st.markdown(metrics_card, unsafe_allow_html=True)
 
             # Visualization tabs for professional plots
