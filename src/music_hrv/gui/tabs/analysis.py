@@ -501,15 +501,15 @@ def create_poincare_plot(rr_intervals: list, section_label: str):
             gridcolor=theme['grid'],
             tickfont=dict(color=theme['text'])
         ),
-        height=480,
-        margin=dict(l=60, r=20, t=50, b=90),
+        height=500,
+        margin=dict(l=60, r=20, t=50, b=100),
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.12,
+            y=-0.18,
             xanchor="center",
             x=0.5,
-            font=dict(color=theme['text'])
+            font=dict(color=theme['text'], size=11)
         ),
         plot_bgcolor=theme['bg'],
         paper_bgcolor=theme['bg'],

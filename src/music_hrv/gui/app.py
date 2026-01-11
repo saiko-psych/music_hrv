@@ -91,6 +91,34 @@ def get_plotly():
     return _go, _plotly_events
 
 
+def get_current_theme_colors():
+    """Get Plotly-compatible colors based on current theme setting.
+
+    Reads from app_settings to determine if dark mode is enabled.
+    Returns dict with colors for plot backgrounds, text, grid, etc.
+    """
+    # Check if dark theme is set in settings
+    settings = st.session_state.get("app_settings", {})
+    # Theme is stored in localStorage by JS, but we can check a session state flag
+    # For now, check if user preference was saved
+    is_dark = settings.get("theme", "light") == "dark"
+
+    if is_dark:
+        return {
+            'bg': '#0E1117',
+            'text': '#FAFAFA',
+            'grid': 'rgba(255,255,255,0.1)',
+            'line': '#3D3D4D',
+        }
+    else:
+        return {
+            'bg': '#FFFFFF',
+            'text': '#31333F',
+            'grid': 'rgba(0,0,0,0.1)',
+            'line': '#E5E5E5',
+        }
+
+
 # Page configuration
 st.set_page_config(
     page_title="Music HRV Toolkit" + (" [TEST MODE]" if TEST_MODE else ""),
@@ -448,6 +476,76 @@ def apply_custom_css():
         color: var(--text-muted) !important;
     }
 
+    /* Slider track endpoints - circular caps at start/end of track */
+    .stSlider [data-baseweb="slider"] > div > div,
+    .stSlider [data-baseweb="slider"] > div > div > div,
+    .stSlider [data-baseweb="slider"] [class*="InnerTrack"],
+    .stSlider [data-baseweb="slider"] [class*="Track"] {
+        background-color: var(--bg-tertiary) !important;
+    }
+
+    /* Override any leftover baseui teal colors on slider */
+    .stSlider [style*="rgb(1, 179, 179)"],
+    .stSlider [style*="rgb(0, 179, 179)"],
+    .stSlider [style*="#01b3b3"],
+    .stSlider [style*="#00b3b3"] {
+        background-color: var(--accent-primary) !important;
+    }
+
+    /* Slider filled portion and range indicator */
+    .stSlider [data-baseweb="slider"] [class*="InnerTrackFill"],
+    .stSlider [data-baseweb="slider"] > div > div:nth-child(2),
+    .stSlider [data-baseweb="slider"] > div > div > div:nth-child(2) {
+        background-color: var(--accent-primary) !important;
+    }
+
+    /* Slider track endpoint circles (the small circles at start/end of track) */
+    .stSlider [data-baseweb="slider"] > div > div:first-child::before,
+    .stSlider [data-baseweb="slider"] > div > div:first-child::after,
+    .stSlider [data-baseweb="slider"] > div::before,
+    .stSlider [data-baseweb="slider"] > div::after {
+        background-color: var(--bg-tertiary) !important;
+    }
+
+    /* Target the actual tick/endpoint elements by their structure */
+    .stSlider [data-baseweb="slider"] > div > div > div:first-child,
+    .stSlider [data-baseweb="slider"] > div > div > div:last-child {
+        background-color: var(--accent-primary) !important;
+    }
+
+    /* Force override any teal/cyan colored elements in slider */
+    .stSlider * {
+        --baseui-slider-tick-fill: var(--accent-primary) !important;
+    }
+
+    /* Slider StartThumb and EndThumb markers */
+    .stSlider [class*="StartThumb"],
+    .stSlider [class*="EndThumb"],
+    .stSlider [class*="Tick"],
+    .stSlider [class*="tick"] {
+        background-color: var(--accent-primary) !important;
+        border-color: var(--accent-primary) !important;
+    }
+
+    /* SVG elements in slider (often used for endpoint circles) */
+    .stSlider svg,
+    .stSlider svg circle,
+    .stSlider svg ellipse,
+    .stSlider svg rect {
+        fill: var(--accent-primary) !important;
+        stroke: var(--accent-primary) !important;
+    }
+
+    /* Hide or restyle the teal endpoint dots - aggressive override */
+    .stSlider [data-baseweb="slider"] div[style*="background"],
+    .stSlider div[style*="rgb(1, 179, 179)"],
+    .stSlider div[style*="rgb(0, 179, 179)"],
+    .stSlider div[style*="01b3b3"],
+    .stSlider div[style*="00b3b3"] {
+        background-color: var(--accent-primary) !important;
+        background: var(--accent-primary) !important;
+    }
+
     /* ============================================
        TABS - COMPLETE STYLING
        ============================================ */
@@ -720,10 +818,71 @@ def apply_custom_css():
         border-color: var(--input-border) !important;
     }
 
+    .stNumberInput [data-baseweb="input"] input {
+        background-color: var(--input-bg) !important;
+        color: var(--text-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+    }
+
+    .stNumberInput > div > div {
+        background-color: var(--input-bg) !important;
+    }
+
     .stNumberInput button {
         background-color: var(--bg-secondary) !important;
         color: var(--text-primary) !important;
         border-color: var(--input-border) !important;
+    }
+
+    /* ============================================
+       HELP/TOOLTIP ICONS
+       ============================================ */
+
+    /* Help icon circles next to labels - comprehensive styling */
+    [data-testid="stTooltipIcon"],
+    .stTooltipIcon,
+    button[kind="tooltip"],
+    [data-baseweb="tooltip"] button,
+    .stCheckbox [data-testid="stTooltipIcon"],
+    [data-testid="stWidgetLabel"] button,
+    [data-testid="tooltipHoverTarget"],
+    .st-emotion-cache-1inwz65,
+    [class*="stTooltipIcon"] {
+        background-color: var(--bg-tertiary) !important;
+        color: var(--text-muted) !important;
+        border: none !important;
+        border-radius: 50% !important;
+    }
+
+    [data-testid="stTooltipIcon"] svg,
+    .stTooltipIcon svg,
+    button[kind="tooltip"] svg,
+    [data-testid="tooltipHoverTarget"] svg,
+    [class*="stTooltipIcon"] svg {
+        fill: var(--text-muted) !important;
+        color: var(--text-muted) !important;
+    }
+
+    /* Tooltip popup content */
+    [data-baseweb="tooltip"] > div,
+    [role="tooltip"],
+    [data-baseweb="popover"] [data-baseweb="tooltip"],
+    .stTooltipContent {
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
+    }
+
+    /* Popover container (help text popup) */
+    [data-baseweb="popover"] > div {
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }
+
+    .stPopover button {
+        background-color: var(--bg-tertiary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-color) !important;
     }
 
     /* ============================================
@@ -1169,6 +1328,44 @@ def apply_custom_css():
             // Inject CSS after a short delay to ensure DOM is ready
             setTimeout(injectAccentCSS, 100);
 
+            // Fix slider endpoint colors (baseui uses inline styles we can't override with CSS)
+            function fixSliderColors() {
+                var accentColor = window.parent.localStorage.getItem('music-hrv-accent') || '${saved_accent}';
+                var isDark = root.classList.contains('dark-theme');
+                var trackColor = isDark ? '#3D3D4D' : '#E6E9EF';  // Match --bg-tertiary
+
+                // Find ALL elements inside sliders and check for teal colors
+                parentDoc.querySelectorAll('.stSlider *').forEach(function(el) {
+                    var computed = window.parent.getComputedStyle(el);
+                    var bg = computed.backgroundColor;
+                    // Check for various teal color representations
+                    if (bg === 'rgb(1, 179, 179)' || bg === 'rgb(0, 179, 179)' ||
+                        bg === 'rgb(1,179,179)' || bg === 'rgb(0,179,179)') {
+                        // Determine if this is the thumb (filled) or track (unfilled)
+                        var rect = el.getBoundingClientRect();
+                        // Small circular elements are likely the track endpoint dots
+                        if (rect.width < 20 && rect.height < 20) {
+                            el.style.setProperty('background-color', accentColor, 'important');
+                        } else {
+                            el.style.setProperty('background-color', accentColor, 'important');
+                        }
+                    }
+                });
+
+                // Also check inline styles directly
+                parentDoc.querySelectorAll('.stSlider [style*="179"]').forEach(function(el) {
+                    var style = el.getAttribute('style') || '';
+                    if (style.includes('179, 179') || style.includes('179,179')) {
+                        el.style.setProperty('background-color', accentColor, 'important');
+                    }
+                });
+            }
+            // Run slider fix on load and periodically for dynamically added sliders
+            setTimeout(fixSliderColors, 200);
+            setTimeout(fixSliderColors, 500);
+            setTimeout(fixSliderColors, 1000);
+            setTimeout(fixSliderColors, 2000);
+
             // Update Plotly charts for current theme (both dark AND light, including iframes)
             function updatePlotsForTheme() {
                 // Check current theme state (not captured value)
@@ -1223,19 +1420,34 @@ def apply_custom_css():
             // Initial update for any existing plots (MutationObserver handles new ones)
             setTimeout(updatePlotsForTheme, 300);
 
-            // Debounced observer for new plots (avoid excessive updates)
+            // Debounced observer for new plots and sliders (avoid excessive updates)
             var plotUpdateTimeout = null;
+            var sliderFixTimeout = null;
             var observer = new MutationObserver(function(mutations) {
-                // Only trigger if we see Plotly-related changes
-                var hasPlotlyChange = mutations.some(function(m) {
-                    return m.addedNodes.length > 0 &&
-                           Array.from(m.addedNodes).some(function(n) {
-                               return n.nodeType === 1 && (n.classList?.contains('js-plotly-plot') || n.querySelector?.('.js-plotly-plot'));
-                           });
+                // Check for Plotly or slider changes
+                var hasPlotlyChange = false;
+                var hasSliderChange = false;
+                mutations.forEach(function(m) {
+                    if (m.addedNodes.length > 0) {
+                        Array.from(m.addedNodes).forEach(function(n) {
+                            if (n.nodeType === 1) {
+                                if (n.classList?.contains('js-plotly-plot') || n.querySelector?.('.js-plotly-plot')) {
+                                    hasPlotlyChange = true;
+                                }
+                                if (n.classList?.contains('stSlider') || n.querySelector?.('.stSlider')) {
+                                    hasSliderChange = true;
+                                }
+                            }
+                        });
+                    }
                 });
                 if (hasPlotlyChange) {
                     clearTimeout(plotUpdateTimeout);
                     plotUpdateTimeout = setTimeout(updatePlotsForTheme, 200);
+                }
+                if (hasSliderChange) {
+                    clearTimeout(sliderFixTimeout);
+                    sliderFixTimeout = setTimeout(fixSliderColors, 200);
                 }
             });
             observer.observe(parentDoc.body, { childList: true, subtree: true });
@@ -2937,15 +3149,31 @@ def render_rr_plot_fragment(participant_id: str):
     y_min, y_max = plot_data['y_min'], plot_data['y_max']
     y_range = plot_data['y_range']
 
+    # Get theme colors for the plot
+    theme = get_current_theme_colors()
     fig.update_layout(
         title=f"Tachogram - {participant_id}",
-        xaxis=dict(title="Time", tickformat='%H:%M:%S'),
-        yaxis=dict(title="RR Interval (ms)"),
+        xaxis=dict(
+            title=dict(text="Time", font=dict(color=theme['text'])),
+            tickformat='%H:%M:%S',
+            gridcolor=theme['grid'],
+            linecolor=theme['line'],
+            tickfont=dict(color=theme['text']),
+        ),
+        yaxis=dict(
+            title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
+            gridcolor=theme['grid'],
+            linecolor=theme['line'],
+            tickfont=dict(color=theme['text']),
+        ),
         hovermode='closest',
         height=600,
         showlegend=True,
-        legend=dict(x=1.02, y=1, xanchor='left', yanchor='top'),
-        uirevision=participant_id  # Preserve zoom/pan state across updates
+        legend=dict(x=1.02, y=1, xanchor='left', yanchor='top', font=dict(color=theme['text'])),
+        uirevision=participant_id,  # Preserve zoom/pan state across updates
+        paper_bgcolor=theme['bg'],
+        plot_bgcolor=theme['bg'],
+        font=dict(color=theme['text']),
     )
 
     # Add event markers (conditional on show_events)

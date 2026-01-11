@@ -39,7 +39,12 @@
       "Bash(pkill:*)",
       "Bash(tasklist:*)",
       "WebFetch(domain:github.com)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(curl:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "WebFetch(domain:docs.streamlit.io)",
+      "WebFetch(domain:discuss.streamlit.io)"
     ],
     "deny": [],
     "ask": []
