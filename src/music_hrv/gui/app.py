@@ -1212,9 +1212,8 @@ def apply_custom_css():
                 });
             }
 
-            // Run after delays to catch plots as they render
-            setTimeout(updatePlotsForTheme, 500);
-            setTimeout(updatePlotsForTheme, 2000);
+            // Initial update for any existing plots (MutationObserver handles new ones)
+            setTimeout(updatePlotsForTheme, 300);
 
             // Debounced observer for new plots (avoid excessive updates)
             var plotUpdateTimeout = null;
@@ -1422,8 +1421,11 @@ if "sections" not in st.session_state:
                 section_data["end_events"] = [section_data.pop("end_event")]
         st.session_state.sections = loaded_sections
 
-# Create normalizer from GUI events - always recreate to pick up code/config changes
-st.session_state.normalizer = create_gui_normalizer(st.session_state.all_events)
+# Create normalizer from GUI events - only recreate when events change
+_events_hash = hash(frozenset((k, tuple(v)) for k, v in st.session_state.all_events.items()))
+if "normalizer" not in st.session_state or st.session_state.get("_events_hash") != _events_hash:
+    st.session_state.normalizer = create_gui_normalizer(st.session_state.all_events)
+    st.session_state._events_hash = _events_hash
 
 # Load participant-specific data (groups, playlists, labels, event orders, manual events)
 if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
