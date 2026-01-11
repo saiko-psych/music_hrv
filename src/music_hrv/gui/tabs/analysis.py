@@ -32,7 +32,7 @@ def get_plotly_analysis():
     return _go, _make_subplots
 
 
-from music_hrv.gui.shared import (
+from music_hrv.gui.shared import (  # noqa: E402
     NEUROKIT_AVAILABLE,
     get_neurokit,
     get_matplotlib,
@@ -46,7 +46,7 @@ from music_hrv.gui.shared import (
     cached_load_recording,
     cached_load_vns_recording,
 )
-from music_hrv.gui.help_text import ANALYSIS_HELP
+from music_hrv.gui.help_text import ANALYSIS_HELP  # noqa: E402
 
 
 # =============================================================================
@@ -202,6 +202,22 @@ MIN_BEATS_FREQUENCY_DOMAIN = 300
 MIN_DURATION_FREQUENCY_DOMAIN_SEC = 120  # 2 minutes minimum, 5 minutes recommended
 
 
+def get_theme_colors():
+    """Get colors for chart rendering.
+
+    Always returns light theme colors to match config.toml base theme.
+    Dark mode is handled by JavaScript updatePlotlyTheme() function
+    which updates charts dynamically when user switches themes.
+    """
+    # Always use light theme for initial render (matches config.toml)
+    # JavaScript handles dark mode switching dynamically
+    return {
+        'bg': '#FFFFFF',
+        'text': '#31333F',
+        'grid': 'rgba(0,0,0,0.1)',
+    }
+
+
 def create_professional_tachogram(rr_intervals: list, section_label: str,
                                    artifact_indices: list = None):
     """Create a professional tachogram with clean layout.
@@ -301,22 +317,25 @@ def create_professional_tachogram(rr_intervals: list, section_label: str,
         stats["Artifacts"] = len(artifact_indices)
 
     # Update layout - legend below plot
+    theme = get_theme_colors()
     fig.update_layout(
         title=dict(
             text=f"<b>Tachogram</b> — {section_label}",
-            font=dict(size=16)
+            font=dict(size=16, color=theme['text'])
         ),
         xaxis=dict(
-            title="Beat Number",
+            title=dict(text="Beat Number", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)',
-            zeroline=False
+            gridcolor=theme['grid'],
+            zeroline=False,
+            tickfont=dict(color=theme['text'])
         ),
         yaxis=dict(
-            title="RR Interval (ms)",
+            title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)',
-            zeroline=False
+            gridcolor=theme['grid'],
+            zeroline=False,
+            tickfont=dict(color=theme['text'])
         ),
         height=400,
         margin=dict(l=60, r=20, t=50, b=80),
@@ -325,10 +344,13 @@ def create_professional_tachogram(rr_intervals: list, section_label: str,
             yanchor="top",
             y=-0.15,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(color=theme['text'])
         ),
         hovermode='x unified',
-        plot_bgcolor='white'
+        plot_bgcolor=theme['bg'],
+        paper_bgcolor=theme['bg'],
+        font=dict(color=theme['text'])
     )
 
     return fig, stats
@@ -459,22 +481,25 @@ def create_poincare_plot(rr_intervals: list, section_label: str):
     ))
 
     # Update layout - legend below plot
+    theme = get_theme_colors()
     fig.update_layout(
         title=dict(
             text=f"<b>Poincaré Plot</b> — {section_label}",
-            font=dict(size=16)
+            font=dict(size=16, color=theme['text'])
         ),
         xaxis=dict(
-            title="RR[n] (ms)",
+            title=dict(text="RR[n] (ms)", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)',
+            gridcolor=theme['grid'],
             scaleanchor="y",
-            scaleratio=1
+            scaleratio=1,
+            tickfont=dict(color=theme['text'])
         ),
         yaxis=dict(
-            title="RR[n+1] (ms)",
+            title=dict(text="RR[n+1] (ms)", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)'
+            gridcolor=theme['grid'],
+            tickfont=dict(color=theme['text'])
         ),
         height=480,
         margin=dict(l=60, r=20, t=50, b=90),
@@ -483,9 +508,12 @@ def create_poincare_plot(rr_intervals: list, section_label: str):
             yanchor="top",
             y=-0.12,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(color=theme['text'])
         ),
-        plot_bgcolor='white'
+        plot_bgcolor=theme['bg'],
+        paper_bgcolor=theme['bg'],
+        font=dict(color=theme['text'])
     )
 
     return fig, stats
@@ -618,24 +646,27 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
             )
 
         # Update layout - legend below plot
+        theme = get_theme_colors()
         fig.update_layout(
             title=dict(
                 text=f"<b>Power Spectral Density</b> — {section_label}",
-                font=dict(size=16)
+                font=dict(size=16, color=theme['text'])
             ),
             xaxis=dict(
-                title="Frequency (Hz)",
+                title=dict(text="Frequency (Hz)", font=dict(color=theme['text'])),
                 showgrid=True,
-                gridcolor='rgba(0,0,0,0.1)',
+                gridcolor=theme['grid'],
                 range=[0, 0.5],
                 tickvals=[0, 0.04, 0.15, 0.4, 0.5],
-                ticktext=['0', '0.04', '0.15', '0.4', '0.5']
+                ticktext=['0', '0.04', '0.15', '0.4', '0.5'],
+                tickfont=dict(color=theme['text'])
             ),
             yaxis=dict(
-                title="Power (ms²/Hz)",
+                title=dict(text="Power (ms²/Hz)", font=dict(color=theme['text'])),
                 showgrid=True,
-                gridcolor='rgba(0,0,0,0.1)',
-                rangemode='tozero'
+                gridcolor=theme['grid'],
+                rangemode='tozero',
+                tickfont=dict(color=theme['text'])
             ),
             height=420,
             margin=dict(l=60, r=20, t=50, b=90),
@@ -644,9 +675,12 @@ def create_frequency_domain_plot(rr_intervals: list, section_label: str,
                 yanchor="top",
                 y=-0.18,
                 xanchor="center",
-                x=0.5
+                x=0.5,
+                font=dict(color=theme['text'])
             ),
-            plot_bgcolor='white'
+            plot_bgcolor=theme['bg'],
+            paper_bgcolor=theme['bg'],
+            font=dict(color=theme['text'])
         )
 
         return fig, stats
@@ -731,32 +765,38 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str):
     )
 
     # Update layout - legend below plot
+    theme = get_theme_colors()
     fig.update_layout(
         title=dict(
             text=f"<b>Heart Rate Distribution</b> — {section_label}",
-            font=dict(size=16)
+            font=dict(size=16, color=theme['text'])
         ),
         xaxis=dict(
-            title="Heart Rate (bpm)",
+            title=dict(text="Heart Rate (bpm)", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)'
+            gridcolor=theme['grid'],
+            tickfont=dict(color=theme['text'])
         ),
         yaxis=dict(
-            title="Count",
+            title=dict(text="Count", font=dict(color=theme['text'])),
             showgrid=True,
-            gridcolor='rgba(0,0,0,0.1)'
+            gridcolor=theme['grid'],
+            tickfont=dict(color=theme['text'])
         ),
         height=350,
-        margin=dict(l=60, r=20, t=50, b=70),
+        margin=dict(l=60, r=20, t=50, b=90),
         showlegend=True,
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.15,
+            y=-0.25,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(color=theme['text'])
         ),
-        plot_bgcolor='white',
+        plot_bgcolor=theme['bg'],
+        paper_bgcolor=theme['bg'],
+        font=dict(color=theme['text']),
         bargap=0.05
     )
 
