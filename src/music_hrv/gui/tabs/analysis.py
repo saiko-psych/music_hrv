@@ -744,74 +744,46 @@ def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
     if recording_duration_sec:
         duration_display = f" | {recording_duration_sec/60:.1f} min"
 
-    html = f"""
-    <div style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding:20px; border-radius:12px; color:white; margin-bottom:20px;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin:0 0 15px 0; font-size:18px; font-weight:600;">
-            📊 HRV Analysis Summary
-            <span style="font-size:13px; font-weight:normal; opacity:0.9;">({n_beats} beats{duration_display})</span>
-        </h3>
-
-        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;">
-            <!-- RMSSD -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{rmssd:.1f}</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">RMSSD (ms)</div>
-                <div style="font-size:10px; color:{rmssd_color}; background:white;
-                            padding:3px 8px; border-radius:4px; display:inline-block;">
-                    {rmssd_interp}
-                </div>
-                <div style="font-size:9px; opacity:0.6; margin-top:4px;">Ref: {rmssd_ref['normal']} ms (mean)</div>
-            </div>
-
-            <!-- SDNN -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{sdnn:.1f}</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">SDNN (ms)</div>
-                <div style="font-size:10px; color:{sdnn_color}; background:white;
-                            padding:3px 8px; border-radius:4px; display:inline-block;">
-                    {sdnn_interp}
-                </div>
-                <div style="font-size:9px; opacity:0.6; margin-top:4px;">Overall variability</div>
-            </div>
-
-            <!-- pNN50 -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{pnn50:.1f}%</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">pNN50</div>
-                <div style="font-size:10px; opacity:0.7; margin-top:4px;">% successive RR diff &gt;50ms</div>
-            </div>
-
-            <!-- LF Power -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{lf:.0f}</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF Power (ms²)</div>
-                <div style="font-size:10px; opacity:0.7;">0.04–0.15 Hz</div>
-            </div>
-
-            <!-- HF Power -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{hf:.0f}</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">HF Power (ms²)</div>
-                <div style="font-size:10px; opacity:0.7;">0.15–0.4 Hz (vagal)</div>
-            </div>
-
-            <!-- LF/HF Ratio -->
-            <div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
-                <div style="font-size:28px; font-weight:bold;">{lf_hf:.2f}</div>
-                <div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF/HF Ratio</div>
-                <div style="font-size:10px; color:{lfhf_color}; background:white;
-                            padding:3px 8px; border-radius:4px; display:inline-block;">
-                    {lfhf_interp}
-                </div>
-            </div>
-        </div>
-
-        {artifact_html}
-        {warnings_html}
-    </div>
-    """
+    # Build HTML without comments (Streamlit can have issues with HTML comments)
+    html = f"""<div style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding:20px; border-radius:12px; color:white; margin-bottom:20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+<h3 style="margin:0 0 15px 0; font-size:18px; font-weight:600;">📊 HRV Analysis Summary <span style="font-size:13px; font-weight:normal; opacity:0.9;">({n_beats} beats{duration_display})</span></h3>
+<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;">
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{rmssd:.1f}</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">RMSSD (ms)</div>
+<div style="font-size:10px; color:{rmssd_color}; background:white; padding:3px 8px; border-radius:4px; display:inline-block;">{rmssd_interp}</div>
+<div style="font-size:9px; opacity:0.6; margin-top:4px;">Ref: {rmssd_ref['normal']} ms (mean)</div>
+</div>
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{sdnn:.1f}</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">SDNN (ms)</div>
+<div style="font-size:10px; color:{sdnn_color}; background:white; padding:3px 8px; border-radius:4px; display:inline-block;">{sdnn_interp}</div>
+<div style="font-size:9px; opacity:0.6; margin-top:4px;">Overall variability</div>
+</div>
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{pnn50:.1f}%</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">pNN50</div>
+<div style="font-size:10px; opacity:0.7; margin-top:4px;">% successive RR diff &gt;50ms</div>
+</div>
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{lf:.0f}</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF Power (ms²)</div>
+<div style="font-size:10px; opacity:0.7;">0.04–0.15 Hz</div>
+</div>
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{hf:.0f}</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">HF Power (ms²)</div>
+<div style="font-size:10px; opacity:0.7;">0.15–0.4 Hz (vagal)</div>
+</div>
+<div style="background:rgba(255,255,255,0.15); padding:14px; border-radius:8px;">
+<div style="font-size:28px; font-weight:bold;">{lf_hf:.2f}</div>
+<div style="font-size:12px; opacity:0.9; margin-bottom:4px;">LF/HF Ratio</div>
+<div style="font-size:10px; color:{lfhf_color}; background:white; padding:3px 8px; border-radius:4px; display:inline-block;">{lfhf_interp}</div>
+</div>
+</div>
+{artifact_html}
+{warnings_html}
+</div>"""
     return html
 
 
