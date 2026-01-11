@@ -2537,13 +2537,7 @@ def render_settings_panel():
                     var savedTheme = window.parent.localStorage.getItem('music-hrv-theme') || 'light';
                     updatePlotlyTheme(savedTheme);
                 }, 100);
-
-                // Also watch for new charts being added (Streamlit rerenders)
-                var observer = new MutationObserver(function(mutations) {
-                    var savedTheme = window.parent.localStorage.getItem('music-hrv-theme') || 'light';
-                    setTimeout(function() { updatePlotlyTheme(savedTheme); }, 50);
-                });
-                observer.observe(parentDoc.body, { childList: true, subtree: true });
+                // Note: MutationObserver for Plotly updates is in apply_custom_css() - no need to duplicate
             })();
         </script>
         <div class="theme-toggle-container">
