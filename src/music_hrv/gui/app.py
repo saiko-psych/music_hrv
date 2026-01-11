@@ -1586,8 +1586,10 @@ if "data_dir" not in st.session_state:
         st.session_state.data_dir = saved_folder if saved_folder else None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
-    # Auto-load data in test mode
-    if TEST_MODE and st.session_state.data_dir:
+    # Auto-load data in test mode OR if auto_load setting is enabled
+    auto_load_enabled = st.session_state.app_settings.get("auto_load", False)
+    should_auto_load = (TEST_MODE or auto_load_enabled) and st.session_state.data_dir
+    if should_auto_load:
         from music_hrv.gui.shared import cached_load_hrv_logger_preview
         config_dict = {"rr_min_ms": 200, "rr_max_ms": 2000, "sudden_change_pct": 100}
         try:
@@ -2983,6 +2985,12 @@ def render_settings_panel():
         placeholder="Leave empty for file picker",
         label_visibility="collapsed"
     )
+    new_auto_load = st.checkbox(
+        "Auto-load on startup",
+        value=settings.get("auto_load", False),
+        key="settings_auto_load",
+        help="Automatically load data from the default folder when the app starts"
+    )
 
     st.caption("**Plot Defaults**")
     new_resolution = st.slider(
@@ -3019,6 +3027,7 @@ def render_settings_panel():
     if st.button("Save Settings", key="save_settings_btn", use_container_width=True):
         new_settings = {
             "data_folder": new_folder,
+            "auto_load": new_auto_load,
             "plot_resolution": new_resolution,
             "plot_options": {
                 "show_events": new_show_events,
