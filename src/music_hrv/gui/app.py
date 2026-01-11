@@ -119,6 +119,21 @@ def get_current_theme_colors():
         }
 
 
+def get_plot_colors():
+    """Get custom plot colors from settings.
+
+    Returns dict with colors for RR line, artifacts, etc.
+    """
+    settings = st.session_state.get("app_settings", {})
+    plot_opts = settings.get("plot_options", {})
+    colors = plot_opts.get("colors", {})
+
+    return {
+        'line': colors.get("line", "#2E86AB"),  # Default: accent blue
+        'artifact': colors.get("artifact", "#FF6B6B"),  # Default: red
+    }
+
+
 # Page configuration
 st.set_page_config(
     page_title="Music HRV Toolkit" + (" [TEST MODE]" if TEST_MODE else ""),
@@ -3023,6 +3038,24 @@ def render_settings_panel():
         new_show_artifacts = st.checkbox("Artifacts", value=plot_opts.get("show_artifacts", False), key="settings_show_artifacts")
         new_show_variability = st.checkbox("Variability", value=plot_opts.get("show_variability", False), key="settings_show_variability")
 
+    st.caption("**Plot Colors**")
+    plot_colors = plot_opts.get("colors", {})
+    col1, col2 = st.columns(2)
+    with col1:
+        new_line_color = st.color_picker(
+            "RR Line",
+            value=plot_colors.get("line", "#2E86AB"),
+            key="settings_line_color",
+            help="Color for RR interval line"
+        )
+    with col2:
+        new_artifact_color = st.color_picker(
+            "Artifacts",
+            value=plot_colors.get("artifact", "#FF6B6B"),
+            key="settings_artifact_color",
+            help="Color for flagged/artifact intervals"
+        )
+
     # Save button
     if st.button("Save Settings", key="save_settings_btn", use_container_width=True):
         new_settings = {
@@ -3038,6 +3071,10 @@ def render_settings_panel():
                 "show_variability": new_show_variability,
                 "show_gaps": new_show_gaps,
                 "gap_threshold": new_gap_threshold,
+                "colors": {
+                    "line": new_line_color,
+                    "artifact": new_artifact_color,
+                },
             }
         }
         save_settings(new_settings)
@@ -3136,10 +3173,15 @@ def render_rr_plot_fragment(participant_id: str):
     # Build figure
     fig = go.Figure()
 
+    # Get custom plot colors from settings
+    plot_colors = get_plot_colors()
+    line_color = plot_colors['line']
+    artifact_color = plot_colors['artifact']
+
     # Check if we have flags (VNS data with flagged intervals)
     flags = plot_data.get('flags')
     if flags:
-        # VNS data: Split into valid (blue) and flagged (red) intervals
+        # VNS data: Split into valid and flagged intervals
         timestamps = plot_data['timestamps']
         rr_values = plot_data['rr_values']
 
@@ -3160,40 +3202,40 @@ def render_rr_plot_fragment(participant_id: str):
         if n_flagged > 0:
             flagged_time_ms = sum(flagged_rr)
             st.warning(f"**{n_flagged} intervals flagged** ({n_flagged/n_total*100:.1f}%) - "
-                      f"shown in RED, excluded from HRV analysis. "
+                      f"shown in artifact color, excluded from HRV analysis. "
                       f"Total flagged time: {flagged_time_ms/1000:.1f}s")
 
-        # Valid intervals in blue (connected with lines)
+        # Valid intervals (connected with lines)
         if good_ts:
             fig.add_trace(ScatterType(
                 x=good_ts,
                 y=good_rr,
                 mode='markers+lines',
                 name='RR Intervals (valid)',
-                marker=dict(size=3, color='blue'),
-                line=dict(width=1, color='blue'),
+                marker=dict(size=3, color=line_color),
+                line=dict(width=1, color=line_color),
                 hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
             ))
 
-        # Flagged intervals in red (markers only, no lines to show discontinuity)
+        # Flagged intervals (markers only, no lines to show discontinuity)
         if flagged_ts:
             fig.add_trace(ScatterType(
                 x=flagged_ts,
                 y=flagged_rr,
                 mode='markers',
                 name='RR Intervals (flagged)',
-                marker=dict(size=5, color='red', symbol='x'),
+                marker=dict(size=5, color=artifact_color, symbol='x'),
                 hovertemplate='Time: %{x}<br>RR: %{y} ms (FLAGGED)<extra></extra>'
             ))
     else:
-        # HRV Logger: Already cleaned, show all in blue
+        # HRV Logger: Already cleaned, show all with custom color
         fig.add_trace(ScatterType(
             x=plot_data['timestamps'],
             y=plot_data['rr_values'],
             mode='markers+lines',
             name='RR Intervals',
-            marker=dict(size=3, color='blue'),
-            line=dict(width=1, color='blue'),
+            marker=dict(size=3, color=line_color),
+            line=dict(width=1, color=line_color),
             hovertemplate='Time: %{x}<br>RR: %{y} ms<extra></extra>'
         ))
 
