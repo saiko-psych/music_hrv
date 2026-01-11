@@ -94,7 +94,20 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## TODOs
 
-**Next up:**
+**High Priority:**
+- [ ] Playlist group comparison (compare music types across playlists)
+- [ ] Setup section rework (better saving, design improvements)
+- [ ] Project management / data browsing (R-style projects, data can be anywhere)
+- [ ] Kubios workflow comparison research (ensure quality parity with Kubios)
+- [ ] R-R power spectrum plot
+- [ ] Generalized event system (music events with single border, extensible for other event types)
+- [ ] Speed/loading improvements
+- [ ] Export functionality (CSV/Excel for stats software)
+- [ ] Batch processing / groupwise analysis (fix/finish, add group comparison)
+- [ ] Report generation (PDF/HTML, scientific quality for methods sections)
+
+**Low Priority:**
+- [ ] Keyboard shortcuts for faster workflow
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
 - [ ] Tutorial videos
 
@@ -102,10 +115,9 @@ uv run ruff check src/ tests/ --fix            # Lint
 - Plot zoom doesn't auto-load detail (Streamlit/Plotly limitation - no relayout events)
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
-**Future:**
-- [ ] Playlist group comparison (compare music types across playlists)
-
 **Done:**
+- [x] ~~Light/dark theme switching~~ (v0.6.8)
+- [x] ~~Event canonical mapping persistence fix~~ (v0.6.8)
 - [x] ~~Professional analysis plots with reference values~~ (v0.6.8)
 - [x] ~~Demo data for testing~~ (v0.6.5)
 - [x] ~~VNS event alignment fix~~ (v0.6.5)
