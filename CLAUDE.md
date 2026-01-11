@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.6.7` | **Tests**: 18/18 passing
+**Version**: `v0.6.8` | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -95,7 +95,6 @@ uv run ruff check src/ tests/ --fix            # Lint
 ## TODOs
 
 **Next up:**
-- [ ] Analysis plots refinement (WIP - needs more work)
 - [ ] Standalone app (no Python required) - PyInstaller/Nuitka
 - [ ] Tutorial videos
 
@@ -107,6 +106,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 - [ ] Playlist group comparison (compare music types across playlists)
 
 **Done:**
+- [x] ~~Professional analysis plots with reference values~~ (v0.6.8)
 - [x] ~~Demo data for testing~~ (v0.6.5)
 - [x] ~~VNS event alignment fix~~ (v0.6.5)
 - [x] ~~Tachogram plot naming~~ (v0.6.5)

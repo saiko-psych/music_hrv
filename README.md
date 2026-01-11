@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.6.7-green.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.6.8-green.svg)](pyproject.toml)
 [![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg)](tests/)
 [![NeuroKit2](https://img.shields.io/badge/powered%20by-NeuroKit2-orange.svg)](https://neuropsychology.github.io/NeuroKit/)
 
@@ -315,7 +315,8 @@ uv run ruff check src/ tests/ --fix
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| **v0.6.7** | 2026-01 | Processed folder for events, --test-mode flag, Analysis tab fixes |
+| **v0.6.8** | 2026-01 | Professional analysis plots with reference values, data quality warnings |
+| v0.6.7 | 2026-01 | Processed folder for events, --test-mode flag, Analysis tab fixes |
 | v0.6.6 | 2025-12 | Settings panel, plot resolution slider, performance fixes |
 | v0.6.5 | 2025-12 | Demo data, VNS event alignment fix, tachogram naming |
 | v0.6.4 | 2025-12 | Multiple end events, VNS timestamp parsing |

@@ -4,6 +4,59 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Session 2026-01-11 (continued): Professional Analysis Plots
+
+### Version Tag: `v0.6.8`
+
+### Improvements Made:
+
+#### 1. HRV Reference Values
+Added scientifically-backed reference values for HRV interpretation:
+- RMSSD: low (<20 ms), normal (~42 ms), high (>70 ms)
+- SDNN: low (<50 ms), normal (~141 ms for 24h)
+- LF/HF: <0.5 (parasympathetic), 0.5-3.0 (balanced), >3.0 (sympathetic)
+
+References: Shaffer & Ginsberg (2017), Nunan et al. (2010)
+
+#### 2. Data Quality Warnings
+Added automatic warnings when data is insufficient:
+- Low beat count (<100 for time domain)
+- Insufficient beats for frequency domain (<300)
+- Short recording duration (<2 min)
+
+```python
+MIN_BEATS_TIME_DOMAIN = 100
+MIN_BEATS_FREQUENCY_DOMAIN = 300
+MIN_DURATION_FREQUENCY_DOMAIN_SEC = 120
+```
+
+#### 3. Enhanced Poincaré Plot
+- Added SD1 line (red) showing short-term variability axis
+- Added SD2 line (blue) showing long-term variability axis
+- Clearer legend with actual SD1/SD2 values
+
+#### 4. Enhanced Frequency Domain Plot
+- Band labels now show power values and percentages (e.g., "LF (1234 ms², 45%)")
+- Added vertical boundary lines at 0.04, 0.15, 0.4 Hz
+- Clearer x-axis tick marks at band boundaries
+
+#### 5. Improved Metrics Card
+- Color-coded interpretations based on reference values
+- Recording duration display
+- Reference values shown for RMSSD
+- Better artifact rate display with color coding (green/yellow/red)
+
+### Files Modified:
+- `src/music_hrv/gui/tabs/analysis.py` - All plot improvements (+229 lines)
+
+### Workflow Verified:
+1. Load demo data (12 participants)
+2. Save events to processed folder (data/demo/processed/0001CTRL_events.yml)
+3. Run HRV analysis with plots (Tachogram, Poincaré, Frequency, HR Distribution)
+4. All metrics display correctly with interpretations
+
+---
+
 ## Session 2026-01-11: Analysis Tab Fixes & Processed Folder Storage
 
 ### Version Tag: `v0.6.7`
