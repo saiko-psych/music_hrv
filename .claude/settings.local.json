@@ -37,7 +37,9 @@
       "Bash(powershell -Command \"Measure-Command { uv run python -c ''from music_hrv.gui.app import *'' 2>&1 } | Select-Object -Property TotalSeconds\")",
       "Bash(powershell -Command:*)",
       "Bash(pkill:*)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

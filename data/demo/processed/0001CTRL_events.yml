@@ -1,0 +1,35 @@
+events:
+- canonical: rest_pre_start
+  first_timestamp: '2025-03-15T11:03:00+00:00'
+  last_timestamp: '2025-03-15T11:03:00+00:00'
+  raw_label: Start Ruhe
+- canonical: rest_pre_end
+  first_timestamp: '2025-03-15T11:08:00+00:00'
+  last_timestamp: '2025-03-15T12:48:00+00:00'
+  raw_label: Ruhe Ende
+- canonical: measurement_start
+  first_timestamp: '2025-03-15T11:08:30+00:00'
+  last_timestamp: '2025-03-15T11:08:30+00:00'
+  raw_label: Messung Start
+- canonical: pause_start
+  first_timestamp: '2025-03-15T11:53:00+00:00'
+  last_timestamp: '2025-03-15T11:53:00+00:00'
+  raw_label: Pause Start
+- canonical: pause_end
+  first_timestamp: '2025-03-15T11:58:00+00:00'
+  last_timestamp: '2025-03-15T11:58:00+00:00'
+  raw_label: Pause Ende
+- canonical: rest_post_start
+  first_timestamp: '2025-03-15T12:43:00+00:00'
+  last_timestamp: '2025-03-15T12:43:00+00:00'
+  raw_label: Ruhe Start
+- canonical: measurement_end
+  first_timestamp: '2025-03-15T12:48:30+00:00'
+  last_timestamp: '2025-03-15T12:48:30+00:00'
+  raw_label: Messung Ende
+exclusion_zones: []
+format_version: '1.0'
+manual: []
+music_events: []
+participant_id: 0001CTRL
+source_type: music_hrv_toolkit

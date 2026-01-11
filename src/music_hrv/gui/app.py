@@ -153,6 +153,25 @@ if "data_dir" not in st.session_state:
         st.session_state.data_dir = saved_folder if saved_folder else None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
+    # Auto-load data in test mode
+    if TEST_MODE and st.session_state.data_dir:
+        from music_hrv.gui.shared import cached_load_hrv_logger_preview
+        config_dict = {"rr_min_ms": 200, "rr_max_ms": 2000, "sudden_change_pct": 100}
+        try:
+            summaries = cached_load_hrv_logger_preview(
+                st.session_state.data_dir,
+                pattern=DEFAULT_ID_PATTERN,
+                config_dict=config_dict,
+                gui_events_dict={},
+            )
+            st.session_state.summaries = summaries
+            # Auto-assign to Default group
+            for s in summaries:
+                if "participant_groups" not in st.session_state:
+                    st.session_state.participant_groups = {}
+                st.session_state.participant_groups[s.participant_id] = "Default"
+        except Exception:
+            pass  # Silently fail - user can load manually
 if "participant_events" not in st.session_state:
     st.session_state.participant_events = {}
 if "id_pattern" not in st.session_state:

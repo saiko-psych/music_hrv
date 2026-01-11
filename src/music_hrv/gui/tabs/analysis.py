@@ -1503,7 +1503,11 @@ def _display_single_participant_results(selected_participant: str):
                     hrv_results, n_beats, artifact_info,
                     recording_duration_sec=recording_duration_sec
                 )
-                st.markdown(metrics_card, unsafe_allow_html=True)
+                # Use st.html if available (Streamlit 1.33+), otherwise fall back to markdown
+                if hasattr(st, 'html'):
+                    st.html(metrics_card)
+                else:
+                    st.markdown(metrics_card, unsafe_allow_html=True)
 
             # Visualization tabs for professional plots
             if PLOTLY_AVAILABLE and len(rr_intervals) > 10:
