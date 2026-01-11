@@ -596,6 +596,14 @@ def apply_custom_css():
         filter: invert(0.93) hue-rotate(180deg);
     }
 
+    /* Dark mode: invert Plotly charts (rendered with light theme by Python) */
+    :root.dark-theme .stPlotlyChart,
+    :root.dark-theme [data-testid="stPlotlyChart"],
+    :root.dark-theme .js-plotly-plot,
+    :root.dark-theme .stCustomComponentV1 {
+        filter: invert(0.93) hue-rotate(180deg);
+    }
+
     /* ============================================
        ALERTS & MESSAGES
        ============================================ */
@@ -992,6 +1000,47 @@ def apply_custom_css():
         border-left: 3px solid var(--accent-primary) !important;
         padding-left: 1rem !important;
         color: var(--text-secondary) !important;
+    }
+
+    /* ============================================
+       DROPDOWN MENUS (Selectbox, Multiselect)
+       ============================================ */
+
+    /* Dropdown menu container (popover) */
+    [data-baseweb="popover"],
+    [data-baseweb="menu"],
+    [data-baseweb="select"] [data-baseweb="popover"] {
+        background-color: var(--bg-secondary) !important;
+        border: 1px solid var(--border-light) !important;
+    }
+
+    /* Dropdown menu list */
+    [data-baseweb="menu"] ul,
+    [data-baseweb="popover"] ul {
+        background-color: var(--bg-secondary) !important;
+    }
+
+    /* Dropdown menu items */
+    [data-baseweb="menu"] li,
+    [data-baseweb="popover"] li,
+    [role="option"] {
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }
+
+    /* Dropdown menu item hover */
+    [data-baseweb="menu"] li:hover,
+    [data-baseweb="popover"] li:hover,
+    [role="option"]:hover,
+    [data-highlighted="true"] {
+        background-color: var(--bg-primary) !important;
+    }
+
+    /* Selected dropdown item */
+    [aria-selected="true"],
+    [data-baseweb="menu"] li[aria-selected="true"] {
+        background-color: var(--accent-primary) !important;
+        color: white !important;
     }
 
     /* ============================================
@@ -3906,6 +3955,7 @@ def main():
             else:
                 if st.button(page_id, key=f"nav_{page_id}", width='stretch', type="secondary"):
                     st.session_state.active_page = page_id
+                    st.session_state._scroll_to_top = True  # Scroll to top on tab switch
                     st.rerun()
 
         st.markdown("---")
@@ -3934,6 +3984,27 @@ def main():
     # Get selected page for content rendering
     selected_page = st.session_state.active_page
 
+    # Scroll to top when switching tabs (applies to all pages)
+    if st.session_state.get("_scroll_to_top", False):
+        st.session_state._scroll_to_top = False
+        st.components.v1.html(
+            """
+            <script>
+                // Try multiple selectors for different Streamlit versions
+                var mainSection = window.parent.document.querySelector('[data-testid="stMainBlockContainer"]');
+                if (!mainSection) mainSection = window.parent.document.querySelector('section.main');
+                if (!mainSection) mainSection = window.parent.document.querySelector('.main');
+                if (mainSection) {
+                    mainSection.scrollTo({top: 0, behavior: 'instant'});
+                }
+                // Also try scrolling the whole document
+                window.parent.document.documentElement.scrollTo({top: 0, behavior: 'instant'});
+                window.parent.scrollTo({top: 0, behavior: 'instant'});
+            </script>
+            """,
+            height=0
+        )
+
     # ================== PAGE: DATA ==================
     if selected_page == "Data":
         render_data_tab()
@@ -3942,27 +4013,6 @@ def main():
     # ================== TAB: PARTICIPANTS ==================
     elif selected_page == "Participants":
         st.header("Participant Details")
-
-        # Scroll to top if triggered by bottom navigation buttons
-        if st.session_state.get("_scroll_to_top", False):
-            st.session_state._scroll_to_top = False
-            st.components.v1.html(
-                """
-                <script>
-                    // Try multiple selectors for different Streamlit versions
-                    var mainSection = window.parent.document.querySelector('[data-testid="stMainBlockContainer"]');
-                    if (!mainSection) mainSection = window.parent.document.querySelector('section.main');
-                    if (!mainSection) mainSection = window.parent.document.querySelector('.main');
-                    if (mainSection) {
-                        mainSection.scrollTo({top: 0, behavior: 'instant'});
-                    }
-                    // Also try scrolling the whole document
-                    window.parent.document.documentElement.scrollTo({top: 0, behavior: 'instant'});
-                    window.parent.scrollTo({top: 0, behavior: 'instant'});
-                </script>
-                """,
-                height=0
-            )
 
         if not st.session_state.summaries:
             st.info("Load data in the **Data** tab first to view participant details.")
