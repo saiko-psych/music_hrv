@@ -4,6 +4,238 @@ This file contains detailed session notes and implementation history. For quick 
 
 ---
 
+## Development Style Guide for Music HRV App
+
+This section documents coding patterns, styling guidelines, and best practices for future development.
+
+### Theme & Color System
+
+**Theme is controlled via `.streamlit/config.toml`** - NOT CSS injection.
+
+```toml
+# Light theme (default - professional/scientific)
+[theme]
+primaryColor = "#2E86AB"           # Blue accent
+backgroundColor = "#FFFFFF"         # White background
+secondaryBackgroundColor = "#F0F2F6" # Light gray (sidebar, expanders)
+textColor = "#31333F"               # Dark gray text
+```
+
+**To switch to dark theme**: Edit config.toml, comment light section, uncomment dark section.
+
+**Color Palette Guidelines:**
+- **Primary accent**: `#2E86AB` (professional blue) - buttons, links, highlights
+- **Success/Good**: `#28A745` or `#92C88A` (green)
+- **Warning**: `#FFC107` (amber)
+- **Error/Danger**: `#DC3545` or `#FF6B6B` (red)
+- **Neutral grays**: `#31333F` (text), `#6C757D` (secondary), `#F0F2F6` (background)
+
+**NEVER use:**
+- Purple gradients (user preference)
+- Hardcoded dark colors in light mode or vice versa
+- CSS !important overrides for theme colors (breaks theme switching)
+
+### Streamlit Component Guidelines
+
+**Always use native Streamlit components** for theme compatibility:
+- `st.metric()` for key values with delta indicators
+- `st.columns()` for layout grids
+- `st.expander()` for collapsible sections
+- `st.tabs()` for tabbed content
+- `st.progress()` for progress bars
+- `st.divider()` for section separation
+
+**Avoid custom HTML/CSS for:**
+- Background colors
+- Text colors
+- Layout structure
+- Card-style containers
+
+**Custom CSS is OK for:**
+- Border radius (`border-radius: 8px`)
+- Padding/margins
+- Font weights
+- Subtle shadows (use sparingly)
+
+### HRV Metrics Display Pattern
+
+```python
+# Standard metrics display - use native components
+st.markdown("##### Section Title")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("RMSSD", f"{value:.1f} ms",
+              delta="Normal" if in_range else "Low",
+              delta_color="normal" if in_range else "inverse",
+              help="Tooltip with reference range")
+```
+
+### Reference Values (Scientific)
+
+Always include reference ranges from peer-reviewed sources:
+```python
+HRV_REFERENCE_VALUES = {
+    "RMSSD": {"low": 20, "normal": 42, "high": 70, "unit": "ms"},
+    "SDNN": {"low": 50, "normal": 141, "high": 200, "unit": "ms"},
+    # Source: Shaffer & Ginsberg (2017), Nunan et al. (2010)
+}
+```
+
+### Data Classes vs Dicts
+
+**CleaningConfig** is a dataclass, not a dict. When accessing:
+```python
+# WRONG - causes AttributeError
+config.copy()
+
+# CORRECT - handle both types
+if isinstance(config, dict):
+    self.config = config.copy()
+elif hasattr(config, '__dict__'):
+    self.config = {
+        "rr_min_ms": getattr(config, 'rr_min_ms', 200),
+        "rr_max_ms": getattr(config, 'rr_max_ms', 2000),
+    }
+```
+
+### Plot Styling (Plotly)
+
+```python
+PLOT_COLORS = {
+    "primary": "#2E86AB",      # Main data
+    "secondary": "#A23B72",    # Secondary data
+    "accent": "#F18F01",       # Highlights
+    "bands": ["#E8F4F8", "#D1E9F0", "#B9DEE8"],  # Background bands
+}
+
+# Standard plot layout
+fig.update_layout(
+    template="plotly_white",  # Clean white background
+    font=dict(family="Arial, sans-serif", size=12),
+    margin=dict(l=60, r=40, t=50, b=50),
+    showlegend=True,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+)
+```
+
+### Session State Patterns
+
+```python
+# Always check before accessing
+if "key" not in st.session_state:
+    st.session_state.key = default_value
+
+# Use .get() for optional values
+value = st.session_state.get("key", default)
+```
+
+### Error Handling
+
+```python
+# Graceful degradation
+try:
+    result = expensive_operation()
+except Exception as e:
+    st.warning(f"Could not complete: {str(e)}")
+    result = fallback_value
+```
+
+### File Organization
+
+- `app.py` - Main app, page routing, session state init (~lean, <500 lines ideal)
+- `tabs/*.py` - Individual tab logic
+- `shared.py` - Utilities, caching, helpers
+- `persistence.py` - YAML storage
+- `help_text.py` - Documentation strings
+
+---
+
+## Chrome Extension Testing Guide for Music HRV App
+
+This section documents patterns for testing the Streamlit app via Claude's Chrome browser extension.
+
+### App Structure & Navigation
+
+**Sidebar Navigation** (left side):
+- `Data` button - Import data, select sources
+- `Participants` button - View individual participant plots
+- `Setup` button - Configure events, groups, sections
+- `Analysis` button - Run HRV analysis, view results
+
+**Settings** (sidebar bottom):
+- Expander "⚙️ Settings"
+- Contains: Theme selector, Data folder, Plot resolution, Plot options
+
+### Key UI Elements by Page
+
+#### Data Tab
+- "Load Selected Sources" button - Loads data from selected folder
+- File type checkboxes: "HRV Logger (CSV)", "VNS Analyse (TXT)"
+- Participant overview table
+
+#### Participants Tab
+- Participant dropdown selector at top
+- "Previous" / "Next" buttons for navigation
+- Plot options row: "Show events", "Show exclusions", "Show artifacts", etc.
+- Mode selector: "View Events" / "Add Events" / "Add Exclusions"
+
+#### Analysis Tab
+- Participant multiselect dropdown
+- Section multiselect dropdown
+- "Apply artifact correction" checkbox
+- "Analyze HRV" button
+- Results in expandable sections with tabs: Tachogram, Poincaré, Frequency, HR Distribution, Data
+- "Analysis Documentation" expander at bottom with markdown export
+
+### Common Interactions
+
+**To run HRV analysis:**
+1. Navigate to Analysis tab (click "Analysis" in sidebar)
+2. Select participant from dropdown
+3. Select section(s) from dropdown
+4. Click "Analyze HRV" button
+5. View results in expandable sections
+
+**To change theme:**
+1. Click "⚙️ Settings" expander in sidebar
+2. Select "System", "Light", or "Dark" radio buttons
+3. Theme applies immediately on selection
+
+**To export documentation:**
+1. Run analysis first
+2. Scroll to bottom of results
+3. Expand "📋 Analysis Documentation"
+4. Click "📥 Download Report (.md)"
+
+### Streamlit-Specific Patterns
+
+- **Buttons**: Use `find` with text like "Analyze HRV", "Save", "Load"
+- **Dropdowns**: Look for `combobox` in accessibility tree
+- **Checkboxes**: Look for `checkbox` role
+- **Expanders**: Click on header text to expand/collapse
+- **Tabs**: Click on tab labels directly (📈 Tachogram, 🎯 Poincaré, etc.)
+- **Radio buttons**: Click directly on option labels
+
+### Test Mode
+
+When app runs with `--test-mode`:
+- Title shows "[TEST MODE]"
+- Auto-loads demo data from `data/demo/hrv_logger`
+- Ready for immediate analysis testing
+
+### Known Extension Issues
+
+- **Screenshot disconnects**: The extension sometimes disconnects during screenshot capture. Other operations (wait, navigate, find) usually still work.
+- **Workaround**: Use `read_page` or `get_page_text` instead of screenshots when possible
+- **Tab ID persistence**: After navigation, wait 2-3 seconds before interacting
+
+### Port Management
+
+Streamlit typically runs on ports 8501-8510. Each new instance increments the port.
+Check background task output for actual port: `Local URL: http://localhost:850X`
+
+---
+
 ## Session 2026-01-11 (continued): Professional Analysis Plots
 
 ### Version Tag: `v0.6.8`

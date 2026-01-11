@@ -1,0 +1,16 @@
+# Streamlit configuration for Music HRV Toolkit
+
+[theme]
+# Light theme only - dark mode handled by CSS injection
+primaryColor = "#2E86AB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#31333F"
+font = "sans serif"
+
+[server]
+headless = true
+port = 8501
+
+[browser]
+gatherUsageStats = false

@@ -60,7 +60,7 @@ def analyze_folder_structure(root_path: Path) -> dict:
         return {"sources": [], "tree": "Directory not found"}
 
     sources = []
-    tree_lines = [f"📁 {root_path.name}/"]
+    tree_lines = [f"{root_path.name}/"]
 
     # Check immediate subdirectories
     subdirs = sorted([d for d in root_path.iterdir() if d.is_dir()])
@@ -86,12 +86,12 @@ def analyze_folder_structure(root_path: Path) -> dict:
             app_info["file_count"] = len(all_files)
             sources.append(app_info)
 
-            tree_lines.append(f"├── 📂 {subdir.name}/ ({len(all_files)} files) → {app_info['name']}")
+            tree_lines.append(f"├── {subdir.name}/ ({len(all_files)} files) → {app_info['name']}")
 
             # Show first few files as preview
             for i, f in enumerate(sorted(all_files)[:3]):
                 prefix = "│   ├──" if i < min(2, len(all_files) - 1) else "│   └──"
-                tree_lines.append(f"{prefix} 📄 {f.name}")
+                tree_lines.append(f"{prefix} {f.name}")
             if len(all_files) > 3:
                 tree_lines.append(f"│   └── ... and {len(all_files) - 3} more files")
         else:
@@ -99,9 +99,9 @@ def analyze_folder_structure(root_path: Path) -> dict:
             all_files = list(subdir.glob("*.*"))
             data_files = [f for f in all_files if f.suffix.lower() in ('.csv', '.txt')]
             if data_files:
-                tree_lines.append(f"├── 📂 {subdir.name}/ ({len(data_files)} data files) → Unknown format")
+                tree_lines.append(f"├── {subdir.name}/ ({len(data_files)} data files) → Unknown format")
             else:
-                tree_lines.append(f"├── 📂 {subdir.name}/")
+                tree_lines.append(f"├── {subdir.name}/")
 
     # Also check if root itself contains data files (flat structure)
     root_csv = list(root_path.glob("*.csv"))
@@ -131,7 +131,7 @@ def analyze_folder_structure(root_path: Path) -> dict:
         sources.append(app_info)
 
         for i, f in enumerate(sorted(root_files)[:5]):
-            tree_lines.append(f"├── 📄 {f.name}")
+            tree_lines.append(f"├── {f.name}")
         if len(root_files) > 5:
             tree_lines.append(f"└── ... and {len(root_files) - 5} more files")
 
@@ -198,7 +198,7 @@ def render_data_tab():
         """)
 
     # Data correction workflow help
-    with st.expander("📖 Data Correction Workflow & Best Practices", expanded=False):
+    with st.expander("Data Correction Workflow & Best Practices", expanded=False):
         st.markdown(DATA_CORRECTION_WORKFLOW)
 
     # Import Settings section
@@ -282,7 +282,7 @@ def render_data_tab():
                 on_change=update_cleaning_config,
                 help="100% = disabled. Use NeuroKit2 artifact correction instead."
             )
-            with st.popover("ℹ️ About thresholds"):
+            with st.popover("About thresholds"):
                 st.markdown(CLEANING_THRESHOLDS_HELP)
 
         with col_cfg3:
@@ -426,10 +426,10 @@ def render_data_tab():
 
                             for src in selected_sources:
                                 if src['name'] == "Elite HRV":
-                                    st.write(f"⏭️ Skipping {src['folder']} (Elite HRV not yet supported)")
+                                    st.write(f"Skipping {src['folder']} (Elite HRV not yet supported)")
                                     continue
 
-                                st.write(f"📂 Loading from: {src['folder']} ({src['name']})")
+                                st.write(f"Loading from: {src['folder']} ({src['name']})")
                                 load_path = Path(src["path"])
 
                                 # Use the appropriate loader based on detected app
@@ -579,7 +579,7 @@ def _render_participants_table():
         has_playlist_assigned = bool(playlist_code)
         csv_status = ""
         if has_group_assigned and has_playlist_assigned:
-            csv_status = "✓✓"  # Both
+            csv_status = "**"  # Both
         elif has_group_assigned:
             csv_status = "G"  # Group only
         elif has_playlist_assigned:
@@ -636,7 +636,7 @@ def _render_participants_table():
         column_config={
             "Participant": st.column_config.TextColumn("Participant", disabled=True, width="medium"),
             "CSV": st.column_config.TextColumn("CSV", disabled=True, width="small",
-                help="CSV import status: ✓✓=Both Group & Playlist, G=Group only, P=Playlist only, —=None"),
+                help="CSV import status: **=Both Group & Playlist, G=Group only, P=Playlist only, —=None"),
             "Quality": st.column_config.TextColumn("Quality", disabled=True, width="small",
                 help="Green=Good (<5% artifacts), Yellow=Moderate (5-15%), Red=Poor (>15%)"),
             "Saved": st.column_config.TextColumn("Saved", disabled=True, width="small"),
@@ -737,7 +737,7 @@ def _render_participants_table():
         # Keep expanded if file is uploaded (check before expander renders)
         if st.session_state.get("group_playlist_csv_upload") is not None:
             st.session_state.csv_import_expanded = True
-        with st.expander("📥 Import Group/Playlist from CSV", expanded=st.session_state.csv_import_expanded):
+        with st.expander("Import Group/Playlist from CSV", expanded=st.session_state.csv_import_expanded):
             st.markdown("""
             Upload a CSV file to automatically assign groups and playlists.
             1. First define labels for your group/playlist values below
@@ -779,7 +779,7 @@ def _render_participants_table():
                         with gcol1:
                             st.text(f"{gval} → {glabel}")
                         with gcol2:
-                            if st.button("✕", key=f"del_g_{gval}"):
+                            if st.button("X", key=f"del_g_{gval}"):
                                 del st.session_state.csv_group_labels[gval]
                                 st.session_state.csv_import_expanded = True
                                 st.rerun()
@@ -809,7 +809,7 @@ def _render_participants_table():
                         with pcol1:
                             st.text(f"{pval} → {plabel}")
                         with pcol2:
-                            if st.button("✕", key=f"del_p_{pval}"):
+                            if st.button("X", key=f"del_p_{pval}"):
                                 del st.session_state.csv_playlist_labels[pval]
                                 st.session_state.csv_import_expanded = True
                                 st.rerun()
@@ -884,11 +884,11 @@ def _render_participants_table():
 
                         # Show mapping status
                         st.markdown("**Detected mappings:**")
-                        st.write(f"- Participant: `{participant_col}` ✅")
+                        st.write(f"- Participant: `{participant_col}` *")
                         if group_col:
-                            st.write(f"- Group: `{group_col}` {'✅' if has_group else '❌ not found'}")
+                            st.write(f"- Group: `{group_col}` {'*' if has_group else 'not found'}")
                         if playlist_col:
-                            st.write(f"- Playlist: `{playlist_col}` {'✅' if has_playlist else '❌ not found'}")
+                            st.write(f"- Playlist: `{playlist_col}` {'*' if has_playlist else 'not found'}")
 
                         # Show defined labels
                         if st.session_state.csv_group_labels:
@@ -1005,7 +1005,7 @@ def _render_participants_table():
 
 def _render_batch_processing():
     """Render the Batch Processing section for bulk operations."""
-    with st.expander("⚡ Batch Processing", expanded=False):
+    with st.expander("Batch Processing", expanded=False):
         st.markdown("""
         Apply operations to **multiple participants** at once. This saves time when you have
         predefined settings you want to apply consistently across your study.
@@ -1033,7 +1033,7 @@ def _render_batch_processing():
                     help="How often the music changes"
                 )
 
-                if st.button("🎵 Generate for All in Group", key="batch_generate_music"):
+                if st.button("Generate for All in Group", key="batch_generate_music"):
                     # Find participants in this playlist group
                     participants_in_group = [
                         pid for pid, pg in st.session_state.get("participant_playlists", {}).items()
@@ -1157,7 +1157,7 @@ def _render_batch_processing():
                 help="Create variability events for segments exceeding this CV"
             )
 
-            if st.button("🔍 Detect Quality Issues for All", key="batch_detect_quality"):
+            if st.button("Detect Quality Issues for All", key="batch_detect_quality"):
                 progress = st.progress(0)
                 status = st.empty()
                 total_gaps = 0

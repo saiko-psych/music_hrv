@@ -80,9 +80,38 @@ except ImportError:
 # Page configuration
 st.set_page_config(
     page_title="Music HRV Toolkit" + (" [TEST MODE]" if TEST_MODE else ""),
-    page_icon="🧪" if TEST_MODE else "🎵",
+    page_icon="M" if TEST_MODE else "M",
     layout="wide",
 )
+
+
+def apply_custom_css():
+    """Apply custom CSS for professional styling.
+
+    Theme colors are handled by Streamlit's native theming.
+    Light mode: config.toml defaults
+    Dark mode: localStorage override via theme toggle buttons
+    """
+    # Base styling that works with any theme - NO color overrides
+    base_css = """
+    /* Professional styling improvements */
+    [data-testid="stMetric"] { border-radius: 8px; padding: 12px 16px; }
+    [data-testid="stExpander"] details { border-radius: 8px; }
+    [data-testid="stExpander"] summary { font-weight: 500; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 6px 6px 0 0; }
+    .stDataFrame { border-radius: 8px; overflow: hidden; }
+    .stButton button { border-radius: 6px; font-weight: 500; }
+    [data-testid="stAlert"] { border-radius: 8px; }
+    [data-baseweb="select"] { border-radius: 6px; }
+    .stProgress > div > div { border-radius: 4px; }
+    """
+    st.markdown(f"<style>{base_css}</style>", unsafe_allow_html=True)
+
+
+# Apply CSS styling (theme colors handled by Streamlit natively)
+apply_custom_css()
+
 
 # Default canonical events for the Default Group
 DEFAULT_CANONICAL_EVENTS = {
@@ -621,20 +650,20 @@ def cached_build_participant_table(summaries_data: tuple, participant_groups: di
     issues = []
     high_artifact = sum(1 for s in summaries_data if s["artifact_ratio"] > 0.15)
     if high_artifact:
-        issues.append(f"🔴 **{high_artifact}** participant(s) with high artifact rates (>15%)")
+        issues.append(f"[X] **{high_artifact}** participant(s) with high artifact rates (>15%)")
 
     with_duplicates = sum(1 for s in summaries_data if s["duplicate_rr_intervals"] > 0)
     if with_duplicates:
-        issues.append(f"⚠️ **{with_duplicates}** participant(s) with duplicate RR intervals")
+        issues.append(f"**{with_duplicates}** participant(s) with duplicate RR intervals")
 
     with_multi_files = sum(1 for s in summaries_data
                           if s["rr_file_count"] > 1 or s["events_file_count"] > 1)
     if with_multi_files:
-        issues.append(f"📁 **{with_multi_files}** participant(s) with multiple files (merged)")
+        issues.append(f"**{with_multi_files}** participant(s) with multiple files (merged)")
 
     no_events = sum(1 for s in summaries_data if s["events_detected"] == 0)
     if no_events:
-        issues.append(f"❓ **{no_events}** participant(s) with no events detected")
+        issues.append(f"? **{no_events}** participant(s) with no events detected")
 
     # Build participant table data
     participants_data = []
@@ -645,7 +674,7 @@ def cached_build_participant_table(summaries_data: tuple, participant_groups: di
         ev_count = s["events_file_count"]
         files_str = f"{rr_count}RR/{ev_count}Ev"
         if rr_count > 1 or ev_count > 1:
-            files_str = f"⚠️ {files_str}"
+            files_str = f"{files_str}"
 
         quality_badge = get_quality_badge(100, s["artifact_ratio"])
 
@@ -801,7 +830,7 @@ def render_participant_table_fragment():
         return
 
     # Participants overview table
-    st.subheader("📋 Participants Overview")
+    st.subheader("Participants Overview")
 
     # Build group labels dict (group_id -> label)
     group_labels = {gid: gdata.get("label", gid) for gid, gdata in st.session_state.groups.items()}
@@ -832,12 +861,12 @@ def render_participant_table_fragment():
     # Display status summary (pre-computed in cached function)
     if issues:
         with st.container():
-            st.markdown("**⚠️ Issues Detected:**")
+            st.markdown("**Issues Detected:**")
             for issue in issues:
                 st.markdown(f"- {issue}")
             st.markdown("---")
     else:
-        st.success(f"✅ All {total_participants} participants look good! No issues detected.")
+        st.success(f"All {total_participants} participants look good! No issues detected.")
 
     # Cache DataFrame creation (avoid rebuilding on every rerun)
     df_cache_key = f"df_{len(participants_data)}_{participants_data[0]['Participant'] if participants_data else ''}"
@@ -967,7 +996,7 @@ def render_participant_table_fragment():
 
     if high_duplicates:
         st.warning(
-            f"⚠️ **Duplicate RR intervals detected!** "
+            f"**Duplicate RR intervals detected!** "
             f"{len(high_duplicates)} participant(s) have duplicate RR intervals that were removed. "
             f"Check the 'Duplicates' column for details."
         )
@@ -1199,13 +1228,13 @@ def render_participant_table_fragment():
 def show_toast(message, icon="success"):
     """Show a toast notification with auto-dismiss."""
     if icon == "success":
-        st.toast(f"✅ {message}", icon="✅")
+        st.toast(f"{message}", icon="✅")
     elif icon == "info":
-        st.toast(f"ℹ️ {message}", icon="ℹ️")
+        st.toast(f"{message}", icon="ℹ️")
     elif icon == "warning":
-        st.toast(f"⚠️ {message}", icon="⚠️")
+        st.toast(f"{message}", icon="⚠️")
     elif icon == "error":
-        st.toast(f"❌ {message}", icon="❌")
+        st.toast(f"{message}", icon="❌")
     else:
         st.toast(message)
 
@@ -1234,6 +1263,55 @@ def render_settings_panel():
 
     settings = st.session_state.app_settings
     plot_opts = settings.get("plot_options", DEFAULT_SETTINGS["plot_options"])
+
+    # Theme toggle - uses Streamlit's native theming via localStorage
+    st.caption("**Theme**")
+    import streamlit.components.v1 as components
+
+    # JavaScript to switch themes using Streamlit's native localStorage key
+    components.html("""
+        <style>
+            .theme-btn {
+                flex: 1;
+                padding: 0.4rem 0.8rem;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                font-family: inherit;
+            }
+            .light-btn {
+                background: #f0f2f6;
+                border: 1px solid #ccc;
+                color: #31333F;
+            }
+            .dark-btn {
+                background: #262730;
+                border: 1px solid #555;
+                color: #fafafa;
+            }
+            .theme-btn:hover { opacity: 0.8; }
+        </style>
+        <div style="display: flex; gap: 8px;">
+            <button class="theme-btn light-btn" onclick="
+                window.parent.localStorage.removeItem('stActiveTheme-/-v1');
+                window.parent.location.reload();
+            ">Light</button>
+            <button class="theme-btn dark-btn" onclick="
+                var darkTheme = {
+                    name: 'Dark',
+                    themeInput: {
+                        primaryColor: '#2E86AB',
+                        backgroundColor: '#0E1117',
+                        secondaryBackgroundColor: '#262730',
+                        textColor: '#FAFAFA',
+                        base: 'dark'
+                    }
+                };
+                window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(darkTheme));
+                window.parent.location.reload();
+            ">Dark</button>
+        </div>
+    """, height=45)
 
     st.caption("**Default Data Folder**")
     new_folder = st.text_input(
@@ -1276,7 +1354,7 @@ def render_settings_panel():
         new_show_variability = st.checkbox("Variability", value=plot_opts.get("show_variability", False), key="settings_show_variability")
 
     # Save button
-    if st.button("💾 Save Settings", key="save_settings_btn", width='stretch'):
+    if st.button("Save Settings", key="save_settings_btn", use_container_width=True):
         new_settings = {
             "data_folder": new_folder,
             "plot_resolution": new_resolution,
@@ -1293,7 +1371,7 @@ def render_settings_panel():
         }
         save_settings(new_settings)
         st.session_state.app_settings = new_settings
-        st.toast("✅ Settings saved!")
+        st.toast("Settings saved!")
 
 
 @st.fragment
@@ -1368,7 +1446,7 @@ def render_rr_plot_fragment(participant_id: str):
             help="Threshold for detecting gaps in data",
             disabled=is_vns_data
         )
-        with st.popover("ℹ️ Help"):
+        with st.popover("Help"):
             if is_vns_data:
                 st.markdown(VNS_DATA_HELP)
             else:
@@ -1404,7 +1482,7 @@ def render_rr_plot_fragment(participant_id: str):
         n_total = len(timestamps)
         if n_flagged > 0:
             flagged_time_ms = sum(flagged_rr)
-            st.warning(f"⚠️ **{n_flagged} intervals flagged** ({n_flagged/n_total*100:.1f}%) - "
+            st.warning(f"**{n_flagged} intervals flagged** ({n_flagged/n_total*100:.1f}%) - "
                       f"shown in RED, excluded from HRV analysis. "
                       f"Total flagged time: {flagged_time_ms/1000:.1f}s")
 
@@ -1517,7 +1595,7 @@ def render_rr_plot_fragment(participant_id: str):
         if artifact_result and artifact_result["total_artifacts"] > 0:
             # Show artifact summary
             by_type = artifact_result["by_type"]
-            st.info(f"🔍 **{artifact_result['total_artifacts']} artifacts detected** "
+            st.info(f"**{artifact_result['total_artifacts']} artifacts detected** "
                    f"({artifact_result['artifact_ratio']*100:.1f}%) - "
                    f"Ectopic: {by_type.get('ectopic', 0)}, "
                    f"Missed: {by_type.get('missed', 0)}, "
@@ -1567,7 +1645,7 @@ def render_rr_plot_fragment(participant_id: str):
         if total_gaps > MAX_GAPS_SHOWN:
             # Show largest gaps only when there are too many
             gaps_to_show = sorted(gaps_to_show, key=lambda g: g["duration_s"], reverse=True)[:MAX_GAPS_SHOWN]
-            st.caption(f"⚠️ Showing {MAX_GAPS_SHOWN} largest gaps of {total_gaps} total (raise threshold to reduce)")
+            st.caption(f"Showing {MAX_GAPS_SHOWN} largest gaps of {total_gaps} total (raise threshold to reduce)")
 
         for gap in gaps_to_show:
             fig.add_shape(
@@ -1773,11 +1851,11 @@ def render_rr_plot_fragment(participant_id: str):
     col_mode_info, col_refresh = st.columns([5, 1])
     with col_mode_info:
         if is_exclusion_click_mode_check:
-            st.info("📍 **Click two points** on the plot to define an exclusion zone (start → end)")
+            st.info("**Click two points** on the plot to define an exclusion zone (start → end)")
         else:
-            st.info("💡 Click on the plot to add a new event at that timestamp")
+            st.info("Click on the plot to add a new event at that timestamp")
     with col_refresh:
-        if st.button("🔄 Refresh", key=f"refresh_plot_{participant_id}", help="Refresh plot to show new markers (resets zoom)"):
+        if st.button("Refresh", key=f"refresh_plot_{participant_id}", help="Refresh plot to show new markers (resets zoom)"):
             st.rerun()
 
     # Use a stable key to help preserve component state
@@ -1827,7 +1905,7 @@ def render_rr_plot_fragment(participant_id: str):
                     # Add this click to the list
                     st.session_state[exclusion_click_key].append(clicked_ts)
                     display_time = clicked_ts.strftime("%H:%M:%S")
-                    st.toast(f"📍 Exclusion point {len(st.session_state[exclusion_click_key])}: {display_time}")
+                    st.toast(f"Exclusion point {len(st.session_state[exclusion_click_key])}: {display_time}")
 
                     # Only rerun for second point (to show confirmation form)
                     # First point: don't rerun to avoid zoom reset - marker shows on next interaction
@@ -1839,7 +1917,7 @@ def render_rr_plot_fragment(participant_id: str):
 
             # Show quick add form right here in the fragment
             display_time = clicked_ts.strftime("%H:%M:%S")
-            st.success(f"📍 **Clicked at {display_time}** - Add event below:")
+            st.success(f"**Clicked at {display_time}** - Add event below:")
 
             col_evt, col_custom, col_add = st.columns([2, 2, 1])
             with col_evt:
@@ -1865,7 +1943,7 @@ def render_rr_plot_fragment(participant_id: str):
                     custom_evt_label = None
 
             with col_add:
-                if st.button("➕ Add", key=f"add_click_{participant_id}_{clicked_time_str}", type="primary"):
+                if st.button("+ Add", key=f"add_click_{participant_id}_{clicked_time_str}", type="primary"):
                     from music_hrv.prep.summaries import EventStatus
 
                     # Determine label
@@ -1888,7 +1966,7 @@ def render_rr_plot_fragment(participant_id: str):
                         if participant_id not in st.session_state.participant_events:
                             st.session_state.participant_events[participant_id] = {'events': [], 'manual': []}
                         st.session_state.participant_events[participant_id]['manual'].append(new_event)
-                        st.toast(f"✅ Added '{event_label}' at {clicked_time_str} - click 'Refresh Plot' or interact with plot to see marker")
+                        st.toast(f"Added '{event_label}' at {clicked_time_str} - click 'Refresh Plot' or interact with plot to see marker")
 
 
 def detect_quality_changepoints(rr_values: list[int], change_type: str = "var") -> dict:
@@ -1978,7 +2056,7 @@ def get_quality_badge(quality_score: float, artifact_ratio: float) -> str:
         artifact_ratio: 0-1 ratio of removed artifacts
 
     Returns:
-        Emoji badge: 🟢 (good), 🟡 (moderate), 🔴 (poor)
+        Emoji badge: [OK] (good), (moderate), [X] (poor)
     """
     # Combine changepoint quality and artifact ratio
     # Artifact ratio > 10% is concerning, > 20% is poor
@@ -1988,11 +2066,11 @@ def get_quality_badge(quality_score: float, artifact_ratio: float) -> str:
     combined = (quality_score + artifact_score) / 2
 
     if combined >= 75:
-        return "🟢"
+        return "[OK]"
     elif combined >= 50:
-        return "🟡"
+        return "[!]"
     else:
-        return "🔴"
+        return "[X]"
 
 
 def detect_time_gaps(timestamps: list, rr_values: list = None, gap_threshold_s: float = 2.0) -> dict:
@@ -2157,10 +2235,10 @@ def main():
     _script_start = _time.time()
 
     if TEST_MODE:
-        st.title("🧪 Music HRV Toolkit [TEST MODE]")
+        st.title("Music HRV Toolkit [TEST MODE]")
         st.info("**Test mode active** - Using demo data from `data/demo/hrv_logger`")
     else:
-        st.title("🎵 Music HRV Toolkit")
+        st.title("Music HRV Toolkit")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
     # Sidebar navigation using buttons (fast - only renders active page)
@@ -2215,7 +2293,7 @@ def main():
 
         # Settings section
         st.markdown("---")
-        with st.expander("⚙️ Settings", expanded=False):
+        with st.expander("Settings", expanded=False):
             render_settings_panel()
 
     # Get selected page for content rendering
@@ -2377,13 +2455,13 @@ def main():
                 # ISSUE 1 FIX: Show warning and expandable duplicate details if duplicates detected
                 if summary.duplicate_rr_intervals > 0:
                     st.error(
-                        f"⚠️ **{summary.duplicate_rr_intervals} duplicate RR intervals** were detected and removed! "
+                        f"**{summary.duplicate_rr_intervals} duplicate RR intervals** were detected and removed! "
                         f"This participant may have corrupted data."
                     )
 
                     # ISSUE 1 FIX: Display duplicate details in expandable section
                     if summary.duplicate_details:
-                        with st.expander(f"🔍 Show Duplicate Details ({len(summary.duplicate_details)} duplicates)"):
+                        with st.expander(f"Show Duplicate Details ({len(summary.duplicate_details)} duplicates)"):
                             # Show first 10 duplicates by default
                             num_to_show = min(10, len(summary.duplicate_details))
 
@@ -2405,7 +2483,7 @@ def main():
 
                 # Recording date/time
                 if summary.recording_datetime:
-                    st.info(f"📅 Recording Date: {summary.recording_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+                    st.info(f" Recording Date: {summary.recording_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
 
                 # RR Interval Plot with Event Markers
                 st.markdown("---")
@@ -2540,13 +2618,13 @@ def main():
                         with col_mode1:
                             interaction_mode = st.radio(
                                 "Plot interaction",
-                                ["📋 Add Events", "🚫 Add Exclusions"],
+                                ["Add Events", "Add Exclusions"],
                                 key=f"plot_mode_{selected_participant}",
                                 horizontal=True,
                                 label_visibility="collapsed"
                             )
                         with col_mode2:
-                            if interaction_mode != "🚫 Add Exclusions":
+                            if interaction_mode != "Add Exclusions":
                                 # Clear exclusion method when not in exclusion mode
                                 if f"exclusion_method_{selected_participant}" in st.session_state:
                                     del st.session_state[f"exclusion_method_{selected_participant}"]
@@ -2580,12 +2658,12 @@ def main():
                     st.warning(f"Could not generate RR plot: {e}")
 
                 # ================== EXCLUSION ZONES (shown when in exclusion mode) ==================
-                if interaction_mode == "🚫 Add Exclusions":
+                if interaction_mode == "Add Exclusions":
                     col_excl_title, col_excl_help = st.columns([4, 1])
                     with col_excl_title:
-                        st.markdown("### 🚫 Exclusion Zones")
+                        st.markdown("### Exclusion Zones")
                     with col_excl_help:
-                        with st.popover("ℹ️ Help"):
+                        with st.popover("Help"):
                             from music_hrv.gui.help_text import EXCLUSION_ZONES_HELP
                             st.markdown(EXCLUSION_ZONES_HELP)
 
@@ -2604,7 +2682,7 @@ def main():
                             st.caption(f"Start: **{pending_clicks[0].strftime('%H:%M:%S')}** — Click to set **end point**.")
                     with col_clear:
                         if pending_clicks:
-                            if st.button("🗑️ Clear", key=f"clear_selection_{selected_participant}", type="secondary"):
+                            if st.button("X Clear", key=f"clear_selection_{selected_participant}", type="secondary"):
                                 # Clear the pending clicks list, but keep last_click_key
                                 # so the same click won't be re-added on rerun
                                 st.session_state[click_key] = []
@@ -2681,7 +2759,7 @@ def main():
                         col_confirm, col_cancel = st.columns(2)
                         last_click_key = f"last_click_{selected_participant}"
                         with col_confirm:
-                            if st.button("✅ Add Exclusion Zone", key=f"confirm_excl_{selected_participant}", type="primary"):
+                            if st.button("Add Exclusion Zone", key=f"confirm_excl_{selected_participant}", type="primary"):
                                 new_zone = {
                                     'start': final_start,
                                     'end': final_end,
@@ -2693,17 +2771,17 @@ def main():
                                 # Clear last click to allow new selections
                                 if last_click_key in st.session_state:
                                     del st.session_state[last_click_key]
-                                show_toast("✅ Exclusion zone added", icon="success")
+                                show_toast("Exclusion zone added", icon="success")
                                 st.rerun()
                         with col_cancel:
-                            if st.button("❌ Cancel", key=f"cancel_excl_{selected_participant}"):
+                            if st.button("Cancel", key=f"cancel_excl_{selected_participant}"):
                                 st.session_state[click_key] = []
                                 # Clear last click to allow new selections
                                 if last_click_key in st.session_state:
                                     del st.session_state[last_click_key]
                                 st.rerun()
                     elif click_key in st.session_state and len(st.session_state[click_key]) == 1:
-                        st.warning(f"📍 Start point set: **{st.session_state[click_key][0].strftime('%H:%M:%S')}** - Now click on plot to set **end point**")
+                        st.warning(f"Start point set: **{st.session_state[click_key][0].strftime('%H:%M:%S')}** - Now click on plot to set **end point**")
                         if st.button("Cancel", key=f"cancel_click1_{selected_participant}"):
                             st.session_state[click_key] = []
                             last_click_key = f"last_click_{selected_participant}"
@@ -2717,10 +2795,10 @@ def main():
                         with col_zones_header:
                             st.markdown("**Current Exclusion Zones:**")
                         with col_save:
-                            if st.button("💾 Save", key=f"save_exclusions_{selected_participant}", type="primary", help="Save exclusion zones to disk"):
+                            if st.button("Save", key=f"save_exclusions_{selected_participant}", type="primary", help="Save exclusion zones to disk"):
                                 from music_hrv.gui.persistence import save_participant_events
                                 save_participant_events(selected_participant, st.session_state.participant_events[selected_participant], st.session_state.data_dir)
-                                show_toast("💾 Exclusion zones saved", icon="success")
+                                show_toast("Exclusion zones saved", icon="success")
 
                         for idx, zone in enumerate(exclusion_zones):
                             zone_start = zone.get('start', 'N/A')
@@ -2750,11 +2828,11 @@ def main():
                                 st.write(f"{idx+1}. **{start_str}** → **{end_str}** {duration_icon}{reason_text}")
                             with col_edit:
                                 edit_key = f"edit_zone_{selected_participant}_{idx}"
-                                if st.button("✏️", key=f"btn_{edit_key}"):
+                                if st.button("Edit", key=f"btn_{edit_key}"):
                                     st.session_state[edit_key] = not st.session_state.get(edit_key, False)
                                     st.rerun()
                             with col_del:
-                                if st.button("🗑️", key=f"del_zone_{selected_participant}_{idx}"):
+                                if st.button("X", key=f"del_zone_{selected_participant}_{idx}"):
                                     exclusion_zones.pop(idx)
                                     st.rerun()
 
@@ -2792,7 +2870,7 @@ def main():
                                         )
                                     col_save_edit, col_cancel_edit = st.columns(2)
                                     with col_save_edit:
-                                        if st.button("💾 Save Changes", key=f"save_edit_{selected_participant}_{idx}"):
+                                        if st.button("Save Changes", key=f"save_edit_{selected_participant}_{idx}"):
                                             try:
                                                 # Parse new times
                                                 new_start_time = datetime.datetime.strptime(new_start, "%H:%M:%S").time()
@@ -2811,7 +2889,7 @@ def main():
                                                 zone['reason'] = new_reason
                                                 zone['exclude_from_duration'] = new_exclude_dur
                                                 st.session_state[edit_key] = False
-                                                st.toast("✅ Zone updated")
+                                                st.toast("Zone updated")
                                                 st.rerun()
                                             except ValueError:
                                                 st.error("Invalid time format. Use HH:MM:SS")
@@ -2878,14 +2956,14 @@ def main():
                                         'exclude_from_duration': manual_exclude_dur
                                     }
                                     st.session_state.participant_events[selected_participant]['exclusion_zones'].append(new_zone)
-                                    st.toast("✅ Exclusion zone added")
+                                    st.toast("Exclusion zone added")
                             except (ValueError, IndexError):
                                 st.error("Invalid time format. Use HH:MM:SS")
 
-                        st.button("➕ Add Exclusion Zone", key=f"add_manual_excl_{selected_participant}", on_click=add_manual_exclusion)
+                        st.button("+ Add Exclusion Zone", key=f"add_manual_excl_{selected_participant}", on_click=add_manual_exclusion)
 
                 # ================== SIGNAL QUALITY & EVENTS (only in events mode) ==================
-                if interaction_mode != "🚫 Add Exclusions":
+                if interaction_mode != "Add Exclusions":
                     # Show quality analysis info if available
                     changepoint_key = f"changepoints_{selected_participant}"
                     gap_key = f"gaps_{selected_participant}"
@@ -2895,12 +2973,12 @@ def main():
                         gap_info = st.session_state[gap_key]
                         # Determine badge for expander title
                         if gap_info.get('vns_note'):
-                            gap_title = "⏱️ Time Gap Analysis (N/A for VNS data)"
+                            gap_title = "Time Gap Analysis (N/A for VNS data)"
                         elif gap_info['total_gaps'] == 0:
-                            gap_title = "⏱️ Time Gap Analysis (✅ No gaps)"
+                            gap_title = "Time Gap Analysis (No gaps)"
                         else:
-                            gap_badge = "🟡" if gap_info['total_gaps'] <= 2 else "🔴"
-                            gap_title = f"⏱️ Time Gap Analysis ({gap_badge} {gap_info['total_gaps']} gaps)"
+                            gap_badge = "[!]" if gap_info['total_gaps'] <= 2 else "[X]"
+                            gap_title = f"Time Gap Analysis ({gap_badge} {gap_info['total_gaps']} gaps)"
 
                         with st.expander(gap_title, expanded=False):
                             st.caption("Identifies time gaps >2 seconds between consecutive beats (recording interruptions, Bluetooth disconnections, device errors)")
@@ -2915,7 +2993,7 @@ def main():
                             else:
                                 col_g1, col_g2, col_g3 = st.columns(3)
                                 with col_g1:
-                                    gap_badge = "🟢" if gap_info['total_gaps'] == 0 else ("🟡" if gap_info['total_gaps'] <= 2 else "🔴")
+                                    gap_badge = "[OK]" if gap_info['total_gaps'] == 0 else ("[!]" if gap_info['total_gaps'] <= 2 else "[X]")
                                     st.metric("Gaps Detected", f"{gap_badge} {gap_info['total_gaps']}")
                                 with col_g2:
                                     st.metric("Total Gap Time", f"{gap_info['total_gap_duration_s']:.1f}s")
@@ -2938,7 +3016,7 @@ def main():
                                     st.dataframe(pd.DataFrame(gap_data), width='stretch', hide_index=True)
 
                                     # Recommendations for gaps
-                                    st.markdown("##### 💡 Recommendations for Gaps:")
+                                    st.markdown("##### Recommendations for Gaps:")
                                     st.markdown("""
                                     **What gaps mean:**
                                     - Recording was interrupted (Bluetooth disconnect, device error, or intentional pause)
@@ -2955,7 +3033,7 @@ def main():
                                     """)
 
                                     # Auto-create gap events button
-                                    st.markdown("##### 🤖 Auto-Create Gap Events")
+                                    st.markdown("##### Auto-Create Gap Events")
                                     col_gap_btn1, col_gap_btn2 = st.columns([1, 2])
                                     with col_gap_btn1:
                                         if st.button("Create Gap Events", key=f"auto_gap_{selected_participant}"):
@@ -2984,12 +3062,12 @@ def main():
                                                     st.session_state.participant_events[selected_participant]['manual'].append(gap_end_event)
                                                     events_added += 1
 
-                                            show_toast(f"✅ Created {events_added} gap boundary events", icon="success")
+                                            show_toast(f"Created {events_added} gap boundary events", icon="success")
                                             st.rerun()
                                     with col_gap_btn2:
                                         st.caption("Creates `gap_start` and `gap_end` events for each detected gap. Use these to exclude gap periods from analysis.")
                                 else:
-                                    st.success("✅ No time gaps detected - recording appears continuous")
+                                    st.success("No time gaps detected - recording appears continuous")
 
                     # Variability Changepoint Analysis Expander
                     if changepoint_key in st.session_state:
@@ -2997,9 +3075,9 @@ def main():
                         # Determine badge for expander title
                         high_var_count = sum(1 for s in cp_info.get('segment_stats', []) if s['cv'] > 0.15)
                         if high_var_count == 0:
-                            var_title = f"📈 Variability Analysis (✅ Score: {cp_info['quality_score']}/100)"
+                            var_title = f"Variability Analysis (Score: {cp_info['quality_score']}/100)"
                         else:
-                            var_title = f"📈 Variability Analysis (🟡 {high_var_count} high-CV segments)"
+                            var_title = f"Variability Analysis ({high_var_count} high-CV segments)"
 
                         with st.expander(var_title, expanded=False):
                             st.caption("Uses NeuroKit2's signal_changepoints() with PELT algorithm to detect variance changes (movement artifacts, electrode issues, physiological changes)")
@@ -3017,7 +3095,7 @@ def main():
                                 seg_data = []
                                 for i, seg in enumerate(cp_info['segment_stats']):
                                     cv_pct = seg['cv'] * 100
-                                    quality = "🟢 Good" if cv_pct < 10 else ("🟡 Moderate" if cv_pct < 15 else "🔴 High")
+                                    quality = "[OK] Good" if cv_pct < 10 else ("Moderate" if cv_pct < 15 else "[X] High")
 
                                     # Format timestamps
                                     start_str = seg.get('start_time').strftime('%H:%M:%S') if seg.get('start_time') else "?"
@@ -3038,7 +3116,7 @@ def main():
                                 # Check for high variability segments
                                 high_var_segments = [s for s in cp_info['segment_stats'] if s['cv'] > 0.15]
                                 if high_var_segments:
-                                    st.markdown("##### 💡 Recommendations for High Variability:")
+                                    st.markdown("##### Recommendations for High Variability:")
                                     st.markdown("""
                                     **What high variability (CV > 15%) may indicate:**
                                     - Movement artifacts (participant moved during recording)
@@ -3059,7 +3137,7 @@ def main():
                                     """)
 
                                     # Auto-create variability boundary events
-                                    st.markdown("##### 🤖 Auto-Create Variability Events")
+                                    st.markdown("##### Auto-Create Variability Events")
                                     col_var_thresh, col_var_btn, col_var_desc = st.columns([1, 1, 2])
                                     with col_var_thresh:
                                         cv_threshold = st.number_input(
@@ -3102,9 +3180,9 @@ def main():
                                                         events_added += 1
 
                                             if events_added > 0:
-                                                show_toast(f"✅ Created {events_added} variability boundary events", icon="success")
+                                                show_toast(f"Created {events_added} variability boundary events", icon="success")
                                             else:
-                                                show_toast("ℹ️ No segments above threshold", icon="info")
+                                                show_toast("No segments above threshold", icon="info")
                                             st.rerun()
                                     with col_var_desc:
                                         st.caption(f"Creates `high_variability_start` and `high_variability_end` events for segments with CV > {cv_threshold:.0f}%")
@@ -3112,13 +3190,13 @@ def main():
                             st.caption("""
                             **Legend**:
                             - **CV (Coefficient of Variation)** = Std / Mean × 100. Lower = more stable.
-                            - 🟢 Good: CV < 10% | 🟡 Moderate: 10-15% | 🔴 High: > 15%
+                            - [OK] Good: CV < 10% | Moderate: 10-15% | [X] High: > 15%
                             - **Gray regions** on plot = time gaps (missing data)
                             - **Colored regions** = variability segments (green=stable, orange=moderate, red=high)
                             """)
 
                     # Music Change Event Generator (inside events mode)
-                    with st.expander("🎵 Generate Music Change Events", expanded=False):
+                    with st.expander("Generate Music Change Events", expanded=False):
                         st.markdown("""
                         **Auto-generate music section boundaries** based on timing intervals and playlist group.
 
@@ -3224,7 +3302,7 @@ def main():
                         st.write(f"Music cycle: {' → '.join(music_label_list)} → (repeat)")
 
                         # Generate button
-                        if st.button("🎵 Generate Music Events", key=f"gen_music_{selected_participant}"):
+                        if st.button("Generate Music Events", key=f"gen_music_{selected_participant}"):
                             from music_hrv.prep.summaries import EventStatus
                             from datetime import timedelta
 
@@ -3317,9 +3395,9 @@ def main():
                                     music_idx += 1
 
                             if events_added > 0:
-                                show_toast(f"✅ Created {events_added} music section events", icon="success")
+                                show_toast(f"Created {events_added} music section events", icon="success")
                             else:
-                                show_toast("⚠️ No events created - check boundary events", icon="warning")
+                                show_toast("No events created - check boundary events", icon="warning")
                             st.rerun()
 
                         st.caption("""
@@ -3331,7 +3409,7 @@ def main():
                         """)
 
                 # ================== EVENTS MANAGEMENT (only in events mode) ==================
-                if interaction_mode != "🚫 Add Exclusions":
+                if interaction_mode != "Add Exclusions":
                     st.markdown("---")
 
                     # Events table with reordering and inline editing
@@ -3387,10 +3465,10 @@ def main():
                                     break
 
                         if not is_chronological:
-                            st.error("⚠️ **Events are NOT in chronological order!** Click 'Auto-Sort by Timestamp' to fix.")
+                            st.error("**Events are NOT in chronological order!** Click 'Auto-Sort by Timestamp' to fix.")
 
                     # Quick Add Event Section
-                    st.markdown("### ➕ Add Event")
+                    st.markdown("### + Add Event")
 
                     # Get first RR timestamp as reference
                     first_rr_time = None
@@ -3529,7 +3607,7 @@ def main():
 
                         st.write("")  # Spacer
                         st.button(
-                            "➕ Add",
+                            "+ Add",
                             key=f"add_event_{selected_participant}",
                             on_click=add_quick_event,
                             type="primary",
@@ -3539,7 +3617,7 @@ def main():
                     st.markdown("---")
 
                     # Section Validation - validates sections defined in Sections tab
-                    with st.expander("⏱️ Section Validation", expanded=True):
+                    with st.expander("Section Validation", expanded=True):
                         st.caption("Validates that all defined sections have required events and expected durations.")
 
                         # Get participant's events
@@ -3616,13 +3694,13 @@ def main():
                                 # Check event presence
                                 end_evts_str = " | ".join(end_evts) if len(end_evts) > 1 else (end_evts[0] if end_evts else "none")
                                 if not start_ts and not end_ts:
-                                    st.write(f"❌ **{label}**: missing `{start_evt}` and `{end_evts_str}`")
+                                    st.write(f"**{label}**: missing `{start_evt}` and `{end_evts_str}`")
                                     issue_count += 1
                                 elif not start_ts:
-                                    st.write(f"❌ **{label}**: missing `{start_evt}`")
+                                    st.write(f"**{label}**: missing `{start_evt}`")
                                     issue_count += 1
                                 elif not end_ts:
-                                    st.write(f"❌ **{label}**: missing any of `{end_evts_str}`")
+                                    st.write(f"**{label}**: missing any of `{end_evts_str}`")
                                     issue_count += 1
                                 else:
                                     # Calculate duration
@@ -3635,10 +3713,10 @@ def main():
 
                                     # Check if within tolerance
                                     if expected_dur > 0 and abs(actual_dur - expected_dur) > tolerance:
-                                        st.write(f"⚠️ **{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                        st.write(f"**{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
                                         issue_count += 1
                                     else:
-                                        st.write(f"✅ **{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note}")
+                                        st.write(f"**{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note}")
                                         valid_count += 1
 
                             # Summary
@@ -3653,7 +3731,7 @@ def main():
                     available_canonical_events = list(st.session_state.all_events.keys())
 
                     # Section 1: Event Editing - Individual Cards
-                    st.markdown("### 📝 Event Management")
+                    st.markdown("### Event Management")
                     st.caption("Edit event details, match to canonical events, or delete events")
 
                     if all_events:
@@ -3667,9 +3745,9 @@ def main():
                                 with col_status:
                                     # Show mapping status - only green check if canonical is valid
                                     if event.canonical and event.canonical != "unmatched" and event.canonical in st.session_state.all_events:
-                                        st.markdown("✓")
+                                        st.markdown("*")
                                     else:
-                                        st.markdown("🟡")
+                                        st.markdown("[!]")
 
                                 with col_raw:
                                     # Editable raw label with callback
@@ -3760,11 +3838,11 @@ def main():
                                                     current_events[event_idx].canonical = canonical_name
                                                     st.session_state.participant_events[participant_id]['events'] = current_events
                                                     st.session_state.participant_events[participant_id]['manual'] = []
-                                                show_toast(f"✅ Added '{raw_lower}' as synonym for {canonical_name}", icon="success")
+                                                show_toast(f"Added '{raw_lower}' as synonym for {canonical_name}", icon="success")
                                             else:
                                                 show_toast(f"'{raw_lower}' is already a synonym for {canonical_name}", icon="info")
 
-                                        st.button("➕🔖", key=f"syn_{selected_participant}_{idx}",
+                                        st.button("+Tag", key=f"syn_{selected_participant}_{idx}",
                                                  on_click=add_synonym, args=(selected_participant, idx),
                                                  help="Add raw label as synonym")
 
@@ -3809,7 +3887,7 @@ def main():
 
                                 with col_delete:
                                     # Delete button
-                                    if st.button("🗑️", key=f"delete_{selected_participant}_{idx}", help="Delete this event"):
+                                    if st.button("X", key=f"delete_{selected_participant}_{idx}", help="Delete this event"):
                                         events_to_delete.append(idx)
 
                                 st.divider()
@@ -3832,7 +3910,7 @@ def main():
                     all_events = [ensure_event_status(e) for e in stored_data['events'] + stored_data['manual']]
 
                     # Section 2: Event Order with Move Buttons
-                    st.markdown("### 🔄 Event Order")
+                    st.markdown("### Event Order")
                     st.caption("Use ↑↓ buttons to reorder events - changes reflect immediately in all sections")
 
                     # Helper to normalize timestamps for comparison (handle timezone-aware vs naive)
@@ -3846,7 +3924,7 @@ def main():
                         return ts
 
                     # Auto-sort button - use return value instead of on_click for proper rerun
-                    if st.button("🔄 Auto-Sort by Timestamp", key=f"auto_sort_{selected_participant}"):
+                    if st.button("Auto-Sort by Timestamp", key=f"auto_sort_{selected_participant}"):
                         all_events_copy = (st.session_state.participant_events[selected_participant]['events'] +
                                           st.session_state.participant_events[selected_participant]['manual'])
                         all_events_copy.sort(key=get_sort_key)
@@ -3873,7 +3951,7 @@ def main():
                                         out_of_order = True
 
                                 status_icon = "❌" if out_of_order else "✅"
-                                mapping_badge = "🟡" if not event.canonical else "✓"
+                                mapping_badge = "[!]" if not event.canonical else "*"
                                 st.text(f"{status_icon}{mapping_badge}")
 
                             with col_info:
@@ -3923,7 +4001,7 @@ def main():
                         df_events = pd.DataFrame(events_data)
                         csv_events = df_events.to_csv(index=False)
                         st.download_button(
-                            label="📥 Download Events CSV",
+                            label=" Download Events CSV",
                             data=csv_events,
                             file_name=f"events_{selected_participant}.csv",
                             mime="text/csv",
@@ -3934,7 +4012,7 @@ def main():
                         # Show unmatched warning
                         unmatched_count = sum(1 for e in all_events if not e.canonical)
                         if unmatched_count > 0:
-                            st.warning(f"⚠️ {unmatched_count} unmatched event(s) - assign canonical mappings above")
+                            st.warning(f"{unmatched_count} unmatched event(s) - assign canonical mappings above")
                     else:
                         st.info("No events found for this participant")
 
@@ -3961,7 +4039,7 @@ def main():
 
                             mapping_data.append({
                                 "Expected Event": event_name,
-                                "Status": "✅ Found" if matched else "❌ Missing",
+                                "Status": "Found" if matched else "Missing",
                                 "Raw Labels": raw_labels_str,
                             })
 
@@ -3988,7 +4066,7 @@ def main():
                             save_participant_events(selected_participant, stored_data, st.session_state.data_dir)
                             show_toast(f"Saved events for {selected_participant}", icon="success")
 
-                        st.button("💾 Save Events",
+                        st.button("Save Events",
                                  key=f"save_{selected_participant}",
                                  on_click=save_events_to_yaml,
                                  help="Save all event changes for this participant",
@@ -4007,7 +4085,7 @@ def main():
                         # Only show reset if there are saved events
                         saved_participants = list_saved_participant_events()
                         if selected_participant in saved_participants:
-                            st.button("🔄 Reset to Original",
+                            st.button("Reset to Original",
                                      key=f"reset_{selected_participant}",
                                      on_click=reset_to_original,
                                      help="Discard saved changes and reload original events")
@@ -4015,9 +4093,9 @@ def main():
                     with col_status:
                         # Check if participant has saved events
                         if selected_participant in saved_participants:
-                            st.caption("✅ Has saved event edits")
+                            st.caption("Has saved event edits")
                         else:
-                            st.caption("⚠️ Not yet saved")
+                            st.caption("Not yet saved")
 
             # Bottom navigation buttons (duplicate for convenience)
             st.markdown("---")

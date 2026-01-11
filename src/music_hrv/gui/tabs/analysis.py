@@ -38,6 +38,97 @@ from music_hrv.gui.help_text import ANALYSIS_HELP
 # PROFESSIONAL HRV VISUALIZATION FUNCTIONS
 # =============================================================================
 
+# Educational resources for HRV visualizations
+VISUALIZATION_RESOURCES = {
+    "tachogram": {
+        "title": "Tachogram (RR Interval Plot)",
+        "description": """
+The tachogram displays beat-to-beat RR intervals over time. It's the primary visualization
+for inspecting raw HRV data and identifying artifacts, trends, and patterns.
+
+**What to look for:**
+- **Stable baseline**: Healthy HRV shows regular oscillation around the mean
+- **Sudden spikes/drops**: May indicate artifacts, ectopic beats, or missed detections
+- **Trends**: Gradual changes may reflect autonomic shifts (e.g., relaxation, stress)
+- **±1 SD band**: ~68% of intervals should fall within this range
+- **±2 SD band**: ~95% of intervals should fall within this range
+        """,
+        "references": [
+            ("Task Force (1996) - HRV Standards", "https://doi.org/10.1161/01.CIR.93.5.1043"),
+            ("Shaffer & Ginsberg (2017) - HRV Overview", "https://doi.org/10.3389/fpubh.2017.00258"),
+        ]
+    },
+    "poincare": {
+        "title": "Poincaré Plot (Return Map)",
+        "description": """
+The Poincaré plot shows each RR interval against the next one (RR[n] vs RR[n+1]).
+It visualizes short-term and long-term variability in a single view.
+
+**Key measures:**
+- **SD1** (perpendicular to identity line): Short-term, beat-to-beat variability
+  - Reflects parasympathetic (vagal) activity
+  - Related to RMSSD
+- **SD2** (along identity line): Long-term variability
+  - Reflects overall HRV including sympathetic influences
+  - Related to SDNN
+- **SD1/SD2 ratio**: Shape of the ellipse
+  - Low ratio (<0.5): Reduced short-term variability
+  - Normal ratio (0.5-1.0): Balanced variability
+        """,
+        "references": [
+            ("Brennan et al. (2001) - Poincaré Plot Analysis", "https://doi.org/10.1109/10.959330"),
+            ("Guzik et al. (2007) - Poincaré Plot Asymmetry", "https://doi.org/10.1088/0967-3334/28/3/N01"),
+        ]
+    },
+    "frequency": {
+        "title": "Power Spectral Density (Frequency Domain)",
+        "description": """
+Frequency domain analysis decomposes HRV into oscillatory components using spectral analysis.
+Different frequency bands reflect different physiological mechanisms.
+
+**Frequency bands:**
+- **VLF (0.0033-0.04 Hz)**: Very Low Frequency
+  - Thermoregulation, hormonal fluctuations
+  - Requires long recordings (>5 min) for reliable estimation
+- **LF (0.04-0.15 Hz)**: Low Frequency
+  - Mixed sympathetic and parasympathetic activity
+  - Baroreflex activity, blood pressure regulation
+- **HF (0.15-0.4 Hz)**: High Frequency
+  - Primarily parasympathetic (vagal) activity
+  - Respiratory sinus arrhythmia
+
+**LF/HF Ratio interpretation:**
+- <1.0: Parasympathetic dominant
+- 1.0-2.0: Balanced autonomic activity
+- >2.0: Sympathetic dominant
+        """,
+        "references": [
+            ("Task Force (1996) - Frequency Bands", "https://doi.org/10.1161/01.CIR.93.5.1043"),
+            ("Laborde et al. (2017) - HRV and Cardiac Vagal Tone", "https://doi.org/10.3389/fpsyg.2017.00213"),
+        ]
+    },
+    "hr_distribution": {
+        "title": "Heart Rate Distribution",
+        "description": """
+The heart rate distribution histogram shows the frequency of different heart rate values
+during the recording period.
+
+**What to look for:**
+- **Normal distribution**: Most healthy recordings show approximately normal distribution
+- **Skewness**: May indicate periods of sustained high or low HR
+- **Multiple peaks**: Could indicate distinct activity states or artifacts
+- **Width (SD)**: Reflects overall HR variability
+
+**Normal resting HR ranges:**
+- Adults: 60-100 BPM (athletes may have lower)
+- Well-trained athletes: 40-60 BPM
+        """,
+        "references": [
+            ("Nunan et al. (2010) - Normal HR Values", "https://doi.org/10.1097/HJR.0b013e32833e4598"),
+        ]
+    },
+}
+
 # Color scheme for professional plots
 PLOT_COLORS = {
     "primary": "#2E86AB",      # Blue - main data
@@ -641,42 +732,13 @@ def create_hr_distribution_plot(rr_intervals: list, section_label: str) -> tuple
     return fig, stats
 
 
-def _get_reference_bar_html(value: float, ref_low: float, ref_high: float, max_val: float = None) -> str:
-    """Create a visual reference bar showing where value falls in range."""
-    if max_val is None:
-        max_val = ref_high * 1.5
-
-    # Calculate position (0-100%)
-    position = min(100, max(0, (value / max_val) * 100))
-
-    # Determine color based on position relative to reference
-    if value < ref_low:
-        color = "#e74c3c"  # Red - below normal
-    elif value <= ref_high:
-        color = "#27ae60"  # Green - normal range
-    else:
-        color = "#3498db"  # Blue - above normal
-
-    # Reference zone (as percentage)
-    ref_start = (ref_low / max_val) * 100
-    ref_end = (ref_high / max_val) * 100
-
-    return f'''<div style="position:relative; height:6px; background:#e9ecef; border-radius:3px; margin-top:8px;">
-<div style="position:absolute; left:{ref_start:.0f}%; width:{ref_end-ref_start:.0f}%; height:100%; background:rgba(39,174,96,0.2); border-radius:3px;"></div>
-<div style="position:absolute; left:{position:.0f}%; top:-2px; width:10px; height:10px; background:{color}; border-radius:50%; transform:translateX(-50%); border:2px solid white; box-shadow:0 1px 3px rgba(0,0,0,0.2);"></div>
-</div>'''
-
-
 def display_hrv_metrics_professional(hrv_results: pd.DataFrame, n_beats: int,
                                       artifact_info: dict = None,
                                       recording_duration_sec: float = None) -> None:
-    """Display HRV metrics using Streamlit native components for a professional look.
+    """Display HRV metrics using pure Streamlit native components.
 
-    Uses clean, scientific styling with:
-    - Native Streamlit metrics and columns
-    - Visual reference range indicators
-    - Expandable details sections
-    - Clear data quality indicators
+    Clean, professional design that works in both light and dark modes.
+    Uses only native Streamlit components - no custom HTML/CSS.
     """
 
     # Extract key metrics
@@ -703,152 +765,174 @@ def display_hrv_metrics_professional(hrv_results: pd.DataFrame, n_beats: int,
     # Data quality assessment
     quality_issues = []
     if n_beats < MIN_BEATS_TIME_DOMAIN:
-        quality_issues.append(("Low beat count", f"{n_beats} beats (min: {MIN_BEATS_TIME_DOMAIN})"))
+        quality_issues.append(f"Low beat count: {n_beats} (min: {MIN_BEATS_TIME_DOMAIN})")
     if n_beats < MIN_BEATS_FREQUENCY_DOMAIN:
-        quality_issues.append(("Insufficient for frequency domain", f"{n_beats}/{MIN_BEATS_FREQUENCY_DOMAIN} beats"))
+        quality_issues.append(f"Insufficient for frequency domain: {n_beats}/{MIN_BEATS_FREQUENCY_DOMAIN} beats")
     if recording_duration_sec and recording_duration_sec < MIN_DURATION_FREQUENCY_DOMAIN_SEC:
-        quality_issues.append(("Short recording", f"{duration_min:.1f} min (recommended: ≥5 min)"))
+        quality_issues.append(f"Short recording: {duration_min:.1f} min (recommended: ≥5 min)")
 
-    # Header with recording info
-    header_html = f'''<div style="background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; padding:16px; margin-bottom:16px;">
-<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-<div>
-<span style="font-size:11px; color:#6c757d; text-transform:uppercase; letter-spacing:0.5px;">Recording Summary</span>
-<div style="font-size:14px; color:#212529; margin-top:4px;"><strong>{n_beats:,}</strong> beats · <strong>{duration_min:.1f}</strong> min · <strong>{mean_hr_bpm:.0f}</strong> BPM avg</div>
-</div>
-<div style="display:flex; gap:16px; align-items:center;">'''
+    # === RECORDING SUMMARY ===
+    st.markdown("##### Recording Summary")
 
-    # Add artifact info to header if available
-    if artifact_info:
-        artifact_pct = artifact_info.get('artifact_ratio', 0) * 100
-        if artifact_pct > 10:
-            art_color = "#dc3545"
-            art_label = "High"
-        elif artifact_pct > 2:
-            art_color = "#ffc107"
-            art_label = "Moderate"
+    # Summary metrics row
+    sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
+    with sum_col1:
+        st.metric("Total Beats", f"{n_beats:,}")
+    with sum_col2:
+        st.metric("Duration", f"{duration_min:.1f} min")
+    with sum_col3:
+        st.metric("Mean HR", f"{mean_hr_bpm:.0f} BPM")
+    with sum_col4:
+        if artifact_info:
+            artifact_pct = artifact_info.get('artifact_ratio', 0) * 100
+            st.metric("Artifacts", f"{artifact_pct:.1f}%")
         else:
-            art_color = "#28a745"
-            art_label = "Low"
-        header_html += f'''<div style="text-align:center;">
-<span style="font-size:10px; color:#6c757d;">Artifacts</span>
-<div style="font-size:13px; color:{art_color}; font-weight:600;">{artifact_pct:.1f}% <span style="font-weight:normal; font-size:11px;">({art_label})</span></div>
-</div>'''
-
-    # Data quality badge
-    if not quality_issues:
-        quality_color = "#28a745"
-        quality_label = "Good"
-    elif len(quality_issues) == 1:
-        quality_color = "#ffc107"
-        quality_label = "Fair"
-    else:
-        quality_color = "#dc3545"
-        quality_label = "Limited"
-
-    header_html += f'''<div style="text-align:center;">
-<span style="font-size:10px; color:#6c757d;">Data Quality</span>
-<div style="font-size:13px; color:{quality_color}; font-weight:600;">{quality_label}</div>
-</div>
-</div></div></div>'''
-
-    if hasattr(st, 'html'):
-        st.html(header_html)
-    else:
-        st.markdown(header_html, unsafe_allow_html=True)
+            # Data quality indicator
+            if not quality_issues:
+                st.metric("Data Quality", "Good", delta="*", delta_color="normal")
+            elif len(quality_issues) == 1:
+                st.metric("Data Quality", "Fair", delta="!", delta_color="off")
+            else:
+                st.metric("Data Quality", "Limited", delta="(!)", delta_color="inverse")
 
     # Show quality warnings if any
     if quality_issues:
-        with st.expander("⚠️ Data Quality Notes", expanded=False):
-            for issue, detail in quality_issues:
-                st.warning(f"**{issue}**: {detail}")
+        with st.expander("Data Quality Notes", expanded=False):
+            for issue in quality_issues:
+                st.warning(issue)
 
-    # Time Domain Section
-    st.markdown("#### Time Domain Metrics")
-    st.caption("Measures beat-to-beat variability in the time series")
+    st.divider()
+
+    # === TIME DOMAIN METRICS ===
+    st.markdown("##### Time Domain")
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         rmssd_ref = HRV_REFERENCE_VALUES["RMSSD"]
-        st.metric("RMSSD", f"{rmssd:.1f} ms", help="Root Mean Square of Successive Differences - primary parasympathetic indicator")
-        bar_html = _get_reference_bar_html(rmssd, rmssd_ref["low"], rmssd_ref["high"], 100)
-        if hasattr(st, 'html'):
-            st.html(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: {rmssd_ref["low"]}–{rmssd_ref["high"]} ms</div></div>')
+        # Interpretation
+        if rmssd >= rmssd_ref["high"]:
+            delta_text = "High"
+            delta_color = "normal"
+        elif rmssd >= rmssd_ref["low"]:
+            delta_text = "Normal"
+            delta_color = "off"
         else:
-            st.markdown(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: {rmssd_ref["low"]}–{rmssd_ref["high"]} ms</div></div>', unsafe_allow_html=True)
+            delta_text = "Low"
+            delta_color = "inverse"
+        st.metric(
+            "RMSSD",
+            f"{rmssd:.1f} ms",
+            delta=delta_text,
+            delta_color=delta_color,
+            help=f"Parasympathetic indicator. Reference: {rmssd_ref['low']}–{rmssd_ref['high']} ms"
+        )
 
     with col2:
         sdnn_ref = HRV_REFERENCE_VALUES["SDNN"]
-        st.metric("SDNN", f"{sdnn:.1f} ms", help="Standard Deviation of NN intervals - overall HRV indicator")
-        bar_html = _get_reference_bar_html(sdnn, sdnn_ref["low"], sdnn_ref["normal"], 250)
-        if hasattr(st, 'html'):
-            st.html(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: ≥{sdnn_ref["low"]} ms</div></div>')
+        if sdnn >= sdnn_ref["low"]:
+            delta_text = "Normal"
+            delta_color = "off"
         else:
-            st.markdown(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: ≥{sdnn_ref["low"]} ms</div></div>', unsafe_allow_html=True)
+            delta_text = "Low"
+            delta_color = "inverse"
+        st.metric(
+            "SDNN",
+            f"{sdnn:.1f} ms",
+            delta=delta_text,
+            delta_color=delta_color,
+            help=f"Overall HRV. Reference: ≥{sdnn_ref['low']} ms"
+        )
 
     with col3:
         pnn_ref = HRV_REFERENCE_VALUES["pNN50"]
-        st.metric("pNN50", f"{pnn50:.1f}%", help="Percentage of successive RR intervals differing by >50ms")
-        bar_html = _get_reference_bar_html(pnn50, pnn_ref["low"], pnn_ref["high"], 60)
-        if hasattr(st, 'html'):
-            st.html(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: {pnn_ref["low"]}–{pnn_ref["high"]}%</div></div>')
+        if pnn50 >= pnn_ref["high"]:
+            delta_text = "High"
+            delta_color = "normal"
+        elif pnn50 >= pnn_ref["low"]:
+            delta_text = "Normal"
+            delta_color = "off"
         else:
-            st.markdown(f'<div style="margin-top:-10px;">{bar_html}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Ref: {pnn_ref["low"]}–{pnn_ref["high"]}%</div></div>', unsafe_allow_html=True)
+            delta_text = "Low"
+            delta_color = "inverse"
+        st.metric(
+            "pNN50",
+            f"{pnn50:.1f}%",
+            delta=delta_text,
+            delta_color=delta_color,
+            help=f"% of RR differences >50ms. Reference: {pnn_ref['low']}–{pnn_ref['high']}%"
+        )
 
     with col4:
-        st.metric("Mean HR", f"{mean_hr_bpm:.0f} BPM", help="Average heart rate during recording")
-        # Simple range indicator for HR
-        hr_bar = _get_reference_bar_html(mean_hr_bpm, 60, 100, 150)
-        if hasattr(st, 'html'):
-            st.html(f'<div style="margin-top:-10px;">{hr_bar}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Normal: 60–100 BPM</div></div>')
+        # Heart rate interpretation
+        if 60 <= mean_hr_bpm <= 100:
+            delta_text = "Normal"
+            delta_color = "off"
+        elif mean_hr_bpm < 60:
+            delta_text = "Bradycardia"
+            delta_color = "off"
         else:
-            st.markdown(f'<div style="margin-top:-10px;">{hr_bar}<div style="font-size:10px; color:#6c757d; margin-top:4px;">Normal: 60–100 BPM</div></div>', unsafe_allow_html=True)
+            delta_text = "Elevated"
+            delta_color = "off"
+        st.metric(
+            "Mean HR",
+            f"{mean_hr_bpm:.0f} BPM",
+            delta=delta_text,
+            delta_color=delta_color,
+            help="Average heart rate. Normal resting: 60–100 BPM"
+        )
 
-    st.markdown("---")
+    st.divider()
 
-    # Frequency Domain Section
-    st.markdown("#### Frequency Domain Metrics")
-    st.caption("Spectral analysis of HRV - requires ≥2 min recording for reliability")
+    # === FREQUENCY DOMAIN METRICS ===
+    st.markdown("##### Frequency Domain")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("LF Power", f"{lf:.0f} ms²", delta=f"{lf_pct:.0f}% of total", delta_color="off",
-                  help="Low Frequency (0.04–0.15 Hz) - mixed sympathetic/parasympathetic")
+        st.metric(
+            "LF Power",
+            f"{lf:.0f} ms²",
+            delta=f"{lf_pct:.0f}%",
+            delta_color="off",
+            help="Low Frequency (0.04–0.15 Hz). Mixed sympathetic/parasympathetic."
+        )
 
     with col2:
-        st.metric("HF Power", f"{hf:.0f} ms²", delta=f"{hf_pct:.0f}% of total", delta_color="off",
-                  help="High Frequency (0.15–0.4 Hz) - parasympathetic/vagal activity")
+        st.metric(
+            "HF Power",
+            f"{hf:.0f} ms²",
+            delta=f"{hf_pct:.0f}%",
+            delta_color="off",
+            help="High Frequency (0.15–0.4 Hz). Parasympathetic/vagal activity."
+        )
 
     with col3:
         lf_hf_ref = HRV_REFERENCE_VALUES["LF_HF"]
         if lf_hf < lf_hf_ref["low"]:
-            lfhf_label = "PNS dominant"
+            lfhf_delta = "PNS dominant"
         elif lf_hf < lf_hf_ref["high"]:
-            lfhf_label = "Balanced"
+            lfhf_delta = "Balanced"
         else:
-            lfhf_label = "SNS dominant"
-        st.metric("LF/HF Ratio", f"{lf_hf:.2f}", delta=lfhf_label, delta_color="off",
-                  help="Sympathovagal balance indicator")
+            lfhf_delta = "SNS dominant"
+        st.metric(
+            "LF/HF Ratio",
+            f"{lf_hf:.2f}",
+            delta=lfhf_delta,
+            delta_color="off",
+            help="Sympathovagal balance. <0.5: PNS dominant, 0.5–3.0: Balanced, >3.0: SNS dominant"
+        )
 
-    # LF/HF Balance visualization
-    balance_html = f'''<div style="background:#f8f9fa; border-radius:6px; padding:12px; margin-top:8px;">
-<div style="display:flex; justify-content:space-between; font-size:11px; color:#6c757d; margin-bottom:6px;">
-<span>Parasympathetic</span><span>Sympathetic</span>
-</div>
-<div style="position:relative; height:8px; background:linear-gradient(90deg, #27ae60 0%, #f1c40f 50%, #e74c3c 100%); border-radius:4px;">
-<div style="position:absolute; left:{min(95, max(5, (lf_pct))):.0f}%; top:-4px; width:16px; height:16px; background:white; border:3px solid #2c3e50; border-radius:50%; transform:translateX(-50%); box-shadow:0 2px 4px rgba(0,0,0,0.2);"></div>
-</div>
-<div style="display:flex; justify-content:space-between; font-size:10px; color:#6c757d; margin-top:6px;">
-<span>HF {hf_pct:.0f}%</span><span>LF {lf_pct:.0f}%</span>
-</div>
-</div>'''
-
-    if hasattr(st, 'html'):
-        st.html(balance_html)
-    else:
-        st.markdown(balance_html, unsafe_allow_html=True)
+    # Autonomic balance indicator using progress bar
+    st.caption("Autonomic Balance")
+    balance_col1, balance_col2, balance_col3 = st.columns([1, 3, 1])
+    with balance_col1:
+        st.caption("PNS")
+    with balance_col2:
+        # Use HF percentage as indicator (higher = more parasympathetic)
+        st.progress(min(1.0, hf_pct / 100))
+    with balance_col3:
+        st.caption("SNS")
 
 
 def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
@@ -856,6 +940,286 @@ def create_hrv_metrics_card(hrv_results: pd.DataFrame, n_beats: int,
                             recording_duration_sec: float = None) -> str:
     """Legacy function - returns empty string. Use display_hrv_metrics_professional() instead."""
     return ""
+
+
+def display_visualization_info(viz_type: str) -> None:
+    """Display educational information about a visualization type.
+
+    Args:
+        viz_type: One of 'tachogram', 'poincare', 'frequency', 'hr_distribution'
+    """
+    if viz_type not in VISUALIZATION_RESOURCES:
+        return
+
+    info = VISUALIZATION_RESOURCES[viz_type]
+
+    with st.expander(f"About: {info['title']}", expanded=False):
+        st.markdown(info["description"])
+
+        if info.get("references"):
+            st.markdown("**References:**")
+            for title, url in info["references"]:
+                st.markdown(f"- [{title}]({url})")
+
+
+class AnalysisDocumentation:
+    """Generates documentation for HRV analysis procedures.
+
+    This class captures all analysis parameters and generates a markdown
+    report that can be exported for reproducibility and publication.
+    """
+
+    def __init__(self, participant_id: str):
+        self.participant_id = participant_id
+        self.timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.sections_analyzed = []
+        self.cleaning_config = {}
+        self.artifact_correction = False
+        self.artifact_results = {}
+        self.exclusion_zones = []
+        self.hrv_results = {}
+        self.data_source = ""
+        self.total_beats_raw = 0
+        self.total_beats_analyzed = 0
+        self.recording_duration_sec = 0
+
+    def set_data_source(self, source: str, raw_beats: int, duration_sec: float):
+        """Set data source information."""
+        self.data_source = source
+        self.total_beats_raw = raw_beats
+        self.recording_duration_sec = duration_sec
+
+    def set_cleaning_config(self, config):
+        """Set cleaning configuration used."""
+        if config is None:
+            self.cleaning_config = {}
+        elif isinstance(config, dict):
+            self.cleaning_config = config.copy()
+        elif hasattr(config, '__dict__'):
+            # Handle dataclass or object with attributes
+            self.cleaning_config = {
+                "rr_min_ms": getattr(config, 'rr_min_ms', 200),
+                "rr_max_ms": getattr(config, 'rr_max_ms', 2000),
+                "sudden_change_pct": getattr(config, 'sudden_change_pct', 100),
+            }
+        else:
+            self.cleaning_config = {}
+
+    def set_artifact_correction(self, enabled: bool, results: dict = None):
+        """Set artifact correction settings."""
+        self.artifact_correction = enabled
+        if results:
+            self.artifact_results = results.copy()
+
+    def add_section(self, name: str, label: str, start_event: str, end_events: list,
+                    beats_extracted: int, beats_after_cleaning: int):
+        """Add a section to the documentation."""
+        self.sections_analyzed.append({
+            "name": name,
+            "label": label,
+            "start_event": start_event,
+            "end_events": end_events,
+            "beats_extracted": beats_extracted,
+            "beats_after_cleaning": beats_after_cleaning,
+        })
+        self.total_beats_analyzed += beats_after_cleaning
+
+    def add_exclusion_zones(self, zones: list):
+        """Add exclusion zones used."""
+        self.exclusion_zones = zones.copy() if zones else []
+
+    def add_hrv_results(self, section_name: str, results: pd.DataFrame):
+        """Add HRV results for a section."""
+        if not results.empty:
+            self.hrv_results[section_name] = results.to_dict('records')[0]
+
+    def generate_markdown(self) -> str:
+        """Generate a complete markdown documentation report."""
+        lines = []
+
+        # Header
+        lines.append("# HRV Analysis Report")
+        lines.append("")
+        lines.append(f"**Participant:** {self.participant_id}")
+        lines.append(f"**Generated:** {self.timestamp}")
+        lines.append("**Software:** Music HRV Toolkit v0.6.8")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        # Data Source
+        lines.append("## 1. Data Source")
+        lines.append("")
+        lines.append(f"- **Source Application:** {self.data_source}")
+        lines.append(f"- **Total Raw Beats:** {self.total_beats_raw:,}")
+        lines.append(f"- **Recording Duration:** {self.recording_duration_sec/60:.1f} minutes")
+        lines.append("")
+
+        # Data Preparation
+        lines.append("## 2. Data Preparation")
+        lines.append("")
+        lines.append("### 2.1 Cleaning Thresholds")
+        lines.append("")
+        if self.cleaning_config:
+            lines.append("| Parameter | Value |")
+            lines.append("|-----------|-------|")
+            lines.append(f"| Minimum RR | {self.cleaning_config.get('rr_min_ms', 200)} ms |")
+            lines.append(f"| Maximum RR | {self.cleaning_config.get('rr_max_ms', 2000)} ms |")
+            lines.append(f"| Sudden Change Threshold | {self.cleaning_config.get('sudden_change_pct', 100)}% |")
+        else:
+            lines.append("*Default cleaning thresholds applied (200-2000 ms)*")
+        lines.append("")
+
+        # Exclusion Zones
+        if self.exclusion_zones:
+            lines.append("### 2.2 Exclusion Zones")
+            lines.append("")
+            lines.append("| Start | End | Reason |")
+            lines.append("|-------|-----|--------|")
+            for zone in self.exclusion_zones:
+                start = zone.get('start', 'N/A')
+                end = zone.get('end', 'N/A')
+                reason = zone.get('reason', 'Not specified')
+                lines.append(f"| {start} | {end} | {reason} |")
+            lines.append("")
+
+        # Artifact Correction
+        lines.append("### 2.3 Artifact Correction")
+        lines.append("")
+        if self.artifact_correction:
+            lines.append("- **Method:** NeuroKit2 Kubios Algorithm")
+            lines.append("- **Status:** Applied")
+            if self.artifact_results:
+                lines.append(f"- **Artifacts Detected:** {self.artifact_results.get('total_artifacts', 'N/A')}")
+                lines.append(f"- **Artifact Rate:** {self.artifact_results.get('artifact_ratio', 0)*100:.1f}%")
+                if 'artifact_types' in self.artifact_results:
+                    lines.append("- **Artifact Types:**")
+                    for atype, count in self.artifact_results['artifact_types'].items():
+                        lines.append(f"  - {atype}: {count}")
+        else:
+            lines.append("- **Status:** Not applied (raw RR intervals used)")
+        lines.append("")
+
+        # Sections Analyzed
+        lines.append("## 3. Sections Analyzed")
+        lines.append("")
+        if self.sections_analyzed:
+            for section in self.sections_analyzed:
+                lines.append(f"### {section['label']}")
+                lines.append("")
+                lines.append(f"- **Section Name:** {section['name']}")
+                lines.append(f"- **Start Event:** `{section['start_event']}`")
+                lines.append(f"- **End Event(s):** `{', '.join(section['end_events'])}`")
+                lines.append(f"- **Beats Extracted:** {section['beats_extracted']:,}")
+                lines.append(f"- **Beats After Cleaning:** {section['beats_after_cleaning']:,}")
+                lines.append(f"- **Data Retention:** {100*section['beats_after_cleaning']/max(section['beats_extracted'],1):.1f}%")
+                lines.append("")
+        else:
+            lines.append("*No sections analyzed*")
+            lines.append("")
+
+        # HRV Results
+        lines.append("## 4. HRV Results")
+        lines.append("")
+        if self.hrv_results:
+            for section_name, results in self.hrv_results.items():
+                label = section_name if section_name != "_combined" else "Combined Sections"
+                lines.append(f"### {label}")
+                lines.append("")
+                lines.append("#### Time Domain")
+                lines.append("")
+                lines.append("| Metric | Value | Unit |")
+                lines.append("|--------|-------|------|")
+                if 'HRV_RMSSD' in results:
+                    lines.append(f"| RMSSD | {results['HRV_RMSSD']:.2f} | ms |")
+                if 'HRV_SDNN' in results:
+                    lines.append(f"| SDNN | {results['HRV_SDNN']:.2f} | ms |")
+                if 'HRV_pNN50' in results:
+                    lines.append(f"| pNN50 | {results['HRV_pNN50']:.2f} | % |")
+                if 'HRV_MeanNN' in results:
+                    mean_hr = 60000 / results['HRV_MeanNN'] if results['HRV_MeanNN'] > 0 else 0
+                    lines.append(f"| Mean NN | {results['HRV_MeanNN']:.2f} | ms |")
+                    lines.append(f"| Mean HR | {mean_hr:.1f} | BPM |")
+                lines.append("")
+
+                lines.append("#### Frequency Domain")
+                lines.append("")
+                lines.append("| Metric | Value | Unit |")
+                lines.append("|--------|-------|------|")
+                if 'HRV_LF' in results:
+                    lines.append(f"| LF Power | {results['HRV_LF']:.2f} | ms² |")
+                if 'HRV_HF' in results:
+                    lines.append(f"| HF Power | {results['HRV_HF']:.2f} | ms² |")
+                if 'HRV_LFHF' in results:
+                    lines.append(f"| LF/HF Ratio | {results['HRV_LFHF']:.2f} | - |")
+                lines.append("")
+        else:
+            lines.append("*No HRV results available*")
+            lines.append("")
+
+        # Methods Summary
+        lines.append("## 5. Methods Summary")
+        lines.append("")
+        lines.append("### For Publication")
+        lines.append("")
+        artifact_text = "with Kubios artifact correction (NeuroKit2)" if self.artifact_correction else "without artifact correction"
+        sections_text = ", ".join([s['label'] for s in self.sections_analyzed]) if self.sections_analyzed else "all data"
+
+        lines.append("> HRV analysis was performed using Music HRV Toolkit (v0.6.8). ")
+        lines.append(f"> RR intervals were extracted from {self.data_source} recordings ")
+        lines.append(f"> and cleaned using threshold filtering (RR: {self.cleaning_config.get('rr_min_ms', 200)}-{self.cleaning_config.get('rr_max_ms', 2000)} ms). ")
+        if self.exclusion_zones:
+            lines.append(f"> {len(self.exclusion_zones)} exclusion zone(s) were applied to remove artifacts. ")
+        lines.append(f"> Time-domain and frequency-domain HRV metrics were computed {artifact_text} ")
+        lines.append("> using NeuroKit2 (Makowski et al., 2021). ")
+        lines.append(f"> Analysis was performed on the following section(s): {sections_text}.")
+        lines.append("")
+
+        # References
+        lines.append("## 6. References")
+        lines.append("")
+        lines.append("- Makowski, D., et al. (2021). NeuroKit2: A Python toolbox for neurophysiological signal processing. *Behavior Research Methods*. https://doi.org/10.3758/s13428-020-01516-y")
+        lines.append("- Task Force of ESC and NASPE (1996). Heart rate variability: Standards of measurement. *Circulation*, 93(5), 1043-1065.")
+        lines.append("- Quigley, K. S., et al. (2024). Publication guidelines for heart rate variability studies. *Psychophysiology*, 61(9), e14604.")
+        lines.append("")
+
+        lines.append("---")
+        lines.append("*Report generated by Music HRV Toolkit*")
+
+        return "\n".join(lines)
+
+
+def display_documentation_panel(doc: AnalysisDocumentation) -> None:
+    """Display the analysis documentation panel with preview and export."""
+    st.markdown("---")
+    st.subheader("Analysis Documentation")
+
+    with st.expander("Preview & Export Analysis Report", expanded=False):
+        st.markdown("""
+        This report documents all analysis parameters for reproducibility.
+        Export as Markdown (.md) to include in your research documentation.
+        """)
+
+        # Generate markdown
+        md_content = doc.generate_markdown()
+
+        # Preview tabs
+        preview_tab, raw_tab = st.tabs(["Preview", "Raw Markdown"])
+
+        with preview_tab:
+            st.markdown(md_content)
+
+        with raw_tab:
+            st.code(md_content, language="markdown")
+
+        # Download button
+        st.download_button(
+            label="Download Report (.md)",
+            data=md_content,
+            file_name=f"hrv_analysis_{doc.participant_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown",
+            key=f"download_doc_{doc.participant_id}",
+        )
 
 
 def _get_exclusion_zones(participant_id: str) -> list[dict]:
@@ -885,7 +1249,7 @@ def _render_music_section_analysis():
     """)
 
     # Protocol Settings
-    with st.expander("⚙️ Protocol Settings", expanded=False):
+    with st.expander("Protocol Settings", expanded=False):
         protocol_data = load_protocol()
 
         col_p1, col_p2 = st.columns(2)
@@ -961,7 +1325,7 @@ def _render_music_section_analysis():
             help="How to handle recordings that don't match expected duration"
         )
 
-        if st.button("💾 Save Protocol Settings", key="save_protocol_btn"):
+        if st.button("Save Protocol Settings", key="save_protocol_btn"):
             new_protocol = {
                 "expected_duration_min": expected_duration,
                 "section_length_min": section_length,
@@ -1021,10 +1385,10 @@ def _render_music_section_analysis():
     )
 
     # Analyze button
-    if st.button("🎵 Analyze Music Sections", key="analyze_music_btn", type="primary"):
+    if st.button("Analyze Music Sections", key="analyze_music_btn", type="primary"):
         with st.status("Extracting music sections...", expanded=True) as status:
             try:
-                st.write("📂 Loading recording data...")
+                st.write("Loading recording data...")
 
                 # Get participant's recording data
                 summary = get_summary_dict().get(selected_participant)
@@ -1071,11 +1435,11 @@ def _render_music_section_analysis():
                     if canonical and evt.first_timestamp:
                         events_dict[canonical] = evt.first_timestamp
 
-                st.write(f"📊 Found {len(rr_intervals)} RR intervals")
-                st.write(f"📌 Events: {', '.join(events_dict.keys()) or 'None'}")
+                st.write(f"Found {len(rr_intervals)} RR intervals")
+                st.write(f"Events: {', '.join(events_dict.keys()) or 'None'}")
 
                 # Extract music sections
-                st.write("🎵 Extracting music sections...")
+                st.write("Extracting music sections...")
                 mismatch_strategy_value = mismatch_options.get(
                     st.session_state.get("protocol_mismatch_strategy", "Flag only (include all, mark incomplete)"),
                     DurationMismatchStrategy.FLAG_ONLY
@@ -1092,16 +1456,16 @@ def _render_music_section_analysis():
                 # Show warnings
                 if analysis.warnings:
                     for warning in analysis.warnings:
-                        st.warning(f"⚠️ {warning}")
+                        st.warning(f"{warning}")
 
-                st.write(f"✅ Extracted {len(analysis.sections)} sections "
+                st.write(f"Extracted {len(analysis.sections)} sections "
                         f"({analysis.valid_sections} valid, {analysis.incomplete_sections} incomplete)")
 
                 status.update(label="Section extraction complete", state="complete")
 
                 # Display results
                 st.markdown("---")
-                st.subheader("📊 Music Section Analysis Results")
+                st.subheader("Music Section Analysis Results")
 
                 # Duration overview
                 col_dur1, col_dur2, col_dur3 = st.columns(3)
@@ -1128,7 +1492,7 @@ def _render_music_section_analysis():
 
                 section_data = []
                 for section in analysis.sections:
-                    status_icon = "✅" if section.is_valid else "⚠️"
+                    status_icon = "[OK]" if section.is_valid else "(!)"
                     section_data.append({
                         "Status": status_icon,
                         "Section": section.label,
@@ -1203,7 +1567,7 @@ def _render_music_section_analysis():
                     # Download button
                     csv_hrv = df_hrv.to_csv(index=False)
                     st.download_button(
-                        "📥 Download HRV Results (CSV)",
+                        "Download HRV Results (CSV)",
                         data=csv_hrv,
                         file_name=f"music_sections_hrv_{selected_participant}.csv",
                         mime="text/csv"
@@ -1214,7 +1578,7 @@ def _render_music_section_analysis():
                     sections_by_type = get_sections_by_music_type(analysis, valid_only=True)
 
                     for music_type, sections in sections_by_type.items():
-                        with st.expander(f"🎵 {music_type} ({len(sections)} sections)", expanded=False):
+                        with st.expander(f"{music_type} ({len(sections)} sections)", expanded=False):
                             type_results = [r for r in hrv_results if r["Music"] == music_type]
                             if type_results:
                                 df_type = pd.DataFrame(type_results)
@@ -1248,16 +1612,16 @@ def render_analysis_tab():
     """
     st.header("HRV Analysis")
 
-    with st.expander("📖 Help - HRV Analysis & Scientific Best Practices", expanded=False):
+    with st.expander("Help - HRV Analysis & Scientific Best Practices", expanded=False):
         st.markdown(ANALYSIS_HELP)
 
     if not NEUROKIT_AVAILABLE:
-        st.error("❌ NeuroKit2 is not installed. Please install it to use HRV analysis features.")
+        st.error("NeuroKit2 is not installed. Please install it to use HRV analysis features.")
         st.code("uv add neurokit2")
         return
 
     if not st.session_state.summaries:
-        st.info("📊 Load data from the 'Data & Groups' tab to perform analysis")
+        st.info("Load data from the 'Data & Groups' tab to perform analysis")
     else:
         st.markdown("Select a participant, choose multiple sections, and analyze HRV metrics for each section individually and combined.")
 
@@ -1298,7 +1662,7 @@ def _render_single_participant_analysis():
     # Section selection
     available_sections = list(st.session_state.sections.keys())
     if not available_sections:
-        st.warning("⚠️ No sections defined. Please define sections in the Sections tab first.")
+        st.warning("No sections defined. Please define sections in the Sections tab first.")
         return
 
     selected_sections = st.multiselect(
@@ -1309,7 +1673,7 @@ def _render_single_participant_analysis():
     )
 
     # Artifact correction options
-    with st.expander("🔧 Artifact Correction (signal_fixpeaks)", expanded=False):
+    with st.expander("Artifact Correction (signal_fixpeaks)", expanded=False):
         st.markdown("""
         Uses NeuroKit2's `signal_fixpeaks()` with the **Kubios algorithm** to detect and correct:
         - **Ectopic beats** (premature/delayed beats)
@@ -1324,14 +1688,14 @@ def _render_single_participant_analysis():
             help="Recommended for data with known quality issues"
         )
 
-    if st.button("🔬 Analyze HRV", key="analyze_single_btn", type="primary"):
+    if st.button("Analyze HRV", key="analyze_single_btn", type="primary"):
         if not selected_sections:
             st.error("Please select at least one section")
         else:
             # Use status context for multi-step analysis
             with st.status("Analyzing HRV for selected sections...", expanded=True) as status:
                 try:
-                    st.write("📂 Loading recording data...")
+                    st.write("Loading recording data...")
                     progress = st.progress(0)
 
                     # Check source type from summary
@@ -1396,7 +1760,7 @@ def _render_single_participant_analysis():
 
                     if not all_stored:
                         # No saved events - STOP and warn user
-                        st.error(f"⚠️ No saved events found for {selected_participant}!")
+                        st.error(f"No saved events found for {selected_participant}!")
                         st.warning(
                             "**Please review and save the participant's data first:**\n"
                             "1. Go to the **Participants** tab\n"
@@ -1409,7 +1773,7 @@ def _render_single_participant_analysis():
                         return
 
                     # Use saved/processed events (with canonical labels)
-                    st.write(f"📥 Using {len(all_stored)} saved events for {selected_participant}")
+                    st.write(f"Using {len(all_stored)} saved events for {selected_participant}")
                     events = []
                     for evt in all_stored:
                         # Handle both dict (from YAML) and object formats
@@ -1428,7 +1792,7 @@ def _render_single_participant_analysis():
                             events.append(EventMarker(label=label, timestamp=ts, offset_s=None))
 
                     # Debug: show event labels
-                    with st.expander("🔍 Debug: Event labels", expanded=False):
+                    with st.expander("Debug: Event labels", expanded=False):
                         for evt in events:
                             st.write(f"  - '{evt.label}' at {evt.timestamp}")
 
@@ -1443,7 +1807,7 @@ def _render_single_participant_analysis():
                     section_results = {}
                     combined_rr = []
 
-                    st.write(f"🔬 Analyzing {len(selected_sections)} section(s)...")
+                    st.write(f"Analyzing {len(selected_sections)} section(s)...")
 
                     # Analyze each section individually
                     for idx, section_name in enumerate(selected_sections):
@@ -1466,7 +1830,7 @@ def _render_single_participant_analysis():
                             if exclusion_zones:
                                 section_rr, excl_stats = filter_exclusion_zones(section_rr, exclusion_zones)
                                 if excl_stats["n_excluded"] > 0:
-                                    st.write(f"    🚫 Excluded {excl_stats['n_excluded']} intervals ({excl_stats['excluded_duration_ms']/1000:.1f}s) from {excl_stats['zones_applied']} zone(s)")
+                                    st.write(f"    Excluded {excl_stats['n_excluded']} intervals ({excl_stats['excluded_duration_ms']/1000:.1f}s) from {excl_stats['zones_applied']} zone(s)")
 
                             # Clean RR intervals for this section
                             cleaned_section_rr, stats = clean_rr_intervals(
@@ -1479,12 +1843,12 @@ def _render_single_participant_analysis():
                                 # Apply artifact correction if enabled
                                 artifact_info = None
                                 if apply_artifact_correction:
-                                    st.write("    🔧 Applying artifact correction...")
+                                    st.write("    Applying artifact correction...")
                                     artifact_result = detect_artifacts_fixpeaks(rr_ms)
                                     if artifact_result["correction_applied"]:
                                         rr_ms = artifact_result["corrected_rr"]
                                         artifact_info = artifact_result
-                                        st.write(f"    ✓ Corrected {artifact_result['total_artifacts']} artifacts")
+                                        st.write(f"    * Corrected {artifact_result['total_artifacts']} artifacts")
 
                                 combined_rr.extend(rr_ms)
 
@@ -1503,12 +1867,12 @@ def _render_single_participant_analysis():
                                     "artifact_info": artifact_info,
                                 }
                         else:
-                            st.write(f"  ⚠️ Could not find events for section '{section_name}'")
+                            st.write(f"  Could not find events for section '{section_name}'")
 
                     # Analyze combined sections if multiple selected
                     if len(selected_sections) > 1 and combined_rr:
                         progress.progress(80)
-                        st.write("📊 Computing combined analysis...")
+                        st.write("Computing combined analysis...")
                         nk = get_neurokit()
                         peaks = nk.intervals_to_peaks(combined_rr, sampling_rate=1000)
                         hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
@@ -1525,11 +1889,11 @@ def _render_single_participant_analysis():
                     progress.progress(100)
                     st.session_state.analysis_results[selected_participant] = section_results
 
-                    status.update(label=f"✅ Analysis complete for {len(section_results)} section(s)!", state="complete")
+                    status.update(label=f"Analysis complete for {len(section_results)} section(s)!", state="complete")
                     show_toast(f"Analysis complete for {len(section_results)} section(s)", icon="success")
 
                 except Exception as e:
-                    status.update(label="❌ Error during analysis", state="error")
+                    status.update(label="Error during analysis", state="error")
                     st.error(f"Error during analysis: {e}")
                     import traceback
                     st.code(traceback.format_exc())
@@ -1553,9 +1917,39 @@ def _display_stats_row(stats: dict, key_prefix: str = ""):
 def _display_single_participant_results(selected_participant: str):
     """Display HRV analysis results for a single participant with professional visualizations."""
     st.markdown("---")
-    st.subheader(f"📊 Results for {selected_participant}")
+    st.subheader(f"Results for {selected_participant}")
 
     section_results = st.session_state.analysis_results[selected_participant]
+
+    # Create documentation object if we have results
+    if section_results:
+        doc = AnalysisDocumentation(selected_participant)
+
+        # Try to get data source info
+        summary = get_summary_dict().get(selected_participant)
+        source_app = getattr(summary, 'source_app', 'HRV Logger') if summary else 'HRV Logger'
+        total_raw_beats = sum(r.get("n_beats", 0) for r in section_results.values())
+        total_duration = sum(sum(r.get("rr_intervals", [])) / 1000.0 for r in section_results.values())
+
+        doc.set_data_source(source_app, total_raw_beats, total_duration)
+        doc.set_cleaning_config(st.session_state.get("cleaning_config", {}))
+
+        # Check if artifact correction was applied
+        artifact_correction_applied = any(
+            r.get("artifact_info") is not None for r in section_results.values()
+        )
+        if artifact_correction_applied:
+            first_artifact = next(
+                (r.get("artifact_info") for r in section_results.values() if r.get("artifact_info")),
+                None
+            )
+            doc.set_artifact_correction(True, first_artifact)
+        else:
+            doc.set_artifact_correction(False)
+
+        # Add exclusion zones
+        exclusion_zones = _get_exclusion_zones(selected_participant)
+        doc.add_exclusion_zones(exclusion_zones)
 
     for section_name, result_data in section_results.items():
         section_label = result_data["label"]
@@ -1567,7 +1961,20 @@ def _display_single_participant_results(selected_participant: str):
         # Calculate recording duration from RR intervals (sum of intervals)
         recording_duration_sec = sum(rr_intervals) / 1000.0 if rr_intervals else 0
 
-        with st.expander(f"📈 {section_label} ({n_beats} beats, {recording_duration_sec/60:.1f} min)", expanded=True):
+        # Add to documentation
+        if section_results:
+            section_def = st.session_state.sections.get(section_name, {})
+            doc.add_section(
+                name=section_name,
+                label=section_label,
+                start_event=section_def.get("start_event", "N/A"),
+                end_events=section_def.get("end_events", []) or [section_def.get("end_event", "N/A")],
+                beats_extracted=n_beats,
+                beats_after_cleaning=n_beats,
+            )
+            doc.add_hrv_results(section_name, hrv_results)
+
+        with st.expander(f"{section_label} ({n_beats} beats, {recording_duration_sec/60:.1f} min)", expanded=True):
             # Display HRV metrics using professional layout
             if not hrv_results.empty:
                 display_hrv_metrics_professional(
@@ -1577,61 +1984,62 @@ def _display_single_participant_results(selected_participant: str):
 
             # Visualization tabs for professional plots
             if PLOTLY_AVAILABLE and len(rr_intervals) > 10:
-                plot_tabs = st.tabs(["📈 Tachogram", "🎯 Poincaré", "📊 Frequency", "📉 HR Distribution", "📋 Data"])
+                plot_tabs = st.tabs(["Tachogram", "Poincaré", "Frequency", "HR Distribution", "Data"])
 
                 with plot_tabs[0]:
+                    # Educational info
+                    display_visualization_info("tachogram")
                     # Professional Tachogram
                     artifact_indices = None
                     if artifact_info and 'artifact_indices' in artifact_info:
                         artifact_indices = artifact_info['artifact_indices']
                     fig_tach, tach_stats = create_professional_tachogram(rr_intervals, section_label, artifact_indices)
-                    st.plotly_chart(fig_tach, width='stretch')
+                    st.plotly_chart(fig_tach, use_container_width=True)
                     _display_stats_row(tach_stats, f"tach_{section_name}")
 
                 with plot_tabs[1]:
+                    # Educational info
+                    display_visualization_info("poincare")
                     # Poincaré Plot
                     if len(rr_intervals) > 20:
                         fig_poincare, poincare_stats = create_poincare_plot(rr_intervals, section_label)
-                        st.plotly_chart(fig_poincare, width='stretch')
+                        st.plotly_chart(fig_poincare, use_container_width=True)
                         _display_stats_row(poincare_stats, f"poincare_{section_name}")
-                        st.caption("""
-                        **Interpretation:** SD1 reflects short-term (parasympathetic) variability, SD2 reflects long-term variability.
-                        SD1/SD2 < 1 indicates healthy HRV patterns.
-                        """)
                     else:
                         st.warning("Not enough data points for Poincaré plot (need >20 beats)")
 
                 with plot_tabs[2]:
+                    # Educational info
+                    display_visualization_info("frequency")
                     # Frequency Domain Plot
                     if len(rr_intervals) > 100:
                         fig_freq, freq_stats = create_frequency_domain_plot(rr_intervals, section_label)
                         if fig_freq:
-                            st.plotly_chart(fig_freq, width='stretch')
+                            st.plotly_chart(fig_freq, use_container_width=True)
                             _display_stats_row(freq_stats, f"freq_{section_name}")
-                            st.caption("""
-                            **Bands:** VLF (thermoregulation), LF (sympathetic+parasympathetic), HF (vagal/parasympathetic)
-                            """)
                     else:
                         st.warning("Not enough data for reliable frequency analysis (need >100 beats, ideally >300)")
 
                 with plot_tabs[3]:
+                    # Educational info
+                    display_visualization_info("hr_distribution")
                     # Heart Rate Distribution
                     fig_hr, hr_stats = create_hr_distribution_plot(rr_intervals, section_label)
-                    st.plotly_chart(fig_hr, width='stretch')
+                    st.plotly_chart(fig_hr, use_container_width=True)
                     _display_stats_row(hr_stats, f"hr_{section_name}")
 
                 with plot_tabs[4]:
                     # Full results table and download
                     if not hrv_results.empty:
                         st.markdown("**Complete HRV Metrics:**")
-                        st.dataframe(hrv_results.T, width='stretch')
+                        st.dataframe(hrv_results.T, use_container_width=True)
 
                         # Download buttons
                         col_dl1, col_dl2 = st.columns(2)
                         with col_dl1:
                             csv_hrv = hrv_results.to_csv(index=True)
                             st.download_button(
-                                label="📥 Download HRV Results (CSV)",
+                                label="Download HRV Results (CSV)",
                                 data=csv_hrv,
                                 file_name=f"hrv_{selected_participant}_{section_name}.csv",
                                 mime="text/csv",
@@ -1642,7 +2050,7 @@ def _display_single_participant_results(selected_participant: str):
                             rr_df = pd.DataFrame({"beat_index": range(len(rr_intervals)), "rr_ms": rr_intervals})
                             csv_rr = rr_df.to_csv(index=False)
                             st.download_button(
-                                label="📥 Download RR Intervals (CSV)",
+                                label="Download RR Intervals (CSV)",
                                 data=csv_rr,
                                 file_name=f"rr_{selected_participant}_{section_name}.csv",
                                 mime="text/csv",
@@ -1660,7 +2068,7 @@ def _display_single_participant_results(selected_participant: str):
                             with cols[i]:
                                 st.metric(label, f"{hrv_results[col_name].iloc[0]:.2f}")
 
-                    st.dataframe(hrv_results.T, width='stretch')
+                    st.dataframe(hrv_results.T, use_container_width=True)
 
                 # Simple matplotlib plot
                 st.markdown("**Tachogram:**")
@@ -1673,6 +2081,10 @@ def _display_single_participant_results(selected_participant: str):
                 ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
                 plt.close(fig)
+
+    # Display documentation panel at the end
+    if section_results:
+        display_documentation_panel(doc)
 
 
 def _render_group_analysis():
@@ -1691,7 +2103,7 @@ def _render_group_analysis():
     # Section selection
     available_sections = list(st.session_state.sections.keys())
     if not available_sections:
-        st.warning("⚠️ No sections defined. Please define sections in the Sections tab first.")
+        st.warning("No sections defined. Please define sections in the Sections tab first.")
         return
 
     selected_sections = st.multiselect(
@@ -1701,7 +2113,7 @@ def _render_group_analysis():
         key="analysis_sections_group"
     )
 
-    if st.button("🔬 Analyze Group HRV", key="analyze_group_btn", type="primary"):
+    if st.button("Analyze Group HRV", key="analyze_group_btn", type="primary"):
         if not selected_sections:
             st.error("Please select at least one section")
         else:
@@ -1728,7 +2140,7 @@ def _render_group_analysis():
                     skipped_participants = []  # Track participants without saved events
 
                     for idx, participant_id in enumerate(group_participants):
-                        st.write(f"📊 Processing {participant_id} ({idx + 1}/{total_steps})")
+                        st.write(f"Processing {participant_id} ({idx + 1}/{total_steps})")
                         progress.progress(int((idx / total_steps) * 100))
                         try:
                             bundle = next(b for b in bundles if b.participant_id == participant_id)
@@ -1855,17 +2267,17 @@ def _render_group_analysis():
                                     results_by_section["_combined"].append(result_row)
 
                         except Exception as e:
-                            st.write(f"  ⚠️ Could not analyze {participant_id}: {e}")
+                            st.write(f"  Could not analyze {participant_id}: {e}")
 
                     # Complete
                     progress.progress(100)
-                    status.update(label="✅ Group analysis complete!", state="complete")
+                    status.update(label="Group analysis complete!", state="complete")
                     show_toast(f"Group analysis complete for {len(group_participants)} participants", icon="success")
 
                     # Warn about skipped participants (no saved events)
                     if skipped_participants:
                         st.warning(
-                            f"⚠️ **{len(skipped_participants)} participant(s) skipped** - no saved events:\n"
+                            f"**{len(skipped_participants)} participant(s) skipped** - no saved events:\n"
                             f"`{', '.join(skipped_participants)}`\n\n"
                             "Please review and save their data in the **Participants** tab first."
                         )
@@ -1881,7 +2293,7 @@ def _render_group_analysis():
                                 else st.session_state.sections[section_name].get("label", section_name)
                             )
 
-                            with st.expander(f"📊 {section_label} ({len(results)} participants)", expanded=True):
+                            with st.expander(f"{section_label} ({len(results)} participants)", expanded=True):
                                 df_results = pd.DataFrame(results)
 
                                 # Summary statistics
@@ -1895,7 +2307,7 @@ def _render_group_analysis():
                                 # Download
                                 csv_data = df_results.to_csv(index=False)
                                 st.download_button(
-                                    label=f"📥 Download {section_label} Results",
+                                    label=f"Download {section_label} Results",
                                     data=csv_data,
                                     file_name=f"hrv_group_{selected_group}_{section_name}.csv",
                                     mime="text/csv",

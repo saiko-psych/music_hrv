@@ -256,13 +256,13 @@ def update_normalizer():
 def show_toast(message, icon="success"):
     """Show a toast notification with auto-dismiss."""
     if icon == "success":
-        st.toast(f"✅ {message}", icon="✅")
+        st.toast(f"{message}", icon="✅")
     elif icon == "info":
-        st.toast(f"ℹ️ {message}", icon="ℹ️")
+        st.toast(f"{message}", icon="ℹ️")
     elif icon == "warning":
-        st.toast(f"⚠️ {message}", icon="⚠️")
+        st.toast(f"{message}", icon="⚠️")
     elif icon == "error":
-        st.toast(f"❌ {message}", icon="❌")
+        st.toast(f"{message}", icon="❌")
     else:
         st.toast(message)
 
@@ -523,11 +523,11 @@ def get_quality_badge(quality_score: float, artifact_ratio: float) -> str:
     combined = (quality_score + artifact_score) / 2
 
     if combined >= 75:
-        return "🟢"
+        return "[OK]"
     elif combined >= 50:
-        return "🟡"
+        return "[!]"
     else:
-        return "🔴"
+        return "[X]"
 
 
 def detect_time_gaps(timestamps: list, rr_values: list = None, gap_threshold_s: float = 2.0) -> dict:

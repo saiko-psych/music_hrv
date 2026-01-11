@@ -725,8 +725,8 @@ def _render_sections_section():
         ### Validation
 
         In the **Participants** tab, sections are validated:
-        - ✅ Start and end events present
-        - ✅ Duration within tolerance of expected
+        - Start and end events present
+        - Duration within tolerance of expected
 
         ### Example
 
