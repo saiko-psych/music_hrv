@@ -112,6 +112,15 @@ def apply_custom_css():
 # Apply CSS styling (theme colors handled by Streamlit natively)
 apply_custom_css()
 
+# Restore session state from query params (after theme switch)
+# Check for restore_participant param and apply it
+if "restore_participant" in st.query_params:
+    _restore_id = st.query_params["restore_participant"]
+    if _restore_id:
+        st.session_state["selected_participant"] = _restore_id
+    # Clear the query param to clean up the URL
+    del st.query_params["restore_participant"]
+
 
 # Default canonical events for the Default Group
 DEFAULT_CANONICAL_EVENTS = {
@@ -1268,47 +1277,54 @@ def render_settings_panel():
     st.caption("**Theme**")
     import streamlit.components.v1 as components
 
-    # JavaScript to switch themes using Streamlit's native localStorage key
-    components.html("""
+    # Get current participant to preserve across theme switch
+    current_participant = st.session_state.get("selected_participant", "")
+
+    # JavaScript to switch themes and preserve state
+    components.html(f"""
         <style>
-            .theme-btn {
+            .theme-btn {{
                 flex: 1;
                 padding: 0.4rem 0.8rem;
                 border-radius: 6px;
                 cursor: pointer;
                 font-size: 14px;
                 font-family: inherit;
-            }
-            .light-btn {
+            }}
+            .light-btn {{
                 background: #f0f2f6;
                 border: 1px solid #ccc;
                 color: #31333F;
-            }
-            .dark-btn {
+            }}
+            .dark-btn {{
                 background: #262730;
                 border: 1px solid #555;
                 color: #fafafa;
-            }
-            .theme-btn:hover { opacity: 0.8; }
+            }}
+            .theme-btn:hover {{ opacity: 0.8; }}
         </style>
         <div style="display: flex; gap: 8px;">
             <button class="theme-btn light-btn" onclick="
                 window.parent.localStorage.removeItem('stActiveTheme-/-v1');
-                window.parent.location.reload();
+                var url = new URL(window.parent.location.href);
+                url.searchParams.set('restore_participant', '{current_participant}');
+                window.parent.location.href = url.toString();
             ">Light</button>
             <button class="theme-btn dark-btn" onclick="
-                var darkTheme = {
+                var darkTheme = {{
                     name: 'Dark',
-                    themeInput: {
+                    themeInput: {{
                         primaryColor: '#2E86AB',
                         backgroundColor: '#0E1117',
                         secondaryBackgroundColor: '#262730',
                         textColor: '#FAFAFA',
                         base: 'dark'
-                    }
-                };
+                    }}
+                }};
                 window.parent.localStorage.setItem('stActiveTheme-/-v1', JSON.stringify(darkTheme));
-                window.parent.location.reload();
+                var url = new URL(window.parent.location.href);
+                url.searchParams.set('restore_participant', '{current_participant}');
+                window.parent.location.href = url.toString();
             ">Dark</button>
         </div>
     """, height=45)
