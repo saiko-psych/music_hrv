@@ -32,7 +32,7 @@ def get_plotly_analysis():
     return _go, _make_subplots
 
 
-from music_hrv.gui.shared import (  # noqa: E402
+from rrational.gui.shared import (  # noqa: E402
     NEUROKIT_AVAILABLE,
     get_neurokit,
     get_matplotlib,
@@ -46,7 +46,7 @@ from music_hrv.gui.shared import (  # noqa: E402
     cached_load_recording,
     cached_load_vns_recording,
 )
-from music_hrv.gui.help_text import ANALYSIS_HELP  # noqa: E402
+from rrational.gui.help_text import ANALYSIS_HELP  # noqa: E402
 
 
 # =============================================================================
@@ -1322,13 +1322,13 @@ def _render_music_section_analysis():
 
     Protocol-based analysis of 5-minute music sections with validation.
     """
-    from music_hrv.analysis.music_sections import (
+    from rrational.analysis.music_sections import (
         ProtocolConfig,
         DurationMismatchStrategy,
         extract_music_sections,
         get_sections_by_music_type,
     )
-    from music_hrv.gui.persistence import load_protocol, save_protocol
+    from rrational.gui.persistence import load_protocol, save_protocol
 
     st.markdown("""
     Analyze HRV metrics for each **5-minute music section** based on your protocol.
@@ -1506,7 +1506,7 @@ def _render_music_section_analysis():
                     )
 
                 # Build RR intervals and events dict
-                from music_hrv.io.hrv_logger import RRInterval
+                from rrational.io.hrv_logger import RRInterval
                 rr_intervals = [
                     RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                     for ts, rr, elapsed in recording_data['rr_intervals']
@@ -1735,8 +1735,8 @@ def render_analysis_tab():
 
 def _render_single_participant_analysis():
     """Render single participant HRV analysis."""
-    from music_hrv.cleaning.rr import clean_rr_intervals, RRInterval
-    from music_hrv.io.hrv_logger import HRVLoggerRecording, EventMarker
+    from rrational.cleaning.rr import clean_rr_intervals, RRInterval
+    from rrational.io.hrv_logger import HRVLoggerRecording, EventMarker
 
     # Participant selection
     participant_list = get_participant_list()
@@ -1814,8 +1814,8 @@ def _render_single_participant_analysis():
                     # Load stored/saved events from YAML - REQUIRED for analysis
                     # User must review and save events in Participants tab first
                     if selected_participant not in st.session_state.participant_events:
-                        from music_hrv.gui.persistence import load_participant_events
-                        from music_hrv.prep.summaries import EventStatus
+                        from rrational.gui.persistence import load_participant_events
+                        from rrational.prep.summaries import EventStatus
                         from datetime import datetime as dt
 
                         saved = load_participant_events(selected_participant, st.session_state.data_dir)
@@ -2185,8 +2185,8 @@ def _display_single_participant_results(selected_participant: str):
 
 def _render_group_analysis():
     """Render group-level HRV analysis."""
-    from music_hrv.cleaning.rr import clean_rr_intervals, RRInterval
-    from music_hrv.io.hrv_logger import HRVLoggerRecording, EventMarker
+    from rrational.cleaning.rr import clean_rr_intervals, RRInterval
+    from rrational.io.hrv_logger import HRVLoggerRecording, EventMarker
 
     # Group selection
     group_list = list(st.session_state.groups.keys())
@@ -2252,8 +2252,8 @@ def _render_group_analysis():
 
                             # Load stored/saved events from YAML - REQUIRED for analysis
                             if participant_id not in st.session_state.participant_events:
-                                from music_hrv.gui.persistence import load_participant_events
-                                from music_hrv.prep.summaries import EventStatus
+                                from rrational.gui.persistence import load_participant_events
+                                from rrational.prep.summaries import EventStatus
                                 from datetime import datetime as dt
 
                                 saved = load_participant_events(participant_id, st.session_state.data_dir)

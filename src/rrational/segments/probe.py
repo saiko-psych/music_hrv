@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from music_hrv.segments.section_normalizer import SectionNormalizer
+from rrational.segments.section_normalizer import SectionNormalizer
 
 
 @dataclass(slots=True)

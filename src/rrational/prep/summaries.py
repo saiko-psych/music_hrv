@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
 
-from music_hrv.cleaning.rr import CleaningConfig, clean_rr_intervals, rr_summary
-from music_hrv.io.hrv_logger import HRVLoggerRecording, discover_recordings, load_recording
-from music_hrv.io.vns_analyse import discover_vns_recordings, load_vns_recording
-from music_hrv.segments.section_normalizer import SectionNormalizer
+from rrational.cleaning.rr import CleaningConfig, clean_rr_intervals, rr_summary
+from rrational.io.hrv_logger import HRVLoggerRecording, discover_recordings, load_recording
+from rrational.io.vns_analyse import discover_vns_recordings, load_vns_recording
+from rrational.segments.section_normalizer import SectionNormalizer
 
 
 @dataclass(slots=True)

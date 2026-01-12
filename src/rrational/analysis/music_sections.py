@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from music_hrv.io.hrv_logger import RRInterval
+from rrational.io.hrv_logger import RRInterval
 
 
 @dataclass(slots=True)

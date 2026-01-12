@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from music_hrv.config.sections import (
+from rrational.config.sections import (
     DEFAULT_SECTIONS_PATH,
     SectionDefinition,
     SectionsConfig,

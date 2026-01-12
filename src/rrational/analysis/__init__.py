@@ -1,6 +1,6 @@
 """Analysis modules for Music HRV."""
 
-from music_hrv.analysis.music_sections import (
+from rrational.analysis.music_sections import (
     ProtocolConfig,
     MusicSection,
     MusicSectionAnalysis,

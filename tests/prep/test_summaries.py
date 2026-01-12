@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.prep import load_hrv_logger_preview
+from rrational.cleaning.rr import CleaningConfig
+from rrational.prep import load_hrv_logger_preview
 
 FIXTURES = Path("tests/fixtures/hrv_logger")
 

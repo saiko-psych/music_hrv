@@ -9,13 +9,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from music_hrv.gui.persistence import (
+from rrational.gui.persistence import (
     load_sections,
     load_playlist_groups,
     save_playlist_groups,
     save_music_labels,
 )
-from music_hrv.gui.shared import (
+from rrational.gui.shared import (
     auto_save_config,
     show_toast,
     update_normalizer,

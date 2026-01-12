@@ -7,10 +7,10 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS
-from music_hrv.gui.help_text import CLEANING_THRESHOLDS_HELP, DATA_CORRECTION_WORKFLOW
-from music_hrv.gui.shared import (
+from rrational.cleaning.rr import CleaningConfig
+from rrational.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS
+from rrational.gui.help_text import CLEANING_THRESHOLDS_HELP, DATA_CORRECTION_WORKFLOW
+from rrational.gui.shared import (
     cached_load_hrv_logger_preview,
     cached_load_vns_preview,
     cached_load_participants,
@@ -977,7 +977,7 @@ def _render_participants_table():
                                         not_found.append(pid)
 
                                 # Save all changes
-                                from music_hrv.gui.persistence import save_groups, save_playlist_groups
+                                from rrational.gui.persistence import save_groups, save_playlist_groups
                                 save_groups(st.session_state.groups)
                                 save_playlist_groups(st.session_state.playlist_groups)
                                 save_participant_data()
@@ -1066,7 +1066,7 @@ def _render_batch_processing():
 
                                 if 'measurement_start' in boundaries:
                                     # Generate music events
-                                    from music_hrv.prep.summaries import EventStatus
+                                    from rrational.prep.summaries import EventStatus
                                     from datetime import timedelta
 
                                     if 'music_events' not in stored:
@@ -1213,7 +1213,7 @@ def _render_batch_processing():
 
                                 # Detect and create gap events
                                 gap_result = detect_time_gaps(timestamps_list, rr_values=rr_list, gap_threshold_s=batch_gap_threshold)
-                                from music_hrv.prep.summaries import EventStatus
+                                from rrational.prep.summaries import EventStatus
 
                                 for gap in gap_result.get("gaps", []):
                                     stored['manual'].append(EventStatus(

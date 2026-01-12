@@ -45,14 +45,14 @@ This is a **scientific research tool**. ALL implementations MUST follow current 
 ## Quick Commands
 
 ```bash
-uv run streamlit run src/music_hrv/gui/app.py  # Launch GUI
+uv run streamlit run src/rrational/gui/app.py  # Launch GUI
 uv run pytest                                   # Run tests
 uv run ruff check src/ tests/ --fix            # Lint
 ```
 
 ## Current Status
 
-**Version**: `v0.6.8` | **Tests**: 18/18 passing
+**Version**: `v0.7.0` (RRational) | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -61,7 +61,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 - Tab 4: Sections (time ranges between events)
 - Tab 5: Analysis (NeuroKit2 HRV metrics)
 
-**Storage**: `~/.music_hrv/*.yml` (groups, events, sections, participants, settings)
+**Storage**: `~/.rrational/*.yml` (groups, events, sections, participants, settings)
 
 **Settings**: Sidebar expander with persistent defaults for:
 - Default data folder
@@ -85,10 +85,10 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Key Files & Code Organization
 
-- `src/music_hrv/gui/app.py` - Main app + Participants tab (~3700 lines)
-- `src/music_hrv/gui/tabs/` - Tab modules (data.py, setup.py, analysis.py)
-- `src/music_hrv/gui/shared.py` - Shared utilities, caching, helpers
-- `src/music_hrv/gui/persistence.py` - YAML storage
+- `src/rrational/gui/app.py` - Main app + Participants tab (~3700 lines)
+- `src/rrational/gui/tabs/` - Tab modules (data.py, setup.py, analysis.py)
+- `src/rrational/gui/shared.py` - Shared utilities, caching, helpers
+- `src/rrational/gui/persistence.py` - YAML storage
 
 **IMPORTANT**: Keep `app.py` lean! Add new features to appropriate tab modules, not app.py.
 
@@ -116,18 +116,12 @@ uv run ruff check src/ tests/ --fix            # Lint
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Done:**
+- [x] ~~Project renamed to RRational~~ (v0.7.0)
+- [x] ~~Smart power formatting (no more "0 ms²")~~ (v0.7.0)
 - [x] ~~Light/dark theme switching~~ (v0.6.8)
 - [x] ~~Event canonical mapping persistence fix~~ (v0.6.8)
 - [x] ~~Professional analysis plots with reference values~~ (v0.6.8)
 - [x] ~~Demo data for testing~~ (v0.6.5)
-- [x] ~~VNS event alignment fix~~ (v0.6.5)
-- [x] ~~Tachogram plot naming~~ (v0.6.5)
-- [x] ~~Multiple end events for sections~~ (v0.6.4)
-- [x] ~~VNS timestamp parsing from filename~~ (v0.6.4)
-- [x] ~~Section-based validation (duration + tolerance)~~ (v0.6.3)
-- [x] ~~Editable exclusion zones~~ (v0.6.2)
-- [x] ~~Auto-fill boundary events~~ (v0.6.1)
-- [x] ~~Music Section Analysis mode~~ (v0.6.0)
 
 ## References
 

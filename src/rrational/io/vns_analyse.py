@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from music_hrv.io.hrv_logger import (
+from rrational.io.hrv_logger import (
     DEFAULT_ID_PATTERN,
     EventMarker,
     RRInterval,

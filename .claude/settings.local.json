@@ -45,7 +45,9 @@
       "Bash(ping:*)",
       "WebFetch(domain:docs.streamlit.io)",
       "WebFetch(domain:discuss.streamlit.io)",
-      "WebFetch(domain:baseweb.design)"
+      "WebFetch(domain:baseweb.design)",
+      "Bash(git mv:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

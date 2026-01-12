@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from statistics import fmean
 from typing import Iterable, Sequence
 
-from music_hrv.io.hrv_logger import RRInterval
+from rrational.io.hrv_logger import RRInterval
 
 
 @dataclass(slots=True)

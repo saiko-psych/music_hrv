@@ -1,5 +1,5 @@
-from music_hrv.cleaning.rr import CleaningConfig, clean_rr_intervals, clean_rr_intervals_with_flags, rr_summary
-from music_hrv.io.hrv_logger import RRInterval
+from rrational.cleaning.rr import CleaningConfig, clean_rr_intervals, clean_rr_intervals_with_flags, rr_summary
+from rrational.io.hrv_logger import RRInterval
 
 
 def build_samples():

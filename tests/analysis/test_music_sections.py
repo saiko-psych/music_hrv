@@ -3,13 +3,13 @@
 from datetime import datetime, timedelta
 
 
-from music_hrv.analysis.music_sections import (
+from rrational.analysis.music_sections import (
     ProtocolConfig,
     DurationMismatchStrategy,
     extract_music_sections,
     get_sections_by_music_type,
 )
-from music_hrv.io.hrv_logger import RRInterval
+from rrational.io.hrv_logger import RRInterval
 
 
 def create_test_rr_intervals(

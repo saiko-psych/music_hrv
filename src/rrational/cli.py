@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from music_hrv.segments import scan_sections
+from rrational.segments import scan_sections
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Iterable[str] | None = None) -> None:
-    """Entry point invoked by `python -m music_hrv.cli` or the uv script hook."""
+    """Entry point invoked by `python -m rrational.cli` or the uv script hook."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 

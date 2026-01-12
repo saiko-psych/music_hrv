@@ -1,16 +1,16 @@
-# Music HRV Toolkit
+# RRational
 
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.6.8-green.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.7.0-green.svg)](pyproject.toml)
 [![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg)](tests/)
 [![NeuroKit2](https://img.shields.io/badge/powered%20by-NeuroKit2-orange.svg)](https://neuropsychology.github.io/NeuroKit/)
 
-**A research-grade HRV analysis toolkit for music intervention studies**
+**A rational approach to Heart Rate Variability analysis**
 
-*Streamlit-based GUI for researchers with no coding background*
+*Free, open-source HRV toolkit - like Kubios, but free*
 
 </div>
 
@@ -18,14 +18,14 @@
 
 ## Overview
 
-Music HRV Toolkit is a Python-based pipeline for analyzing Heart Rate Variability (HRV) data in the context of music intervention research. It supports data from **HRV Logger** and **VNS Analyse**, provides automatic event detection and section-based analysis, and produces publication-ready metrics following current scientific guidelines.
+RRational is a free, open-source HRV analysis toolkit built for researchers. It provides a user-friendly Streamlit GUI for analyzing Heart Rate Variability data, with support for multiple data formats, interactive visualization, and publication-ready metrics following current scientific guidelines.
 
 ### Key Capabilities
 
 - **Multi-format Import**: HRV Logger CSV and VNS Analyse TXT files
 - **Interactive Visualization**: WebGL-accelerated tachograms with click-to-add events
 - **Section-Based Analysis**: Define time segments with start/end events and duration validation
-- **Music Protocol Support**: Randomization groups, auto-generated music section boundaries
+- **Research Protocol Support**: Group management, randomization groups, auto-generated section boundaries
 - **Scientific Rigor**: Follows 2024 Quigley guidelines for artifact handling and reporting
 - **Export Ready**: CSV export for statistical analysis
 
@@ -36,7 +36,7 @@ Music HRV Toolkit is a Python-based pipeline for analyzing Heart Rate Variabilit
 ### Prerequisites
 
 1. **Python 3.11, 3.12, or 3.13** - [Download from python.org](https://www.python.org/downloads/)
-   - ⚠️ Python 3.14 is **not yet supported** (pyarrow lacks wheels)
+   - Python 3.14 is **not yet supported** (pyarrow lacks wheels)
    - Check your version: `python --version`
 
 2. **uv** (recommended package manager) - [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
@@ -52,8 +52,8 @@ Music HRV Toolkit is a Python-based pipeline for analyzing Heart Rate Variabilit
 
 ```bash
 # Clone the repository
-git clone https://github.com/saiko-psych/music_hrv.git
-cd music_hrv
+git clone https://github.com/saiko-psych/rrational.git
+cd rrational
 
 # If you have Python 3.14, install a compatible version first:
 uv python install 3.11
@@ -71,10 +71,10 @@ pip install -e .
 ### Launch the GUI
 
 ```bash
-uv run streamlit run src/music_hrv/gui/app.py
+uv run streamlit run src/rrational/gui/app.py
 
 # Or with test mode (auto-loads demo data)
-uv run streamlit run src/music_hrv/gui/app.py -- --test-mode
+uv run streamlit run src/rrational/gui/app.py -- --test-mode
 ```
 
 ### Try the Demo Data
@@ -107,7 +107,7 @@ Load the demo data in the GUI to explore all features without real participant d
 
 - **Fast Rendering**: Plotly Scattergl with intelligent 5000-point downsampling
 - **Click-to-Add**: Add event markers by clicking on the plot
-- **Overlay Toggles**: Show/hide variability, exclusion zones, music sections
+- **Overlay Toggles**: Show/hide variability, exclusion zones, sections
 - **Zoom & Pan**: Full interactive exploration
 - **Exclusion Zones**: Define and edit time ranges to exclude from analysis
 
@@ -119,19 +119,12 @@ Section: "Baseline Rest"
 ├── End Events: rest_pre_end | measurement_start  (any can end section)
 ├── Expected Duration: 5 minutes
 ├── Tolerance: ±1 minute
-└── Status: ✅ Valid (5.2 min)
+└── Status: Valid (5.2 min)
 ```
 
 - Define sections with flexible start/end event patterns
 - Automatic duration validation with configurable tolerance
 - Visual status indicators for quick quality checks
-
-### Music Section Analysis
-
-- **Playlist Groups**: Define randomization groups with different music orders
-- **Auto-Generate Events**: Create music boundaries at configurable intervals
-- **Per-Style Analysis**: Analyze HRV separately for each music type
-- **Cross-Group Comparison**: Compare effects across randomization groups
 
 ### HRV Metrics (via NeuroKit2)
 
@@ -164,7 +157,6 @@ This toolkit follows current HRV research guidelines:
 | **Participants** | View tachogram, manage events, validate sections, define exclusion zones |
 | **Setup > Events** | Define expected events with synonym patterns (regex support) |
 | **Setup > Groups** | Create/edit study groups, assign expected sections |
-| **Setup > Playlists** | Manage music randomization groups and labels |
 | **Setup > Sections** | Define time ranges with duration and tolerance |
 | **Analysis** | Run HRV analysis, view metrics, export CSV |
 
@@ -226,20 +218,20 @@ RR-Intervalle - Korrigierte Werte (Aktiv)
 
 ## Configuration & Data Storage
 
-### App Settings (`~/.music_hrv/`)
+### App Settings (`~/.rrational/`)
 
 Global settings persist across sessions:
 
 ```
-~/.music_hrv/
+~/.rrational/
 ├── groups.yml              # Study group definitions
 ├── events.yml              # Event types and synonyms
 ├── sections.yml            # Section definitions
 ├── participants.yml        # Participant group assignments
 ├── participant_events.yml  # Backup of saved events
-├── playlist_groups.yml     # Music randomization groups
+├── playlist_groups.yml     # Randomization groups
 ├── settings.yml            # App settings (data folder, plot options)
-└── music_labels.yml        # Music item labels
+└── music_labels.yml        # Section labels
 ```
 
 ### Processed Data (`data/processed/`)
@@ -260,8 +252,8 @@ This allows sharing processed events with collaborators without sharing raw data
 ## Project Structure
 
 ```
-music_hrv/
-├── src/music_hrv/
+rrational/
+├── src/rrational/
 │   ├── gui/
 │   │   ├── app.py           # Main Streamlit app (~3700 lines)
 │   │   ├── tabs/            # Tab modules (data, setup, analysis)
@@ -315,15 +307,11 @@ uv run ruff check src/ tests/ --fix
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| **v0.6.8** | 2026-01 | Professional analysis plots with reference values, data quality warnings |
+| **v0.7.0** | 2026-01 | Renamed to RRational, smart power formatting |
+| v0.6.8 | 2026-01 | Professional analysis plots with reference values, data quality warnings |
 | v0.6.7 | 2026-01 | Processed folder for events, --test-mode flag, Analysis tab fixes |
 | v0.6.6 | 2025-12 | Settings panel, plot resolution slider, performance fixes |
 | v0.6.5 | 2025-12 | Demo data, VNS event alignment fix, tachogram naming |
-| v0.6.4 | 2025-12 | Multiple end events, VNS timestamp parsing |
-| v0.6.3 | 2025-12 | Section-based validation with duration/tolerance |
-| v0.6.2 | 2025-12 | Editable exclusion zones |
-| v0.6.1 | 2025-12 | Auto-fill boundary events, click-to-add events |
-| v0.6.0 | 2025-12 | Music Section Analysis mode |
 
 ---
 
@@ -331,8 +319,9 @@ uv run ruff check src/ tests/ --fix
 
 - [ ] Standalone executable (PyInstaller/Nuitka)
 - [ ] Tutorial videos
-- [ ] Playlist group comparison visualization
+- [ ] Group comparison visualization
 - [ ] Batch export for all participants
+- [ ] PDF/HTML report generation
 
 ---
 
@@ -352,8 +341,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Made for HRV researchers**
+**RRational - A rational approach to HRV**
 
-*If you use this tool in your research, please cite appropriately.*
+*Free and open-source. If you use this tool in your research, please cite appropriately.*
 
 </div>

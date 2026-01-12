@@ -8,12 +8,12 @@ from pathlib import Path
 
 import streamlit as st
 
-from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS, load_recording, discover_recordings
-from music_hrv.prep.summaries import load_hrv_logger_preview, load_vns_preview
-from music_hrv.segments.section_normalizer import SectionNormalizer
-from music_hrv.config.sections import SectionsConfig, SectionDefinition, load_sections_config, DEFAULT_SECTIONS_PATH
-from music_hrv.gui.persistence import (
+from rrational.cleaning.rr import CleaningConfig
+from rrational.io import DEFAULT_ID_PATTERN, PREDEFINED_PATTERNS, load_recording, discover_recordings
+from rrational.prep.summaries import load_hrv_logger_preview, load_vns_preview
+from rrational.segments.section_normalizer import SectionNormalizer
+from rrational.config.sections import SectionsConfig, SectionDefinition, load_sections_config, DEFAULT_SECTIONS_PATH
+from rrational.gui.persistence import (
     save_groups,
     load_groups,
     save_events,
@@ -685,7 +685,7 @@ def cached_discover_recordings(data_dir_str: str, pattern: str):
 @st.cache_data(show_spinner=False, ttl=600)
 def cached_load_recording(rr_paths_tuple, events_paths_tuple, participant_id: str):
     """Cache loaded recording data for instant access."""
-    from music_hrv.io.hrv_logger import RecordingBundle
+    from rrational.io.hrv_logger import RecordingBundle
     bundle = RecordingBundle(
         participant_id=participant_id,
         rr_paths=[Path(p) for p in rr_paths_tuple],
@@ -702,7 +702,7 @@ def cached_load_recording(rr_paths_tuple, events_paths_tuple, participant_id: st
 @st.cache_data(show_spinner=False, ttl=300)
 def cached_clean_rr_intervals(rr_data_tuple, config_dict):
     """Cache cleaned RR intervals to avoid recomputation."""
-    from music_hrv.cleaning.rr import clean_rr_intervals, RRInterval
+    from rrational.cleaning.rr import clean_rr_intervals, RRInterval
     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
                     for ts, rr, elapsed in rr_data_tuple]
     config = CleaningConfig(
@@ -760,7 +760,7 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
 @st.cache_data(show_spinner=False, ttl=600)
 def cached_load_vns_recording(vns_path_str: str, participant_id: str, use_corrected: bool = False):
     """Cache loaded VNS recording data for instant access."""
-    from music_hrv.io.vns_analyse import VNSRecordingBundle, load_vns_recording
+    from rrational.io.vns_analyse import VNSRecordingBundle, load_vns_recording
     bundle = VNSRecordingBundle(
         participant_id=participant_id,
         file_path=Path(vns_path_str),

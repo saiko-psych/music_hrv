@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from music_hrv.segments import SectionNormalizer
+from rrational.segments import SectionNormalizer
 
 
 def build_normalizer() -> SectionNormalizer:

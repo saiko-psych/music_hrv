@@ -1,7 +1,7 @@
 [project]
-name = "music-hrv"
-version = "0.6.8"
-description = "HRV segmentation and analysis pipeline built on neurokit2"
+name = "rrational"
+version = "0.7.0"
+description = "Free, open-source HRV analysis toolkit - a rational approach to heart rate variability"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pyyaml>=6.0",
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-music-hrv = "music_hrv.cli:main"
+rrational = "rrational.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.9,<0.10.0"]

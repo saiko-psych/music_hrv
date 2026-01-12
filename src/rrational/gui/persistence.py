@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-CONFIG_DIR = Path.home() / ".music_hrv"
+CONFIG_DIR = Path.home() / ".rrational"
 GROUPS_FILE = CONFIG_DIR / "groups.yml"
 EVENTS_FILE = CONFIG_DIR / "events.yml"
 SECTIONS_FILE = CONFIG_DIR / "sections.yml"
@@ -211,7 +211,7 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
     """Save participant events (edited events) to YAML.
 
     Saves to TWO locations:
-    1. ~/.music_hrv/participant_events.yml (app config - for persistence across sessions)
+    1. ~/.rrational/participant_events.yml (app config - for persistence across sessions)
     2. {data_dir}/../processed/{participant_id}_events.yml (project folder - for data portability)
 
     Format per participant:
@@ -293,7 +293,7 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
         output_data = {
             "participant_id": participant_id,
             "format_version": "1.0",
-            "source_type": "music_hrv_toolkit",
+            "source_type": "rrational_toolkit",
             **serialized
         }
 
@@ -306,7 +306,7 @@ def load_participant_events(participant_id: str, data_dir: str | None = None) ->
 
     Checks TWO locations (processed folder takes priority):
     1. {data_dir}/../processed/{participant_id}_events.yml (project folder - preferred)
-    2. ~/.music_hrv/participant_events.yml (app config - fallback)
+    2. ~/.rrational/participant_events.yml (app config - fallback)
 
     Returns None if no saved events exist for this participant.
     """

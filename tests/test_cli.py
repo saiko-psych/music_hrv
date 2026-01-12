@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from music_hrv import cli
+from rrational import cli
 
 
 def test_parser_defaults() -> None:

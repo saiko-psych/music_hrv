@@ -1,1 +1,1 @@
-"""Test suite bootstrap for music_hrv."""
+"""Test suite bootstrap for rrational."""

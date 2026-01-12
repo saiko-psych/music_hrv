@@ -1,4 +1,4 @@
-"""Streamlit-based GUI for the Music HRV Toolkit."""
+"""Streamlit-based GUI for RRational - HRV Analysis Toolkit."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-from music_hrv.cleaning.rr import CleaningConfig
-from music_hrv.io import DEFAULT_ID_PATTERN, load_recording, discover_recordings
-from music_hrv.prep import load_hrv_logger_preview
-from music_hrv.segments.section_normalizer import SectionNormalizer
-from music_hrv.config.sections import SectionsConfig, SectionDefinition
+from rrational.cleaning.rr import CleaningConfig
+from rrational.io import DEFAULT_ID_PATTERN, load_recording, discover_recordings
+from rrational.prep import load_hrv_logger_preview
+from rrational.segments.section_normalizer import SectionNormalizer
+from rrational.config.sections import SectionsConfig, SectionDefinition
 import time
 import re
-from music_hrv.gui.persistence import (
+from rrational.gui.persistence import (
     save_groups,
     load_groups,
     save_events,
@@ -29,10 +29,10 @@ from music_hrv.gui.persistence import (
     save_settings,
     DEFAULT_SETTINGS,
 )
-from music_hrv.gui.tabs.setup import render_setup_tab
-from music_hrv.gui.tabs.data import render_data_tab
-from music_hrv.gui.tabs.analysis import render_analysis_tab
-from music_hrv.gui.help_text import (
+from rrational.gui.tabs.setup import render_setup_tab
+from rrational.gui.tabs.data import render_data_tab
+from rrational.gui.tabs.analysis import render_analysis_tab
+from rrational.gui.help_text import (
     ARTIFACT_CORRECTION_HELP,
     VNS_DATA_HELP,
 )
@@ -136,7 +136,7 @@ def get_plot_colors():
 
 # Page configuration
 st.set_page_config(
-    page_title="Music HRV Toolkit" + (" [TEST MODE]" if TEST_MODE else ""),
+    page_title="RRational" + (" [TEST MODE]" if TEST_MODE else ""),
     page_icon="M" if TEST_MODE else "M",
     layout="wide",
 )
@@ -1620,7 +1620,7 @@ if "summaries" not in st.session_state:
     auto_load_enabled = st.session_state.app_settings.get("auto_load", False)
     should_auto_load = (TEST_MODE or auto_load_enabled) and st.session_state.data_dir
     if should_auto_load:
-        from music_hrv.gui.shared import cached_load_hrv_logger_preview, cached_load_vns_preview
+        from rrational.gui.shared import cached_load_hrv_logger_preview, cached_load_vns_preview
         config_dict = {"rr_min_ms": 200, "rr_max_ms": 2000, "sudden_change_pct": 100}
         summaries = []
         data_path = Path(st.session_state.data_dir)
@@ -1891,7 +1891,7 @@ def cached_load_recording(rr_paths_tuple, events_paths_tuple, participant_id: st
     Uses tuples for paths since lists aren't hashable for caching.
     Returns serializable data: (rr_data, events_data, raw_events)
     """
-    from music_hrv.io.hrv_logger import RecordingBundle
+    from rrational.io.hrv_logger import RecordingBundle
     bundle = RecordingBundle(
         participant_id=participant_id,
         rr_paths=[Path(p) for p in rr_paths_tuple],
@@ -1909,7 +1909,7 @@ def cached_load_recording(rr_paths_tuple, events_paths_tuple, participant_id: st
 @st.cache_data(show_spinner=False, ttl=600)
 def cached_load_vns_recording(vns_path_str: str, participant_id: str, use_corrected: bool = False):
     """Cache loaded VNS recording data for instant access."""
-    from music_hrv.io.vns_analyse import VNSRecordingBundle, load_vns_recording
+    from rrational.io.vns_analyse import VNSRecordingBundle, load_vns_recording
     bundle = VNSRecordingBundle(
         participant_id=participant_id,
         file_path=Path(vns_path_str),
@@ -1934,7 +1934,7 @@ def cached_clean_rr_intervals(rr_data_tuple, config_dict, is_vns_data: bool = Fa
         - For HRV Logger: rr_data = [(timestamp, rr_ms), ...], cleaned data
         - For VNS: rr_data = [(timestamp, rr_ms, is_flagged=False), ...], ALL data, no flags
     """
-    from music_hrv.cleaning.rr import clean_rr_intervals, CleaningStats, RRInterval
+    from rrational.cleaning.rr import clean_rr_intervals, CleaningStats, RRInterval
 
     # Reconstruct RR intervals from cached data
     rr_intervals = [RRInterval(timestamp=ts, rr_ms=rr, elapsed_ms=elapsed)
@@ -3729,7 +3729,7 @@ def render_rr_plot_fragment(participant_id: str):
 
             with col_add:
                 if st.button("+ Add", key=f"add_click_{participant_id}_{clicked_time_str}", type="primary"):
-                    from music_hrv.prep.summaries import EventStatus
+                    from rrational.prep.summaries import EventStatus
 
                     # Determine label
                     event_label = custom_evt_label if selected_evt == "Custom..." else selected_evt
@@ -4020,10 +4020,10 @@ def main():
     _script_start = _time.time()
 
     if TEST_MODE:
-        st.title("Music HRV Toolkit [TEST MODE]")
+        st.title("RRational [TEST MODE]")
         st.info("**Test mode active** - Using demo data from `data/demo/hrv_logger`")
     else:
-        st.title("Music HRV Toolkit")
+        st.title("RRational")
     st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
 
     # Sidebar navigation using buttons (fast - only renders active page)
@@ -4328,8 +4328,8 @@ def main():
                     # Store events in session state for this participant if not already there
                     if selected_participant not in st.session_state.participant_events:
                         # First check if we have saved events for this participant
-                        from music_hrv.gui.persistence import load_participant_events
-                        from music_hrv.prep.summaries import EventStatus
+                        from rrational.gui.persistence import load_participant_events
+                        from rrational.prep.summaries import EventStatus
                         from datetime import datetime
 
                         saved_events = load_participant_events(selected_participant, st.session_state.data_dir)
@@ -4473,7 +4473,7 @@ def main():
                         st.markdown("### Exclusion Zones")
                     with col_excl_help:
                         with st.popover("Help"):
-                            from music_hrv.gui.help_text import EXCLUSION_ZONES_HELP
+                            from rrational.gui.help_text import EXCLUSION_ZONES_HELP
                             st.markdown(EXCLUSION_ZONES_HELP)
 
                     # Set exclusion method (click two points only)
@@ -4605,7 +4605,7 @@ def main():
                             st.markdown("**Current Exclusion Zones:**")
                         with col_save:
                             if st.button("Save", key=f"save_exclusions_{selected_participant}", type="primary", help="Save exclusion zones to disk"):
-                                from music_hrv.gui.persistence import save_participant_events
+                                from rrational.gui.persistence import save_participant_events
                                 save_participant_events(selected_participant, st.session_state.participant_events[selected_participant], st.session_state.data_dir)
                                 show_toast("Exclusion zones saved", icon="success")
 
@@ -4846,7 +4846,7 @@ def main():
                                     col_gap_btn1, col_gap_btn2 = st.columns([1, 2])
                                     with col_gap_btn1:
                                         if st.button("Create Gap Events", key=f"auto_gap_{selected_participant}"):
-                                            from music_hrv.prep.summaries import EventStatus
+                                            from rrational.prep.summaries import EventStatus
                                             events_added = 0
                                             for gap in gap_info['gaps']:
                                                 # Create gap_start event
@@ -4960,7 +4960,7 @@ def main():
                                         )
                                     with col_var_btn:
                                         if st.button("Create Variability Events", key=f"auto_var_{selected_participant}"):
-                                            from music_hrv.prep.summaries import EventStatus
+                                            from rrational.prep.summaries import EventStatus
                                             events_added = 0
                                             cv_thresh_decimal = cv_threshold / 100.0
 
@@ -5112,7 +5112,7 @@ def main():
 
                         # Generate button
                         if st.button("Generate Music Events", key=f"gen_music_{selected_participant}"):
-                            from music_hrv.prep.summaries import EventStatus
+                            from rrational.prep.summaries import EventStatus
                             from datetime import timedelta
 
                             events_added = 0
@@ -5231,7 +5231,7 @@ def main():
                     def ensure_event_status(item):
                         """Convert dict to EventStatus if needed."""
                         if isinstance(item, dict):
-                            from music_hrv.prep.summaries import EventStatus
+                            from rrational.prep.summaries import EventStatus
                             from datetime import datetime as dt
                             ts = item.get("first_timestamp")
                             if ts and isinstance(ts, str):
@@ -5363,7 +5363,7 @@ def main():
                     with col_add3:
                         def add_quick_event():
                             """Add event with selected type and time."""
-                            from music_hrv.prep.summaries import EventStatus
+                            from rrational.prep.summaries import EventStatus
                             import datetime as dt
 
                             # Determine label
@@ -5600,7 +5600,7 @@ def main():
                                                 st.session_state.participant_events[participant_id]['events'] = all_evts
                                                 st.session_state.participant_events[participant_id]['manual'] = []
                                                 # Save to persistence so changes persist across reruns
-                                                from music_hrv.gui.persistence import save_participant_events
+                                                from rrational.gui.persistence import save_participant_events
                                                 save_participant_events(
                                                     participant_id,
                                                     st.session_state.participant_events[participant_id],
@@ -5881,7 +5881,7 @@ def main():
 
                     # Save/Reset participant events
                     st.markdown("---")
-                    from music_hrv.gui.persistence import (
+                    from rrational.gui.persistence import (
                         save_participant_events,
                         load_participant_events,
                         delete_participant_events,

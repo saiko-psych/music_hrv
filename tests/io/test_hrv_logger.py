@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from music_hrv.io import discover_recordings, load_recording, load_rr_intervals
+from rrational.io import discover_recordings, load_recording, load_rr_intervals
 
 FIXTURES = Path("tests/fixtures/hrv_logger")
 

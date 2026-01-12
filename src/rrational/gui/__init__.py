@@ -6,6 +6,6 @@ __all__: list[str] = ["main"]
 def __getattr__(name: str):
     """Lazy import to avoid loading app.py on package import."""
     if name == "main":
-        from music_hrv.gui.app import main
+        from rrational.gui.app import main
         return main
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

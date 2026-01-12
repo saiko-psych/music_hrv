@@ -1,6 +1,6 @@
 """High-level orchestration helpers for data preparation previews."""
 
-from music_hrv.prep.summaries import (
+from rrational.prep.summaries import (
     EventStatus,
     PreparationSummary,
     load_hrv_logger_preview,

@@ -1,6 +1,6 @@
 """File ingestion helpers for HRV Logger and VNS Analyse exports."""
 
-from music_hrv.io.hrv_logger import (
+from rrational.io.hrv_logger import (
     DEFAULT_ID_PATTERN,
     PREDEFINED_PATTERNS,
     DuplicateInfo,
@@ -16,7 +16,7 @@ from music_hrv.io.hrv_logger import (
     load_rr_intervals,
 )
 
-from music_hrv.io.vns_analyse import (
+from rrational.io.vns_analyse import (
     VNSRecording,
     VNSRecordingBundle,
     discover_vns_recordings,
