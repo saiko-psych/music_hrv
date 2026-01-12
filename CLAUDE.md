@@ -98,7 +98,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 - [ ] Playlist group comparison (compare music types across playlists)
 - [ ] Setup section rework (better saving, design improvements)
 - [ ] Project management / data browsing (R-style projects, data can be anywhere)
-- [ ] Kubios workflow comparison research (ensure quality parity with Kubios)
+- [ ] Kubios workflow: manual beat editing (click to mark/unmark individual artifacts)
 - [ ] Evaluate hrv-analysis library for preprocessing (multiple ectopic methods, cleaner RR→NN pipeline)
 - [ ] R-R power spectrum plot
 - [ ] Generalized event system (music events with single border, extensible for other event types)
@@ -118,6 +118,7 @@ uv run ruff check src/ tests/ --fix            # Lint
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Done:**
+- [x] ~~Kubios-like artifact workflow (method selector, threshold, correction preview)~~ (v0.7.0)
 - [x] ~~Favicon (Poincaré plot style)~~ (v0.7.0)
 - [x] ~~Project renamed to RRational~~ (v0.7.0)
 - [x] ~~Smart power formatting (no more "0 ms²")~~ (v0.7.0)
