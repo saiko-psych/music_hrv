@@ -184,20 +184,22 @@ Based on current research and guidelines:
 
 This app follows scientific best practices:
 
-✅ **Implemented:**
+**Implemented:**
 - NeuroKit2 Kubios algorithm for artifact detection/correction
-- Threshold-based filtering (min/max RR)
+- Threshold-based detection (Malik method) for long recordings
 - Visual display of flagged/artifact intervals
+- Signal Inspection mode for beat-level review
+- Correction preview (green dotted line)
 - Artifact correction optional at analysis time
 - Time and frequency domain HRV metrics
 
-⚠️ **User Responsibility:**
+**User Responsibility:**
 - Visual inspection of plots before analysis
 - Checking artifact rates displayed in UI
 - Deciding whether to correct or exclude segments
 - Ensuring sufficient beat count for analysis type
 
-📋 **Reported in Results:**
+**Reported in Results:**
 - Artifact counts (when correction enabled)
 - Number of beats used
 - Section boundaries
@@ -226,37 +228,47 @@ are independent of RR values, so removal doesn't affect timing).
 """
 
 ARTIFACT_CORRECTION_HELP = """
-### NeuroKit2 Artifact Correction (Kubios Algorithm)
+### Signal Inspection and Artifact Correction
 
-The artifact correction uses NeuroKit2's `signal_fixpeaks()` function with
-the Kubios algorithm to detect and correct:
+RRational provides two artifact detection methods:
 
-| Artifact Type | Description | Correction |
-|--------------|-------------|------------|
-| **Ectopic** | Premature/delayed beat | Interpolates from neighbors |
+| Method | Description | Best For |
+|--------|-------------|----------|
+| **Threshold** | Detects RR changes > X% from previous beat (Malik method) | Long recordings (>1 hour), simple artifacts |
+| **Kubios** | NeuroKit2's algorithm detecting ectopic/missed/extra beats | Short recordings, complex artifacts |
+
+#### Artifact Types Detected:
+
+| Type | Description | Correction |
+|------|-------------|------------|
+| **Threshold** | Beat differs >20% from previous | Interpolated |
+| **Ectopic** | Premature/delayed beat | Interpolated from neighbors |
 | **Missed** | Undetected R-peak | Splits long interval |
 | **Extra** | False positive detection | Removes extra beat |
-| **Long/Short** | Physiologically impossible | Interpolates |
 
-#### When to Use:
-- ✅ Data has known quality issues
-- ✅ High artifact count shown in plot
-- ✅ Important to salvage borderline segments
+#### Signal Inspection Mode:
+1. Select **"Signal Inspection"** mode in participant view
+2. Resolution auto-increases for beat-level inspection
+3. Red markers show detected artifacts on the plot
+4. Green dotted line shows corrected NN intervals (preview)
+5. Quality assessment shows artifact rate and recommendations
 
-#### When to Skip:
-- ❌ Clean data with <1% artifacts
-- ❌ You want to report uncorrected metrics
-- ❌ Segments are clearly invalid (exclude instead)
+#### Quality Guidelines (Quigley et al. 2024):
 
-#### Viewing Artifacts:
-1. In Participant view, check **"Show artifacts (NeuroKit2)"**
-2. Orange X markers show detected artifact locations
-3. Info bar shows breakdown by artifact type
+| Artifact Rate | Quality | Recommended Action |
+|---------------|---------|-------------------|
+| < 2% | Excellent | All metrics valid |
+| 2-5% | Good | Use with correction |
+| 5-10% | Acceptable | Prefer time-domain metrics |
+| > 10% | Poor | Exclude or use only RMSSD/SDNN |
 
-#### Applying Correction:
-1. In Analysis tab, check **"Apply artifact correction"**
-2. Corrected RR intervals used for HRV computation
-3. Results show artifact counts and correction applied
+#### Workflow:
+1. **Visual inspection** in Signal Inspection mode
+2. **Adjust threshold** if too many false positives (try 25-30%)
+3. **Switch methods** if one performs better for your data
+4. **Enable correction preview** to see interpolated values
+5. **Define exclusions** for problematic regions (switch to Exclusions mode)
+6. **Apply correction** during analysis (Analysis tab checkbox)
 """
 
 EXCLUSION_ZONES_HELP = """
@@ -294,7 +306,7 @@ When you run HRV analysis:
 
 #### Editing Exclusion Zones:
 
-- Click the **✏️ edit button** next to any zone to modify it
+- Click the **Edit** button next to any zone to modify it
 - Edit start/end times in HH:MM:SS format
 - Change the reason or "Exclude from duration" setting
 - Click **"Save"** to apply changes
@@ -302,8 +314,8 @@ When you run HRV analysis:
 #### Managing Exclusion Zones:
 
 - View existing zones in the **"Current Exclusion Zones"** list
-- Edit zones with the ✏️ button
-- Delete zones with the 🗑️ button
+- Edit zones with the Edit button
+- Delete zones with the X button
 - Click **"Save"** to persist zones to disk
 - Zones are restored when you reload the participant
 
@@ -317,12 +329,15 @@ If you know exact times, use **"Add manually"** instead:
 
 #### Best Practices:
 
-- ✅ Exclude known disruptions (bathroom, phone, talking)
-- ✅ Exclude movement artifacts visible in the plot
-- ✅ Add reasons for documentation and reproducibility
-- ✅ Use "Exclude from duration" for timing validation accuracy
-- ❌ Don't exclude data just because HRV values look unexpected
-- ❌ Don't exclude too much data (reduces statistical power)
+**Do:**
+- Exclude known disruptions (bathroom, phone, talking)
+- Exclude movement artifacts visible in the plot
+- Add reasons for documentation and reproducibility
+- Use "Exclude from duration" for timing validation accuracy
+
+**Don't:**
+- Exclude data just because HRV values look unexpected
+- Exclude too much data (reduces statistical power)
 """
 
 VNS_DATA_HELP = """

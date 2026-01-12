@@ -1985,15 +1985,16 @@ def cached_quality_analysis(rr_values_tuple, timestamps_tuple):
 
 @st.cache_data(show_spinner=False, ttl=300)
 def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "threshold",
-                               threshold_pct: float = 0.20):
+                               threshold_pct: float = 0.20, segment_beats: int = 300):
     """Cache artifact detection results with indices.
 
     Args:
         rr_values_tuple: Tuple of RR interval values in ms
         timestamps_tuple: Tuple of corresponding timestamps
-        method: Detection method - "threshold" (simple, good for long recordings)
-                or "kubios" (NeuroKit2 Kubios algorithm)
+        method: Detection method - "threshold" (simple), "kubios" (single pass),
+                or "kubios_segmented" (segmented for long recordings)
         threshold_pct: For threshold method - max allowed change between beats (0.20 = 20%)
+        segment_beats: For kubios_segmented - number of beats per segment (default: 300 = ~5 min)
 
     Returns dict with artifact indices mapped to timestamps for plotting.
     """
@@ -2022,7 +2023,67 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
 
             by_type = {"threshold": len(artifact_indices)}
 
-        else:  # kubios method
+        elif method == "kubios_segmented":
+            # Segmented Kubios - process long recordings in chunks for better sensitivity
+            if not NEUROKIT_AVAILABLE:
+                return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
+                        "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
+                        "method": method}
+
+            nk = get_neurokit()
+            rr_array = np.array(rr_list, dtype=float)
+            n_beats = len(rr_array)
+
+            # Initialize combined results
+            artifact_indices_set = set()
+            by_type = {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0}
+
+            # Process in overlapping segments for continuity
+            overlap = min(30, segment_beats // 10)  # 10% overlap or 30 beats
+            start_idx = 0
+
+            while start_idx < n_beats:
+                end_idx = min(start_idx + segment_beats, n_beats)
+                segment_rr = rr_array[start_idx:end_idx]
+
+                if len(segment_rr) < 10:
+                    break
+
+                # Create peak indices for this segment
+                peak_indices = np.cumsum(segment_rr).astype(int)
+                peak_indices = np.insert(peak_indices, 0, 0)
+
+                try:
+                    info, _ = nk.signal_fixpeaks(
+                        peak_indices,
+                        sampling_rate=1000,
+                        iterative=True,
+                        method="Kubios",
+                        show=False,
+                    )
+
+                    # Collect artifacts and adjust indices to global position
+                    for artifact_type in ["ectopic", "missed", "extra", "longshort"]:
+                        indices = info.get(artifact_type, [])
+                        if isinstance(indices, np.ndarray):
+                            indices = indices.tolist()
+                        elif not isinstance(indices, list):
+                            indices = []
+
+                        # Adjust indices to global position
+                        global_indices = [i + start_idx for i in indices if 0 <= i < len(segment_rr)]
+                        by_type[artifact_type] += len(global_indices)
+                        artifact_indices_set.update(global_indices)
+
+                except Exception:
+                    pass  # Skip failed segments
+
+                # Move to next segment (with overlap)
+                start_idx = end_idx - overlap if end_idx < n_beats else n_beats
+
+            artifact_indices = sorted(artifact_indices_set)
+
+        else:  # kubios method (single pass)
             if not NEUROKIT_AVAILABLE:
                 return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                         "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
@@ -2033,7 +2094,6 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             peak_indices = np.cumsum(rr_array).astype(int)
             peak_indices = np.insert(peak_indices, 0, 0)
 
-            # Use higher alpha for less sensitivity (better for long recordings)
             info, _ = nk.signal_fixpeaks(
                 peak_indices,
                 sampling_rate=1000,
@@ -3290,10 +3350,10 @@ def render_rr_plot_fragment(participant_id: str):
         if show_artifacts:
             artifact_method = st.selectbox(
                 "Method",
-                options=["threshold", "kubios"],
+                options=["threshold", "kubios", "kubios_segmented"],
                 index=0,  # Default to threshold (better for long recordings)
                 key=f"frag_artifact_method_{participant_id}",
-                help="Threshold: simple ratio check (better for long recordings). Kubios: NeuroKit2 algorithm."
+                help="Threshold: simple ratio check. Kubios: NeuroKit2 single pass. Kubios Segmented: processes in 5-min chunks (better for long recordings)."
             )
             if artifact_method == "threshold":
                 artifact_threshold = st.slider(
@@ -3302,15 +3362,27 @@ def render_rr_plot_fragment(participant_id: str):
                     key=f"frag_artifact_thresh_{participant_id}",
                     help="Max allowed RR change between beats (20% = Malik method)"
                 ) / 100.0
+                segment_beats = 300  # Default, not used for threshold
+            elif artifact_method == "kubios_segmented":
+                segment_beats = st.slider(
+                    "Segment size (beats)",
+                    min_value=100, max_value=600, value=300, step=50,
+                    key=f"frag_segment_beats_{participant_id}",
+                    help="Number of beats per segment (~300 = 5 min at 60 BPM)"
+                )
+                artifact_threshold = 0.20  # Not used
             else:
                 artifact_threshold = 0.20  # Not used for kubios
+                segment_beats = 300  # Default, not used for kubios
+            # Show corrected only when artifacts enabled
+            show_corrected = st.checkbox("Show corrected (NN)", value=plot_defaults.get("show_corrected", False),
+                                         key=f"frag_show_corrected_{participant_id}",
+                                         help="Preview corrected NN intervals (artifacts interpolated)")
         else:
             artifact_method = "threshold"
             artifact_threshold = 0.20
-        show_corrected = st.checkbox("Show corrected (NN)", value=plot_defaults.get("show_corrected", False),
-                                     key=f"frag_show_corrected_{participant_id}",
-                                     disabled=not show_artifacts,
-                                     help="Preview corrected NN intervals (artifacts interpolated)")
+            segment_beats = 300  # Default
+            show_corrected = False  # Not available without artifacts
         show_variability = st.checkbox("Show variability segments", value=plot_defaults.get("show_variability", False),
                                        key=f"frag_show_var_{participant_id}",
                                        help="Detect variance changepoints")
@@ -3409,26 +3481,37 @@ def render_rr_plot_fragment(participant_id: str):
 
     # Get theme colors for the plot
     theme = get_current_theme_colors()
+
+    # Check if Signal Inspection section filter is active
+    inspection_range = st.session_state.get(f"inspection_section_range_{participant_id}")
+    xaxis_config = dict(
+        title=dict(text="Time", font=dict(color=theme['text'])),
+        tickformat='%H:%M:%S',
+        gridcolor=theme['grid'],
+        linecolor=theme['line'],
+        tickfont=dict(color=theme['text']),
+        uirevision=True,  # Preserve x-axis zoom
+    )
+    # If a section is selected in Signal Inspection mode, zoom to that range
+    if inspection_range and len(inspection_range) == 2:
+        start_time, end_time = inspection_range
+        xaxis_config['range'] = [start_time, end_time]
+
     fig.update_layout(
         title=f"Tachogram - {participant_id}",
-        xaxis=dict(
-            title=dict(text="Time", font=dict(color=theme['text'])),
-            tickformat='%H:%M:%S',
-            gridcolor=theme['grid'],
-            linecolor=theme['line'],
-            tickfont=dict(color=theme['text']),
-        ),
+        xaxis=xaxis_config,
         yaxis=dict(
             title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
             gridcolor=theme['grid'],
             linecolor=theme['line'],
             tickfont=dict(color=theme['text']),
+            uirevision=True,  # Preserve y-axis zoom
         ),
         hovermode='closest',
         height=600,
         showlegend=True,
         legend=dict(x=1.02, y=1, xanchor='left', yanchor='top', font=dict(color=theme['text'])),
-        uirevision=participant_id,  # Preserve zoom/pan state across updates
+        uirevision=True,  # Preserve zoom/pan state across checkbox changes
         paper_bgcolor=theme['bg'],
         plot_bgcolor=theme['bg'],
         font=dict(color=theme['text']),
@@ -3490,7 +3573,8 @@ def render_rr_plot_fragment(participant_id: str):
     if show_artifacts:
         artifact_result = cached_artifact_detection(
             tuple(rr_list), tuple(timestamps_list),
-            method=artifact_method, threshold_pct=artifact_threshold
+            method=artifact_method, threshold_pct=artifact_threshold,
+            segment_beats=segment_beats
         )
         st.session_state[f"artifacts_{participant_id}"] = artifact_result
 
@@ -3539,6 +3623,32 @@ def render_rr_plot_fragment(participant_id: str):
                         hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
                     ))
                     st.success(f"Correction preview: {correction_result['n_corrected']} beats interpolated")
+
+    # Display manual artifacts (purple diamond markers)
+    manual_artifact_key = f"manual_artifacts_{participant_id}"
+    manual_artifacts = st.session_state.get(manual_artifact_key, [])
+    if manual_artifacts:
+        # Get timestamps and RR values for manual artifacts
+        manual_ts = []
+        manual_rr = []
+        timestamps = plot_data['timestamps']
+        rr_values = plot_data['rr_values']
+
+        for art in manual_artifacts:
+            plot_idx = art.get('plot_idx', 0)
+            if 0 <= plot_idx < len(timestamps):
+                manual_ts.append(timestamps[plot_idx])
+                manual_rr.append(rr_values[plot_idx])
+
+        if manual_ts:
+            fig.add_trace(ScatterType(
+                x=manual_ts,
+                y=manual_rr,
+                mode='markers',
+                name=f'Manual Artifacts ({len(manual_ts)})',
+                marker=dict(size=12, color='purple', symbol='diamond', line=dict(width=2, color='white')),
+                hovertemplate='Time: %{x}<br>RR: %{y} ms (MANUAL)<extra></extra>'
+            ))
 
     if show_variability:
         changepoint_result = cached_quality_analysis(tuple(rr_list), tuple(timestamps_list))
@@ -3775,15 +3885,24 @@ def render_rr_plot_fragment(participant_id: str):
     )
 
     # Display interactive plot with click detection
+    # Check current interaction mode
+    plot_mode_key = f"plot_mode_{participant_id}"
+    current_interaction_mode = st.session_state.get(plot_mode_key, "Add Events")
+
     col_mode_info, col_refresh = st.columns([5, 1])
     with col_mode_info:
         if is_exclusion_click_mode_check:
             st.info("**Click two points** on the plot to define an exclusion zone (start → end)")
-        else:
+        elif current_interaction_mode == "Signal Inspection":
+            st.info("Click on a beat to mark/unmark it as a manual artifact (purple diamonds)")
+        elif current_interaction_mode == "Add Events":
             st.info("Click on the plot to add a new event at that timestamp")
     with col_refresh:
         if st.button("Refresh", key=f"refresh_plot_{participant_id}", help="Refresh plot to show new markers (resets zoom)"):
             st.rerun()
+
+    # Store current zoom range in session state for potential restoration
+    zoom_key = f"plot_zoom_{participant_id}"
 
     # Use a stable key to help preserve component state
     selected_points = plotly_events(
@@ -3840,6 +3959,75 @@ def render_rr_plot_fragment(participant_id: str):
                         st.rerun()
 
                 # Always return early in exclusion mode (don't show event form)
+                return
+
+            # Check current interaction mode - only show event form in "Add Events" mode
+            plot_mode_key = f"plot_mode_{participant_id}"
+            current_mode = st.session_state.get(plot_mode_key, "Add Events")
+
+            # Handle Signal Inspection mode - manual artifact marking
+            if current_mode == "Signal Inspection":
+                # Find nearest beat index to clicked timestamp
+                timestamps = plot_data['timestamps']
+                rr_values = plot_data['rr_values']
+
+                # Convert clicked timestamp to comparable format
+                import numpy as np
+                ts_array = pd.to_datetime(timestamps)
+
+                # Ensure both timestamps have matching timezone awareness
+                if ts_array.tz is not None and clicked_ts.tzinfo is None:
+                    clicked_ts = clicked_ts.tz_localize(ts_array.tz)
+                elif ts_array.tz is None and clicked_ts.tzinfo is not None:
+                    clicked_ts = clicked_ts.tz_localize(None)
+
+                time_diffs = np.abs((ts_array - clicked_ts).total_seconds())
+                nearest_idx = int(np.argmin(time_diffs))
+
+                # Only mark if click is within 2 seconds of a beat
+                if time_diffs[nearest_idx] > 2.0:
+                    st.info(f"Click closer to a beat to mark it. Nearest beat is {time_diffs[nearest_idx]:.1f}s away.")
+                    return
+
+                # Toggle manual artifact marking
+                manual_artifact_key = f"manual_artifacts_{participant_id}"
+                if manual_artifact_key not in st.session_state:
+                    st.session_state[manual_artifact_key] = []
+
+                manual_artifacts = st.session_state[manual_artifact_key]
+
+                # Check if this beat is already marked - use original index from plot_data
+                original_idx = plot_data.get('original_indices', list(range(len(timestamps))))[nearest_idx]
+                clicked_rr = rr_values[nearest_idx]
+                clicked_ts_str = pd.to_datetime(timestamps[nearest_idx]).strftime('%H:%M:%S.%f')
+
+                # Find if this index is already in manual artifacts
+                existing_entry = None
+                for entry in manual_artifacts:
+                    if entry.get('original_idx') == original_idx:
+                        existing_entry = entry
+                        break
+
+                if existing_entry:
+                    # Remove from manual artifacts (toggle off)
+                    manual_artifacts.remove(existing_entry)
+                    st.toast(f"Removed manual artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+                else:
+                    # Add to manual artifacts (toggle on)
+                    manual_artifacts.append({
+                        'original_idx': original_idx,
+                        'plot_idx': nearest_idx,
+                        'timestamp': clicked_ts_str,
+                        'rr_value': clicked_rr,
+                        'source': 'manual'
+                    })
+                    st.toast(f"Marked as artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+
+                st.session_state[manual_artifact_key] = manual_artifacts
+                st.rerun()
+
+            # Only show event add form if in "Add Events" mode
+            if current_mode != "Add Events":
                 return
 
             # Show quick add form right here in the fragment
@@ -4563,13 +4751,13 @@ def main():
                         plot_data['source_app'] = source_app
                         st.session_state[f"plot_data_{selected_participant}"] = plot_data
 
-                        # Mode selector for plot interaction (Events vs Exclusions)
+                        # Mode selector for plot interaction (Events, Exclusions, or Signal Inspection)
                         st.markdown("---")
-                        col_mode1, col_mode2, col_mode3 = st.columns([1, 2, 1])
+                        col_mode1, col_mode2, col_mode3 = st.columns([2, 1, 1])
                         with col_mode1:
                             interaction_mode = st.radio(
                                 "Plot interaction",
-                                ["Add Events", "Add Exclusions"],
+                                ["Add Events", "Add Exclusions", "Signal Inspection"],
                                 key=f"plot_mode_{selected_participant}",
                                 horizontal=True,
                                 label_visibility="collapsed"
@@ -4579,14 +4767,22 @@ def main():
                                 # Clear exclusion method when not in exclusion mode
                                 if f"exclusion_method_{selected_participant}" in st.session_state:
                                     del st.session_state[f"exclusion_method_{selected_participant}"]
+
+                            # Auto-maximize resolution for Signal Inspection mode
+                            if interaction_mode == "Signal Inspection":
+                                st.caption("High resolution for beat-level inspection")
                         with col_mode3:
                             # Plot resolution slider - allow up to all points
                             n_total = plot_data['n_original']
                             # Only show slider if dataset is large enough to benefit from downsampling
                             if n_total > 1000:
                                 max_points = n_total  # Allow showing all points
-                                # Use saved resolution as default, but show all for small datasets
-                                if n_total <= saved_resolution:
+                                # Signal Inspection mode: force max resolution for beat-level inspection
+                                if interaction_mode == "Signal Inspection":
+                                    # Force session state to max resolution
+                                    st.session_state[resolution_key] = n_total
+                                    default_points = n_total
+                                elif n_total <= saved_resolution:
                                     default_points = n_total
                                 else:
                                     default_points = saved_resolution
@@ -4913,8 +5109,210 @@ def main():
 
                         st.button("+ Add Exclusion Zone", key=f"add_manual_excl_{selected_participant}", on_click=add_manual_exclusion)
 
+                # ================== SIGNAL INSPECTION (artifact correction mode) ==================
+                if interaction_mode == "Signal Inspection":
+                    col_sig_title, col_sig_help = st.columns([4, 1])
+                    with col_sig_title:
+                        st.markdown("### Signal Inspection")
+                    with col_sig_help:
+                        with st.popover("Help"):
+                            st.markdown(ARTIFACT_CORRECTION_HELP)
+
+                    # Section filter - focus on specific defined sections
+                    st.markdown("##### Focus on Section")
+                    sections = st.session_state.get("sections", {})
+                    section_options = ["Full recording"] + list(sections.keys())
+                    selected_section = st.selectbox(
+                        "View section",
+                        options=section_options,
+                        index=0,
+                        key=f"signal_inspection_section_{selected_participant}",
+                        help="Focus the plot on a specific section for detailed inspection"
+                    )
+
+                    # Show section time range info if a section is selected
+                    if selected_section != "Full recording" and selected_section in sections:
+                        section_def = sections[selected_section]
+                        participant_data = st.session_state.participant_events.get(selected_participant, {})
+
+                        # Build event timestamp lookup from stored events
+                        all_evts = participant_data.get('events', []) + participant_data.get('manual', [])
+                        event_timestamps = {}
+                        for evt in all_evts:
+                            if hasattr(evt, 'canonical') and evt.canonical and hasattr(evt, 'first_timestamp') and evt.first_timestamp:
+                                event_timestamps[evt.canonical] = evt.first_timestamp
+
+                        start_event = section_def.get("start_event", "")
+                        end_events = section_def.get("end_events", [])
+
+                        start_time = event_timestamps.get(start_event) if start_event else None
+                        end_time = None
+                        for end_ev in end_events:
+                            end_time = event_timestamps.get(end_ev)
+                            if end_time:
+                                break
+
+                        if start_time and end_time:
+                            # Calculate section stats
+                            section_start_str = start_time.strftime('%H:%M:%S') if hasattr(start_time, 'strftime') else str(start_time)
+                            section_end_str = end_time.strftime('%H:%M:%S') if hasattr(end_time, 'strftime') else str(end_time)
+                            section_duration = (end_time - start_time).total_seconds() if hasattr(end_time, 'total_seconds') or hasattr(start_time, '__sub__') else 0
+
+                            # Store for plot fragment to use
+                            st.session_state[f"inspection_section_range_{selected_participant}"] = (start_time, end_time)
+
+                            col_sec1, col_sec2, col_sec3 = st.columns(3)
+                            with col_sec1:
+                                st.caption(f"Start: {section_start_str}")
+                            with col_sec2:
+                                st.caption(f"End: {section_end_str}")
+                            with col_sec3:
+                                if section_duration:
+                                    mins = int(section_duration // 60)
+                                    secs = int(section_duration % 60)
+                                    st.caption(f"Duration: {mins}:{secs:02d}")
+                        else:
+                            st.warning(f"Section '{selected_section}' events not found in this participant's data")
+                            st.session_state[f"inspection_section_range_{selected_participant}"] = None
+                    else:
+                        # Clear section range when "Full recording" selected
+                        st.session_state[f"inspection_section_range_{selected_participant}"] = None
+
+                    st.markdown("---")
+
+                    # Get artifact detection results from session state (computed in plot fragment)
+                    artifact_key = f"artifacts_{selected_participant}"
+                    artifact_result = st.session_state.get(artifact_key, {})
+
+                    if artifact_result:
+                        total_artifacts = artifact_result.get('total_artifacts', 0)
+                        artifact_ratio = artifact_result.get('artifact_ratio', 0.0)
+                        by_type = artifact_result.get('by_type', {})
+
+                        # Include manual artifacts in total count
+                        manual_artifact_key_stats = f"manual_artifacts_{selected_participant}"
+                        manual_count = len(st.session_state.get(manual_artifact_key_stats, []))
+                        total_with_manual = total_artifacts + manual_count
+                        n_beats = len(rr_values) if rr_values else 1
+                        artifact_ratio_with_manual = total_with_manual / n_beats if n_beats > 0 else 0
+
+                        # Artifact statistics
+                        col_a1, col_a2, col_a3 = st.columns(3)
+                        with col_a1:
+                            # Quality badge based on artifact percentage (including manual)
+                            if artifact_ratio_with_manual < 0.02:
+                                badge = "[OK]"
+                            elif artifact_ratio_with_manual < 0.05:
+                                badge = "[!]"
+                            elif artifact_ratio_with_manual < 0.10:
+                                badge = "[!!]"
+                            else:
+                                badge = "[X]"
+                            display_count = f"{total_artifacts}" if manual_count == 0 else f"{total_artifacts}+{manual_count}"
+                            st.metric("Artifacts Detected", f"{badge} {display_count}")
+                        with col_a2:
+                            st.metric("Artifact Rate", f"{artifact_ratio_with_manual*100:.2f}%")
+                        with col_a3:
+                            # Show artifact types breakdown
+                            if by_type or manual_count > 0:
+                                type_parts = [f"{k}: {v}" for k, v in by_type.items()]
+                                if manual_count > 0:
+                                    type_parts.append(f"manual: {manual_count}")
+                                type_str = ", ".join(type_parts)
+                                st.metric("Types", type_str[:40])  # Truncate if too long
+
+                        # Quality recommendations (uses combined artifact ratio)
+                        st.markdown("##### Artifact Quality Assessment")
+                        if artifact_ratio_with_manual < 0.02:
+                            st.success("**Excellent quality** - Less than 2% artifacts. Data is suitable for all HRV analyses.")
+                        elif artifact_ratio_with_manual < 0.05:
+                            st.info("**Good quality** - 2-5% artifacts. Suitable for most HRV analyses with correction.")
+                        elif artifact_ratio_with_manual < 0.10:
+                            st.warning("**Acceptable quality** - 5-10% artifacts. Consider excluding high-artifact segments or using robust methods.")
+                        else:
+                            st.error("**Poor quality** - >10% artifacts. Consider excluding this recording or identifying problematic sections.")
+
+                        # Artifact details table
+                        st.markdown("---")
+                        st.markdown("##### Artifact Details")
+                        artifact_indices = artifact_result.get('artifact_indices', [])
+                        artifact_timestamps = artifact_result.get('artifact_timestamps', [])
+                        artifact_rr = artifact_result.get('artifact_rr', [])
+                        detection_method = artifact_result.get('method', 'unknown')
+
+                        if artifact_indices and len(artifact_indices) > 0:
+                            # Show first 20 artifacts in a table
+                            with st.expander(f"View Artifact List ({len(artifact_indices)} artifacts)", expanded=False):
+                                artifact_data = []
+                                for i, (idx, ts, rr) in enumerate(zip(
+                                    artifact_indices[:50],
+                                    artifact_timestamps[:50] if artifact_timestamps else [None]*50,
+                                    artifact_rr[:50] if artifact_rr else [None]*50
+                                )):
+                                    ts_str = ts.strftime('%H:%M:%S') if ts and hasattr(ts, 'strftime') else str(ts)[:8] if ts else "N/A"
+                                    artifact_data.append({
+                                        "#": i + 1,
+                                        "Index": idx,
+                                        "Time": ts_str,
+                                        "RR (ms)": f"{rr:.0f}" if rr else "N/A",
+                                        "Method": detection_method,
+                                    })
+                                if artifact_data:
+                                    st.dataframe(pd.DataFrame(artifact_data), hide_index=True, use_container_width=True)
+                                if len(artifact_indices) > 50:
+                                    st.caption(f"Showing first 50 of {len(artifact_indices)} artifacts")
+
+                        # Manual artifact marking section
+                        st.markdown("---")
+                        st.markdown("##### Manual Artifact Marking")
+                        st.caption("Click on a beat in the plot to toggle manual artifact marking (purple diamonds)")
+
+                        # Initialize manual artifacts in session state
+                        manual_artifact_key = f"manual_artifacts_{selected_participant}"
+                        if manual_artifact_key not in st.session_state:
+                            st.session_state[manual_artifact_key] = []
+
+                        manual_artifacts = st.session_state[manual_artifact_key]
+                        if manual_artifacts:
+                            col_man1, col_man2 = st.columns([3, 1])
+                            with col_man1:
+                                st.write(f"**{len(manual_artifacts)} manually marked artifacts** (purple diamonds)")
+                            with col_man2:
+                                if st.button("Clear all", key=f"clear_manual_art_{selected_participant}", type="secondary"):
+                                    st.session_state[manual_artifact_key] = []
+                                    st.rerun()
+
+                            # Show table of manual artifacts
+                            with st.expander(f"View Manual Artifacts ({len(manual_artifacts)})", expanded=False):
+                                manual_data = []
+                                for i, art in enumerate(manual_artifacts):
+                                    manual_data.append({
+                                        "#": i + 1,
+                                        "Time": art.get('timestamp', 'N/A')[:8],
+                                        "RR (ms)": f"{art.get('rr_value', 0):.0f}",
+                                        "Index": art.get('original_idx', 'N/A'),
+                                    })
+                                st.dataframe(pd.DataFrame(manual_data), hide_index=True, use_container_width=True)
+                                st.caption("Click on marked beats in the plot to remove them")
+                        else:
+                            st.info("Click on beats in the plot to mark them as artifacts")
+
+                        # Instructions
+                        st.markdown("---")
+                        st.markdown("##### Tips")
+                        st.markdown("""
+                        - **Orange X markers** show auto-detected artifacts
+                        - **Purple diamonds** show manually marked artifacts
+                        - **Green dotted line** shows corrected signal (enable "Show corrected (NN)")
+                        - Adjust **threshold %** (higher = less sensitive) if too many false positives
+                        - Try **kubios_segmented** method for long recordings
+                        - Use **Add Exclusions** mode to exclude problematic regions
+                        """)
+                    else:
+                        st.info("Enable 'Show artifacts' in plot options to see artifact detection results.")
+
                 # ================== SIGNAL QUALITY & EVENTS (only in events mode) ==================
-                if interaction_mode != "Add Exclusions":
+                if interaction_mode == "Add Events":
                     # Show quality analysis info if available
                     changepoint_key = f"changepoints_{selected_participant}"
                     gap_key = f"gaps_{selected_participant}"
