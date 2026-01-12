@@ -3850,10 +3850,15 @@ def render_rr_plot_fragment(participant_id: str):
                     font=dict(color='darkred', size=10)
                 )
 
-    # Show pending exclusion click points on the plot
+    # Show pending exclusion click points on the plot (only in Add Exclusions mode)
+    # Get current interaction mode to check if we should show exclusion markers
+    plot_mode_key = f"plot_mode_{participant_id}"
+    current_interaction_mode = st.session_state.get(plot_mode_key, "Add Events")
+
     exclusion_click_key = f"exclusion_clicks_{participant_id}"
     pending_clicks = st.session_state.get(exclusion_click_key, [])
-    if pending_clicks:
+    # Only show markers if in Add Exclusions mode to avoid visual clutter in other modes
+    if pending_clicks and current_interaction_mode == "Add Exclusions":
         # Draw markers for pending exclusion points
         click_times = []
         click_y_values = []
@@ -3955,10 +3960,18 @@ def render_rr_plot_fragment(participant_id: str):
 
     # Handle click - check if we're in exclusion click mode
     exclusion_click_key = f"exclusion_clicks_{participant_id}"
+    # Must verify BOTH that exclusion method is set AND we're in Add Exclusions mode
     is_exclusion_click_mode = (
+        current_interaction_mode == "Add Exclusions" and
         exclusion_method_key in st.session_state and
         st.session_state[exclusion_method_key] == "Click two points on plot"
     )
+    
+    # Clear pending exclusion clicks if we switched away from Add Exclusions mode
+    # (This prevents old clicks from blocking other modes)
+    if current_interaction_mode != "Add Exclusions" and exclusion_click_key in st.session_state:
+        if st.session_state[exclusion_click_key]:  # Only clear if there are pending clicks
+            st.session_state[exclusion_click_key] = []
 
     # Handle click immediately
     # Track the last processed click to avoid reprocessing on rerun
