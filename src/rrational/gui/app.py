@@ -2410,36 +2410,72 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
 
     Downsamples data if too many points for faster rendering.
     Returns the data needed to build the plot quickly.
+    
+    Also pre-calculates sequential timestamps (cumulative RR time) from FULL data
+    before downsampling, for Signal Inspection mode.
 
     Args:
         flags_tuple: Optional tuple of booleans indicating flagged (problematic) intervals (VNS only)
     """
+    from datetime import timedelta
+    
     timestamps = list(timestamps_tuple)
     rr_values = list(rr_values_tuple)
     flags = list(flags_tuple) if flags_tuple else None
+    n_points = len(timestamps)
+
+    # Calculate sequential timestamps from FULL data (before downsampling)
+    # Sequential time = cumulative RR time, removes gaps
+    sequential_timestamps = []
+    detected_gaps = []  # Gaps detected from real timestamps
+    if timestamps and rr_values:
+        base_ts = timestamps[0]
+        cumulative_ms = 0
+        gap_threshold_ms = 2000  # 2 seconds - typical gap threshold
+        
+        for i, rr in enumerate(rr_values):
+            seq_ts = base_ts + timedelta(milliseconds=cumulative_ms)
+            sequential_timestamps.append(seq_ts)
+            
+            # Detect gaps from original timestamps
+            if i > 0:
+                real_delta_ms = (timestamps[i] - timestamps[i-1]).total_seconds() * 1000
+                if real_delta_ms > gap_threshold_ms:
+                    detected_gaps.append({
+                        'beat_idx': i,
+                        'seq_ts': seq_ts,
+                        'real_gap_sec': real_delta_ms / 1000
+                    })
+            
+            cumulative_ms += rr
 
     # Downsample if too many points (keeps every Nth point)
-    n_points = len(timestamps)
+    step = 1
     if n_points > downsample_threshold:
         step = n_points // downsample_threshold
         timestamps = timestamps[::step]
         rr_values = rr_values[::step]
+        sequential_timestamps = sequential_timestamps[::step]
         if flags:
             flags = flags[::step]
+        # Downsample gap indices to match
+        detected_gaps = [g for g in detected_gaps if g['beat_idx'] % step == 0]
 
     y_min = min(rr_values)
     y_max = max(rr_values)
     y_range = y_max - y_min
 
     result = {
-        'timestamps': timestamps,
+        'timestamps': timestamps,  # Original (real) timestamps
+        'sequential_timestamps': sequential_timestamps,  # Cumulative RR time
         'rr_values': rr_values,
         'y_min': y_min,
         'y_max': y_max,
         'y_range': y_range,
         'n_original': n_points,
         'n_displayed': len(timestamps),
-        'participant_id': participant_id
+        'participant_id': participant_id,
+        'detected_gaps': detected_gaps,  # Gaps for Signal Inspection mode
     }
     if flags:
         result['flags'] = flags
@@ -3325,50 +3361,22 @@ def render_rr_plot_fragment(participant_id: str):
     current_mode = st.session_state.get(plot_mode_key, "Add Events")
     use_sequential_timestamps = (current_mode == "Signal Inspection" and not is_vns_data)
 
-    # Store original timestamps for event alignment and click handling
+    # Original timestamps are always available for event alignment
     original_timestamps = plot_data['timestamps']
-
-    # For Signal Inspection mode with HRV Logger data, transform to sequential timestamps
-    # This ensures each beat has a unique x-position for clicking
-    # Also build a mapping from real timestamps to sequential for event alignment
-    real_to_sequential_map = None  # Will be a list of (real_ts, seq_ts) tuples
-    detected_gaps_for_display = []  # Gaps detected from real timestamps for visualization
-
-    if use_sequential_timestamps:
-        from datetime import timedelta
-        rr_values = plot_data['rr_values']
-        if original_timestamps and len(original_timestamps) > 0:
-            base_ts = original_timestamps[0]
-            cumulative_ms = 0
-            sequential_timestamps = []
-            real_to_sequential_map = []
-
-            # Gap detection threshold (same as normal gap detection: 2x expected RR)
-            gap_threshold_ms = 2000  # 2 seconds - typical gap threshold
-
-            for i, rr in enumerate(rr_values):
-                # Each beat's timestamp = base + cumulative RR time
-                seq_ts = base_ts + timedelta(milliseconds=cumulative_ms)
-                sequential_timestamps.append(seq_ts)
-                real_to_sequential_map.append((original_timestamps[i], seq_ts))
-
-                # Detect gaps: if real time jump is much larger than RR interval
-                if i > 0:
-                    real_delta = (original_timestamps[i] - original_timestamps[i-1]).total_seconds() * 1000
-                    if real_delta > gap_threshold_ms:
-                        # Record gap at this sequential position
-                        detected_gaps_for_display.append({
-                            'seq_ts': seq_ts,
-                            'real_gap_sec': real_delta / 1000,
-                            'beat_idx': i
-                        })
-
-                cumulative_ms += rr
-
-            # Replace timestamps in plot_data for this render
-            plot_data = dict(plot_data)  # Make a copy
-            plot_data['timestamps'] = sequential_timestamps
-            plot_data['original_timestamps'] = original_timestamps  # Keep for click mapping
+    
+    # Pre-calculated sequential timestamps and gaps from cached_get_plot_data
+    # These are calculated from FULL data before downsampling
+    sequential_timestamps = plot_data.get('sequential_timestamps', [])
+    detected_gaps_for_display = plot_data.get('detected_gaps', [])
+    
+    # Build real-to-sequential mapping for event alignment
+    real_to_sequential_map = None
+    if use_sequential_timestamps and sequential_timestamps:
+        real_to_sequential_map = list(zip(original_timestamps, sequential_timestamps))
+        # Use sequential timestamps for plotting
+        plot_data = dict(plot_data)  # Make a copy
+        plot_data['timestamps'] = sequential_timestamps
+        plot_data['original_timestamps'] = original_timestamps
 
     # Show source info and clear any old gap data for VNS
     if is_vns_data:
