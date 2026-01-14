@@ -333,6 +333,112 @@ Check background task output for actual port: `Local URL: http://localhost:850X`
 
 ---
 
+## Session 2026-01-14: Ready for Analysis Export Feature
+
+### Version Tag: `v0.7.1`
+
+### Major Feature: .rrational Export Format
+
+Implemented "Ready for Analysis" export functionality with full scientific audit trail:
+
+#### 1. New Export Module (`rrational_export.py`)
+- `RRationalExport` dataclass with comprehensive fields:
+  - Metadata: participant_id, timestamps, source info
+  - Segment definition: section, manual range, or full recording
+  - Raw RR data with original indices
+  - Processing state: cleaning config, exclusion zones, artifact detection
+  - Quality metrics: artifact rates, beat counts, Quigley grading
+  - Audit trail: processing steps with timestamps
+- `save_rrational()` and `load_rrational()` for YAML persistence
+- `find_rrational_files()` for discovering existing exports
+- Quality grading based on Quigley et al. (2024) guidelines
+
+#### 2. Export Section in Participants Tab
+Added "Export for Analysis" expander in sidebar:
+- Export type options: Full Recording, Selected Sections, Custom Time Range
+- Include options: Artifact detection, Manual markings, Corrected NN intervals, Audit trail
+- Preview and Export buttons
+- Saves to `{data_dir}/../processed/{pid}_{segment}.rrational`
+
+#### 3. Analysis Tab Integration
+Added ready file detection and usage:
+- Detects `.rrational` files when participant selected
+- Shows "Ready Files (N found)" with file selector
+- Data source radio: "Use raw data" vs "Use ready file"
+- When ready file selected:
+  - Skips section extraction (data pre-extracted)
+  - Shows quality metrics badge (beat count, artifact rate, grade)
+  - Displays audit trail in expandable section
+  - Uses stored artifact indices for analysis
+
+#### 4. Persistence Updates
+Added helper functions:
+- `get_processed_dir()` - Returns processed directory path
+- `list_ready_files_for_participant()` - Wrapper for find_rrational_files()
+
+### Files Created:
+- `src/rrational/gui/rrational_export.py` (471 lines)
+
+### Files Modified:
+- `src/rrational/gui/app.py` (+231 lines) - Export section UI
+- `src/rrational/gui/persistence.py` (+36 lines) - Helper functions
+- `src/rrational/gui/tabs/analysis.py` (+227 lines) - Ready file integration
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ Visual testing confirmed:
+  - Export creates valid .rrational YAML files
+  - Analysis tab detects ready files
+  - Ready file analysis works correctly
+  - Quality metrics displayed accurately
+
+### Key Patterns:
+
+**Export Format (.rrational):**
+```yaml
+rrational_version: "1.0"
+file_type: "ready_for_analysis"
+
+metadata:
+  participant_id: "0123ABCD"
+  export_timestamp: "2026-01-14T14:30:00+01:00"
+  source_app: "HRV Logger"
+
+segment:
+  type: "full_recording"
+
+raw_data:
+  n_beats: 17328
+  rr_intervals: [...]
+
+processing:
+  artifact_detection:
+    method: "lipponen2019_segmented"
+    total: 127
+  final_artifact_indices: [...]
+
+quality:
+  artifact_rate_final: 0.007
+  quality_grade: "excellent"
+
+audit:
+  processing_steps: [...]
+```
+
+**Ready File Selection:**
+```python
+# Detect ready files
+ready_files = find_rrational_files(participant_id, data_dir)
+
+# Use ready file if selected
+if use_ready_file:
+    ready_data = load_rrational(selected_file)
+    rr_values = [rr.rr_ms for rr in ready_data.rr_intervals]
+    artifact_indices = ready_data.final_artifact_indices
+```
+
+---
+
 ## Session 2026-01-11 (continued): Professional Analysis Plots
 
 ### Version Tag: `v0.6.8`

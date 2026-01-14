@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.7.0` (RRational) | **Tests**: 18/18 passing
+**Version**: `v0.7.1` (RRational) | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -89,6 +89,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 - `src/rrational/gui/tabs/` - Tab modules (data.py, setup.py, analysis.py)
 - `src/rrational/gui/shared.py` - Shared utilities, caching, helpers
 - `src/rrational/gui/persistence.py` - YAML storage
+- `src/rrational/gui/rrational_export.py` - .rrational export format handling
 
 **IMPORTANT**: Keep `app.py` lean! Add new features to appropriate tab modules, not app.py.
 
@@ -103,7 +104,6 @@ uv run ruff check src/ tests/ --fix            # Lint
 - [ ] R-R power spectrum plot
 - [ ] Generalized event system (music events with single border, extensible for other event types)
 - [ ] Speed/loading improvements
-- [ ] Export functionality (CSV/Excel for stats software)
 - [ ] Batch processing / groupwise analysis (fix/finish, add group comparison)
 - [ ] Report generation (PDF/HTML, scientific quality for methods sections)
 
@@ -118,6 +118,7 @@ uv run ruff check src/ tests/ --fix            # Lint
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Done:**
+- [x] ~~Ready for Analysis export (.rrational files with audit trail)~~ (v0.7.1)
 - [x] ~~Kubios-like artifact workflow (method selector, threshold, correction preview)~~ (v0.7.0)
 - [x] ~~Favicon (Poincaré plot style)~~ (v0.7.0)
 - [x] ~~Project renamed to RRational~~ (v0.7.0)

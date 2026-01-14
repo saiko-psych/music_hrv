@@ -7398,6 +7398,237 @@ def main():
                         else:
                             st.caption("Not yet saved")
 
+                    # Export for Analysis section
+                    st.markdown("---")
+                    with st.expander("Export for Analysis", expanded=False):
+                        st.caption("Export data with corrections and audit trail")
+
+                        # Export type selection
+                        export_type = st.radio(
+                            "Export type",
+                            ["Full Recording", "Selected Sections", "Custom Time Range"],
+                            key=f"export_type_{selected_participant}",
+                            horizontal=True
+                        )
+
+                        # Get sections for selection
+                        sections = load_sections()
+                        section_options = {name: s.get("label", name) for name, s in sections.items() if s.get("start_event")}
+
+                        selected_sections = []
+                        custom_start = None
+                        custom_end = None
+                        custom_label = ""
+
+                        if export_type == "Selected Sections":
+                            selected_sections = st.multiselect(
+                                "Sections to export",
+                                options=list(section_options.keys()),
+                                format_func=lambda x: section_options.get(x, x),
+                                key=f"export_sections_{selected_participant}",
+                                help="Select one or more sections to export"
+                            )
+                        elif export_type == "Custom Time Range":
+                            # Get recording time range for defaults
+                            summary = get_summary_dict().get(selected_participant)
+                            default_start = summary.first_timestamp if summary else None
+                            default_end = summary.last_timestamp if summary else None
+
+                            col_start, col_end = st.columns(2)
+                            with col_start:
+                                custom_start = st.text_input(
+                                    "Start time (HH:MM:SS)",
+                                    value=default_start.strftime("%H:%M:%S") if default_start else "09:00:00",
+                                    key=f"export_start_{selected_participant}"
+                                )
+                            with col_end:
+                                custom_end = st.text_input(
+                                    "End time (HH:MM:SS)",
+                                    value=default_end.strftime("%H:%M:%S") if default_end else "12:00:00",
+                                    key=f"export_end_{selected_participant}"
+                                )
+                            custom_label = st.text_input(
+                                "Segment label",
+                                value="custom_selection",
+                                key=f"export_label_{selected_participant}",
+                                help="Name for this custom segment"
+                            )
+
+                        # Export options
+                        st.markdown("**Include in export:**")
+                        col_opt1, col_opt2 = st.columns(2)
+                        with col_opt1:
+                            include_artifacts = st.checkbox("Artifact detection", value=True,
+                                                           key=f"exp_artifacts_{selected_participant}")
+                            include_manual = st.checkbox("Manual markings", value=True,
+                                                        key=f"exp_manual_{selected_participant}")
+                        with col_opt2:
+                            include_corrected = st.checkbox("Corrected NN intervals", value=False,
+                                                           key=f"exp_corrected_{selected_participant}")
+                            include_audit = st.checkbox("Full audit trail", value=True,
+                                                       key=f"exp_audit_{selected_participant}")
+
+                        # Export button
+                        if st.button("Export (.rrational)", key=f"export_btn_{selected_participant}",
+                                    type="primary", help="Export to processed folder"):
+                            from rrational.gui.rrational_export import (
+                                RRationalExport, RRIntervalExport, SegmentDefinition,
+                                ArtifactDetection, ManualArtifact, ExclusionZone,
+                                QualityMetrics, ProcessingStep, save_rrational,
+                                build_export_filename, get_quality_grade, get_quigley_recommendation
+                            )
+                            from datetime import datetime
+                            from pathlib import Path
+
+                            # Get data directory
+                            data_dir = st.session_state.get("data_dir")
+                            if not data_dir:
+                                st.error("No data directory set")
+                            else:
+                                # Get artifact state
+                                artifacts_key = f"artifacts_{selected_participant}"
+                                manual_artifacts_key = f"manual_artifacts_{selected_participant}"
+                                exclusions_key = f"artifact_exclusions_{selected_participant}"
+
+                                artifacts_data = st.session_state.get(artifacts_key, {})
+                                manual_artifacts_list = st.session_state.get(manual_artifacts_key, [])
+                                excluded_indices = list(st.session_state.get(exclusions_key, set()))
+
+                                # Get plot data
+                                plot_data_key = f"plot_data_{selected_participant}"
+                                plot_data = st.session_state.get(plot_data_key, {})
+                                rr_values = plot_data.get('rr_values', [])
+                                timestamps = plot_data.get('timestamps', [])
+
+                                if not rr_values:
+                                    st.error("No RR data loaded - view participant first")
+                                else:
+                                    now = datetime.now().isoformat()
+                                    processed_dir = Path(data_dir).parent / "processed"
+
+                                    # Get source info
+                                    summary = get_summary_dict().get(selected_participant)
+                                    source_app = getattr(summary, 'source_app', 'HRV Logger') if summary else 'HRV Logger'
+                                    source_paths = getattr(summary, 'rr_paths', []) if summary else []
+                                    recording_dt = getattr(summary, 'recording_datetime', None) if summary else None
+                                    if recording_dt and hasattr(recording_dt, 'isoformat'):
+                                        recording_dt = recording_dt.isoformat()
+
+                                    # Determine what to export
+                                    exports_to_make = []
+                                    if export_type == "Full Recording":
+                                        exports_to_make.append(("full", None, None))
+                                    elif export_type == "Selected Sections":
+                                        for sec_name in selected_sections:
+                                            exports_to_make.append(("section", sec_name, None))
+                                    else:  # Custom Time Range
+                                        exports_to_make.append(("custom", custom_label, (custom_start, custom_end)))
+
+                                    export_count = 0
+                                    for exp_type, exp_name, exp_range in exports_to_make:
+                                        # Build RR interval exports
+                                        rr_exports = []
+                                        for i, (ts, rr) in enumerate(zip(timestamps, rr_values)):
+                                            ts_str = ts.isoformat() if hasattr(ts, 'isoformat') else str(ts)
+                                            rr_exports.append(RRIntervalExport(
+                                                timestamp=ts_str,
+                                                rr_ms=int(rr),
+                                                original_idx=i
+                                            ))
+
+                                        # Build artifact detection
+                                        artifact_detection = None
+                                        if include_artifacts and artifacts_data:
+                                            artifact_detection = ArtifactDetection(
+                                                method=artifacts_data.get('method', 'threshold'),
+                                                total=artifacts_data.get('total_artifacts', 0),
+                                                by_type=artifacts_data.get('by_type', {}),
+                                                indices=artifacts_data.get('artifact_indices', [])
+                                            )
+
+                                        # Build manual artifacts
+                                        manual_exports = []
+                                        if include_manual:
+                                            for ma in manual_artifacts_list:
+                                                ts_str = ma.get('timestamp', '')
+                                                if hasattr(ts_str, 'isoformat'):
+                                                    ts_str = ts_str.isoformat()
+                                                manual_exports.append(ManualArtifact(
+                                                    original_idx=ma.get('original_idx', 0),
+                                                    timestamp=ts_str,
+                                                    rr_value=ma.get('rr_value', 0),
+                                                    marked_at=now
+                                                ))
+
+                                        # Calculate final artifacts
+                                        detected_indices = set(artifacts_data.get('artifact_indices', [])) if include_artifacts else set()
+                                        manual_indices = set(ma.get('original_idx', 0) for ma in manual_artifacts_list) if include_manual else set()
+                                        excluded_set = set(excluded_indices)
+                                        final_artifacts = list((detected_indices | manual_indices) - excluded_set)
+
+                                        # Quality metrics
+                                        artifact_rate = len(final_artifacts) / len(rr_values) if rr_values else 0
+                                        quality = QualityMetrics(
+                                            artifact_rate_raw=artifacts_data.get('artifact_ratio', 0) if include_artifacts else 0,
+                                            artifact_rate_final=artifact_rate,
+                                            beats_after_cleaning=len(rr_values),
+                                            quality_grade=get_quality_grade(artifact_rate),
+                                            quigley_recommendation=get_quigley_recommendation(artifact_rate, len(rr_values))
+                                        )
+
+                                        # Segment definition
+                                        segment_def = SegmentDefinition(
+                                            type=exp_type if exp_type != "custom" else "manual_range",
+                                            section_name=exp_name if exp_type == "section" else None,
+                                            time_range={"start": exp_range[0], "end": exp_range[1], "label": exp_name} if exp_type == "custom" else None
+                                        )
+
+                                        # Audit trail
+                                        steps = []
+                                        if include_audit:
+                                            steps = [
+                                                ProcessingStep(step=1, action="export_ready_for_analysis",
+                                                              timestamp=now, details=f"Exported {len(rr_values)} beats ({exp_type})")
+                                            ]
+
+                                        # Software versions
+                                        import neurokit2 as nk
+                                        import sys
+                                        software_versions = {
+                                            "rrational": "0.7.0",
+                                            "neurokit2": getattr(nk, '__version__', 'unknown'),
+                                            "python": sys.version.split()[0]
+                                        } if include_audit else {}
+
+                                        # Create export
+                                        export_data = RRationalExport(
+                                            participant_id=selected_participant,
+                                            export_timestamp=now,
+                                            exported_by="RRational v0.7.0",
+                                            source_app=source_app,
+                                            source_file_paths=[str(p) for p in source_paths],
+                                            recording_datetime=recording_dt,
+                                            segment=segment_def,
+                                            n_beats=len(rr_exports),
+                                            rr_intervals=rr_exports,
+                                            artifact_detection=artifact_detection,
+                                            manual_artifacts=manual_exports,
+                                            excluded_detected_indices=excluded_indices if include_manual else [],
+                                            final_artifact_indices=final_artifacts,
+                                            include_corrected=include_corrected,
+                                            quality=quality,
+                                            processing_steps=steps,
+                                            software_versions=software_versions
+                                        )
+
+                                        # Save
+                                        filename = build_export_filename(selected_participant, exp_name)
+                                        filepath = processed_dir / filename
+                                        save_rrational(export_data, filepath)
+                                        export_count += 1
+
+                                    st.success(f"Exported {export_count} file(s) to {processed_dir}")
+
             # Bottom navigation buttons (duplicate for convenience)
             st.markdown("---")
             col_nav1, col_nav2, col_nav3 = st.columns([3, 1, 1])

@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.7.0-green.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.7.1-green.svg)](pyproject.toml)
 [![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg)](tests/)
 [![NeuroKit2](https://img.shields.io/badge/powered%20by-NeuroKit2-orange.svg)](https://neuropsychology.github.io/NeuroKit/)
 
@@ -27,6 +27,7 @@ RRational is a free, open-source HRV analysis toolkit built for researchers. It 
 - **Section-Based Analysis**: Define time segments with start/end events and duration validation
 - **Research Protocol Support**: Group management, randomization groups, auto-generated section boundaries
 - **Scientific Rigor**: Follows 2024 Quigley guidelines for artifact handling and reporting
+- **Ready for Analysis Export**: Save inspected data as `.rrational` files with full audit trail
 - **Export Ready**: CSV export for statistical analysis
 
 ---
@@ -333,7 +334,8 @@ uv run ruff check src/ tests/ --fix
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| **v0.7.0** | 2026-01 | Renamed to RRational, smart power formatting |
+| **v0.7.1** | 2026-01 | Ready for Analysis export (.rrational files with audit trail) |
+| v0.7.0 | 2026-01 | Renamed to RRational, smart power formatting |
 | v0.6.8 | 2026-01 | Professional analysis plots with reference values, data quality warnings |
 | v0.6.7 | 2026-01 | Processed folder for events, --test-mode flag, Analysis tab fixes |
 | v0.6.6 | 2025-12 | Settings panel, plot resolution slider, performance fixes |
@@ -346,7 +348,6 @@ uv run ruff check src/ tests/ --fix
 - [ ] Standalone executable (PyInstaller/Nuitka)
 - [ ] Tutorial videos
 - [ ] Group comparison visualization
-- [ ] Batch export for all participants
 - [ ] PDF/HTML report generation
 
 ---

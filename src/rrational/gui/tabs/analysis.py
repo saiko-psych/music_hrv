@@ -47,6 +47,11 @@ from rrational.gui.shared import (  # noqa: E402
     cached_load_vns_recording,
 )
 from rrational.gui.help_text import ANALYSIS_HELP  # noqa: E402
+from rrational.gui.rrational_export import (  # noqa: E402
+    find_rrational_files,
+    load_rrational,
+    RRationalExport,
+)
 
 
 # =============================================================================
@@ -1746,38 +1751,187 @@ def _render_single_participant_analysis():
         key="analysis_participant"
     )
 
-    # Section selection
-    available_sections = list(st.session_state.sections.keys())
-    if not available_sections:
-        st.warning("No sections defined. Please define sections in the Sections tab first.")
-        return
+    # Check for .rrational ready files
+    ready_files = []
+    use_ready_file = False
+    selected_ready_file = None
 
-    selected_sections = st.multiselect(
-        "Select Sections to Analyze",
-        options=available_sections,
-        default=[available_sections[0]] if available_sections else [],
-        key="analysis_sections_single"
-    )
+    if selected_participant:
+        data_dir = st.session_state.get("data_dir")
+        ready_files = find_rrational_files(selected_participant, data_dir)
 
-    # Artifact correction options
-    with st.expander("Artifact Correction (signal_fixpeaks)", expanded=False):
-        st.markdown("""
-        Uses NeuroKit2's `signal_fixpeaks()` with the **Kubios algorithm** to detect and correct:
-        - **Ectopic beats** (premature/delayed beats)
-        - **Missed beats** (undetected R-peaks)
-        - **Extra beats** (false positive detections)
-        - **Long/short intervals** (physiologically implausible)
-        """)
-        apply_artifact_correction = st.checkbox(
-            "Apply artifact correction before HRV analysis",
-            value=False,
-            key="apply_artifact_correction",
-            help="Recommended for data with known quality issues"
+    if ready_files:
+        with st.expander(f"Ready Files ({len(ready_files)} found)", expanded=False):
+            st.info(
+                "Ready files contain pre-inspected data with artifact detection "
+                "and manual markings. Using a ready file skips section extraction "
+                "and uses the stored processing state."
+            )
+
+            data_source = st.radio(
+                "Data source",
+                options=["raw", "ready"],
+                format_func=lambda x: "Use raw data (extract from recording)" if x == "raw" else "Use ready file (.rrational)",
+                key="analysis_data_source",
+                horizontal=True,
+            )
+            use_ready_file = (data_source == "ready")
+
+            if use_ready_file:
+                # Format file options for display
+                file_options = []
+                for f in ready_files:
+                    # Extract segment name from filename
+                    name = f.stem  # e.g., "0123ABCD_rest_pre"
+                    segment = name.replace(f"{selected_participant}_", "")
+                    file_options.append((f, segment, f.stat().st_mtime))
+
+                selected_file_idx = st.selectbox(
+                    "Select ready file",
+                    options=range(len(file_options)),
+                    format_func=lambda i: f"{file_options[i][1]} ({file_options[i][0].name})",
+                    key="analysis_ready_file_select",
+                )
+                selected_ready_file = file_options[selected_file_idx][0]
+
+                # Show audit trail preview
+                try:
+                    ready_data = load_rrational(selected_ready_file)
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Beats", ready_data.n_beats)
+                    with col2:
+                        artifact_rate = ready_data.quality.artifact_rate_final * 100
+                        st.metric("Artifact Rate", f"{artifact_rate:.1f}%")
+                    with col3:
+                        st.metric("Quality", ready_data.quality.quality_grade.capitalize())
+
+                    if ready_data.processing_steps:
+                        with st.expander("Audit Trail"):
+                            for step in ready_data.processing_steps:
+                                st.write(f"**{step.action}**: {step.details}")
+                except Exception as e:
+                    st.error(f"Error loading ready file: {e}")
+                    use_ready_file = False
+
+    # Section selection (only when NOT using ready file)
+    selected_sections = []
+    apply_artifact_correction = False
+
+    if not use_ready_file:
+        available_sections = list(st.session_state.sections.keys())
+        if not available_sections:
+            st.warning("No sections defined. Please define sections in the Sections tab first.")
+            return
+
+        selected_sections = st.multiselect(
+            "Select Sections to Analyze",
+            options=available_sections,
+            default=[available_sections[0]] if available_sections else [],
+            key="analysis_sections_single"
         )
 
+        # Artifact correction options
+        with st.expander("Artifact Correction (signal_fixpeaks)", expanded=False):
+            st.markdown("""
+            Uses NeuroKit2's `signal_fixpeaks()` with the **Kubios algorithm** to detect and correct:
+            - **Ectopic beats** (premature/delayed beats)
+            - **Missed beats** (undetected R-peaks)
+            - **Extra beats** (false positive detections)
+            - **Long/short intervals** (physiologically implausible)
+            """)
+            apply_artifact_correction = st.checkbox(
+                "Apply artifact correction before HRV analysis",
+                value=False,
+                key="apply_artifact_correction",
+                help="Recommended for data with known quality issues"
+            )
+
     if st.button("Analyze HRV", key="analyze_single_btn", type="primary"):
-        if not selected_sections:
-            st.error("Please select at least one section")
+        # Validate inputs
+        if use_ready_file:
+            if not selected_ready_file:
+                st.error("Please select a ready file")
+                return
+        else:
+            if not selected_sections:
+                st.error("Please select at least one section")
+                return
+
+        # ===== READY FILE ANALYSIS PATH =====
+        if use_ready_file and selected_ready_file:
+            status_msg = f"Analyzing HRV from ready file..."
+            with st.status(status_msg, expanded=True) as status:
+                try:
+                    st.write(f"Loading ready file: {selected_ready_file.name}")
+                    progress = st.progress(0)
+
+                    # Load ready file
+                    ready_data = load_rrational(selected_ready_file)
+                    progress.progress(20)
+
+                    # Get clean RR intervals (exclude artifact indices)
+                    artifact_indices = set(ready_data.final_artifact_indices)
+                    clean_rr_ms = []
+                    for i, rr in enumerate(ready_data.rr_intervals):
+                        if i not in artifact_indices:
+                            clean_rr_ms.append(rr.rr_ms)
+
+                    if not clean_rr_ms:
+                        st.error("No clean RR intervals after removing artifacts")
+                        status.update(label="Analysis failed - no clean data", state="error")
+                        return
+
+                    st.write(f"Using {len(clean_rr_ms)} clean beats ({len(artifact_indices)} artifacts removed)")
+                    progress.progress(40)
+
+                    # Calculate HRV metrics
+                    st.write("Computing HRV metrics...")
+                    nk = get_neurokit()
+                    peaks = nk.intervals_to_peaks(clean_rr_ms, sampling_rate=1000)
+                    hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
+                    hrv_freq = nk.hrv_frequency(peaks, sampling_rate=1000, show=False)
+                    hrv_results = pd.concat([hrv_time, hrv_freq], axis=1)
+                    progress.progress(80)
+
+                    # Get segment name
+                    segment_name = "ready_file"
+                    if ready_data.segment:
+                        if ready_data.segment.section_name:
+                            segment_name = ready_data.segment.section_name
+                        elif ready_data.segment.time_range:
+                            segment_name = ready_data.segment.time_range.get("label", "custom_range")
+
+                    # Store results
+                    section_results = {
+                        segment_name: {
+                            "hrv_results": hrv_results,
+                            "rr_intervals": clean_rr_ms,
+                            "n_beats": len(clean_rr_ms),
+                            "label": segment_name,
+                            "artifact_info": {
+                                "total_artifacts": len(artifact_indices),
+                                "artifact_rate": ready_data.quality.artifact_rate_final,
+                                "method": ready_data.artifact_detection.method if ready_data.artifact_detection else "manual",
+                            },
+                            "ready_file": str(selected_ready_file),
+                            "quality_grade": ready_data.quality.quality_grade,
+                            "audit_trail": ready_data.processing_steps,
+                        }
+                    }
+
+                    progress.progress(100)
+                    st.session_state.analysis_results[selected_participant] = section_results
+                    status.update(label=f"Analysis complete from ready file!", state="complete")
+                    show_toast("Ready file analysis complete", icon="success")
+
+                except Exception as e:
+                    status.update(label="Error during analysis", state="error")
+                    st.error(f"Error analyzing ready file: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+        # ===== SECTION-BASED ANALYSIS PATH =====
         else:
             # Use status context for multi-step analysis
             with st.status("Analyzing HRV for selected sections...", expanded=True) as status:
@@ -2071,6 +2225,25 @@ def _display_single_participant_results(selected_participant: str):
             doc.add_hrv_results(section_name, hrv_results)
 
         with st.expander(f"{section_label} ({n_beats} beats, {recording_duration_sec/60:.1f} min)", expanded=True):
+            # Show ready file info if this came from a .rrational file
+            ready_file_path = result_data.get("ready_file")
+            quality_grade = result_data.get("quality_grade")
+            audit_trail = result_data.get("audit_trail")
+
+            if ready_file_path:
+                st.caption(f"Source: {ready_file_path}")
+                if quality_grade:
+                    grade_colors = {
+                        "excellent": "green", "good": "blue",
+                        "moderate": "orange", "poor": "red"
+                    }
+                    st.markdown(f"Quality grade: **:{grade_colors.get(quality_grade, 'gray')}[{quality_grade.upper()}]**")
+
+                if audit_trail:
+                    with st.expander("Audit Trail", expanded=False):
+                        for step in audit_trail:
+                            st.write(f"**{step.action}**: {step.details}")
+
             # Display HRV metrics using professional layout
             if not hrv_results.empty:
                 display_hrv_metrics_professional(

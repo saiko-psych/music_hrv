@@ -1088,7 +1088,7 @@ wheels = [
 
 [[package]]
 name = "rrational"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "neurokit2" },

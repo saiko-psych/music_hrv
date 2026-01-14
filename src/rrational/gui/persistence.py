@@ -440,3 +440,39 @@ def get_setting(key: str, default: Any = None) -> Any:
                 return default
         return value if value is not None else default
     return settings.get(key, default)
+
+
+def get_processed_dir(data_dir: str | Path | None = None) -> Path:
+    """Get the processed directory path for storing .rrational files.
+
+    Args:
+        data_dir: The data directory path. If provided, returns {data_dir}/../processed/
+                  If None, returns ~/.rrational/exports/
+
+    Returns:
+        Path to the processed/exports directory (created if needed)
+    """
+    if data_dir:
+        processed_dir = Path(data_dir).parent / "processed"
+    else:
+        processed_dir = CONFIG_DIR / "exports"
+
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    return processed_dir
+
+
+def list_ready_files_for_participant(participant_id: str, data_dir: str | Path | None = None) -> list[Path]:
+    """List all .rrational ready files for a participant.
+
+    Convenience wrapper around rrational_export.find_rrational_files()
+    for API consistency with other persistence functions.
+
+    Args:
+        participant_id: The participant ID to find files for
+        data_dir: Optional data directory to search
+
+    Returns:
+        List of .rrational file paths, sorted by modification time (newest first)
+    """
+    from rrational.gui.rrational_export import find_rrational_files
+    return find_rrational_files(participant_id, data_dir)
