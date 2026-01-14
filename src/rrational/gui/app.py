@@ -3711,16 +3711,33 @@ def render_rr_plot_fragment(participant_id: str):
         start_time, end_time = inspection_range
         xaxis_config['range'] = [start_time, end_time]
 
+    # Build Y-axis config (check for inspection zoom)
+    zoom_key = f"inspection_zoom_{participant_id}"
+    inspection_zoom = st.session_state.get(zoom_key, None)
+    yaxis_config = dict(
+        title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
+        gridcolor=theme['grid'],
+        linecolor=theme['line'],
+        tickfont=dict(color=theme['text']),
+        uirevision=True,  # Preserve y-axis zoom
+    )
+
+    # Apply inspection zoom if set
+    if inspection_zoom:
+        yaxis_config['range'] = [inspection_zoom['y_min'], inspection_zoom['y_max']]
+        # Also set X-axis range if time window specified
+        ts_for_zoom = plot_data.get('timestamps', [])
+        if inspection_zoom.get('x_window_seconds') and ts_for_zoom:
+            # Find center of data
+            mid_idx = len(ts_for_zoom) // 2
+            mid_time = get_pandas().to_datetime(ts_for_zoom[mid_idx])
+            half_window = get_pandas().Timedelta(seconds=inspection_zoom['x_window_seconds'] / 2)
+            xaxis_config['range'] = [mid_time - half_window, mid_time + half_window]
+
     fig.update_layout(
         title=f"Tachogram - {participant_id}",
         xaxis=xaxis_config,
-        yaxis=dict(
-            title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
-            gridcolor=theme['grid'],
-            linecolor=theme['line'],
-            tickfont=dict(color=theme['text']),
-            uirevision=True,  # Preserve y-axis zoom
-        ),
+        yaxis=yaxis_config,
         hovermode='closest',
         height=600,
         showlegend=True,
@@ -3850,6 +3867,29 @@ def render_rr_plot_fragment(participant_id: str):
             artifact_result["gap_adjacent_excluded"] = len(gap_adjacent_excluded)
             artifact_result["segment_boundaries"] = segment_boundaries
 
+        # Apply user exclusions (manually unmarked detected artifacts)
+        artifact_exclusions_key = f"artifact_exclusions_{participant_id}"
+        user_exclusions = st.session_state.get(artifact_exclusions_key, set())
+        if user_exclusions:
+            # Store original indices before filtering
+            all_detected_indices = artifact_result.get("artifact_indices", [])
+            # Filter out user-excluded artifacts
+            active_indices = [i for i in all_detected_indices if i not in user_exclusions]
+            excluded_indices = [i for i in all_detected_indices if i in user_exclusions]
+
+            # Update artifact_result
+            artifact_result = dict(artifact_result)  # Make a copy
+            artifact_result["artifact_indices"] = active_indices
+            artifact_result["artifact_timestamps"] = [timestamps_list[i] for i in active_indices if 0 <= i < len(timestamps_list)]
+            artifact_result["artifact_rr"] = [rr_list[i] for i in active_indices if 0 <= i < len(rr_list)]
+            artifact_result["total_artifacts"] = len(active_indices)
+            artifact_result["artifact_ratio"] = len(active_indices) / len(rr_list) if rr_list else 0.0
+            # Store excluded info for visualization
+            artifact_result["user_excluded_indices"] = excluded_indices
+            artifact_result["user_excluded_timestamps"] = [timestamps_list[i] for i in excluded_indices if 0 <= i < len(timestamps_list)]
+            artifact_result["user_excluded_rr"] = [rr_list[i] for i in excluded_indices if 0 <= i < len(rr_list)]
+            artifact_result["user_excluded_count"] = len(excluded_indices)
+
         st.session_state[f"artifacts_{participant_id}"] = artifact_result
 
         if artifact_result and artifact_result["total_artifacts"] > 0:
@@ -3857,11 +3897,14 @@ def render_rr_plot_fragment(participant_id: str):
             by_type = artifact_result["by_type"]
             method_used = artifact_result.get("method", "threshold")
 
-            # Build summary message with gap handling info
+            # Build summary message with gap handling and user exclusion info
             gap_excluded_count = artifact_result.get("gap_adjacent_excluded", 0)
+            user_excluded_count = artifact_result.get("user_excluded_count", 0)
             gap_suffix = ""
             if gap_excluded_count > 0:
                 gap_suffix = f" | {gap_excluded_count} gap-adjacent excluded"
+            if user_excluded_count > 0:
+                gap_suffix += f" | {user_excluded_count} manually unmarked"
             boundary_count = len(artifact_result.get("segment_boundaries", []))
             if boundary_count > 0:
                 gap_suffix += f" | {boundary_count} segment boundaries"
@@ -3925,6 +3968,20 @@ def render_rr_plot_fragment(participant_id: str):
                     name=f'Artifacts ({method_used})',
                     marker=dict(size=8, color='orange', symbol='x', line=dict(width=2)),
                     hovertemplate='Time: %{x}<br>RR: %{y} ms (ARTIFACT)<extra></extra>'
+                ))
+
+            # Add user-excluded artifact markers (dimmed gray circles with X)
+            excluded_ts = artifact_result.get("user_excluded_timestamps", [])
+            excluded_rr = artifact_result.get("user_excluded_rr", [])
+            if excluded_ts:
+                fig.add_trace(ScatterType(
+                    x=excluded_ts,
+                    y=excluded_rr,
+                    mode='markers',
+                    name=f'Excluded ({len(excluded_ts)})',
+                    marker=dict(size=10, color='gray', symbol='circle-x-open', line=dict(width=1)),
+                    opacity=0.5,
+                    hovertemplate='Time: %{x}<br>RR: %{y} ms (EXCLUDED - click to re-enable)<extra></extra>'
                 ))
 
             # Add segment boundary markers (cyan diamonds) when using boundary mode
@@ -4386,29 +4443,58 @@ def render_rr_plot_fragment(participant_id: str):
                 # Store this click as processed BEFORE modifying state
                 st.session_state[last_click_key] = clicked_time_str
 
-                # Toggle manual artifact marking
+                # Get artifact-related session state keys
                 manual_artifact_key = f"manual_artifacts_{participant_id}"
+                artifact_exclusions_key = f"artifact_exclusions_{participant_id}"
+
                 if manual_artifact_key not in st.session_state:
                     st.session_state[manual_artifact_key] = []
+                if artifact_exclusions_key not in st.session_state:
+                    st.session_state[artifact_exclusions_key] = set()
 
                 manual_artifacts = st.session_state[manual_artifact_key]
+                artifact_exclusions = st.session_state[artifact_exclusions_key]
 
-                # Check if this beat is already marked - use original index from plot_data
+                # Get original index for this beat
                 original_idx = plot_data.get('original_indices', list(range(len(timestamps))))[nearest_idx]
                 clicked_rr = rr_values[nearest_idx]
                 clicked_ts_str = get_pandas().to_datetime(timestamps[nearest_idx]).strftime('%H:%M:%S.%f')
 
-                # Find if this index is already in manual artifacts
-                existing_entry = None
+                # Check if this beat is a detected artifact (from threshold detection)
+                detected_artifact_indices = plot_data.get('artifact_result', {}).get('artifact_indices', [])
+                is_detected_artifact = original_idx in detected_artifact_indices
+
+                # Check if this beat is a manual artifact
+                existing_manual_entry = None
                 for entry in manual_artifacts:
                     if entry.get('original_idx') == original_idx:
-                        existing_entry = entry
+                        existing_manual_entry = entry
                         break
 
-                if existing_entry:
+                # Check if this detected artifact is currently excluded
+                is_excluded = original_idx in artifact_exclusions
+
+                # Toggle logic:
+                # 1. If it's a detected artifact that's NOT excluded -> exclude it (unmark)
+                # 2. If it's a detected artifact that IS excluded -> re-include it (re-mark)
+                # 3. If it's a manual artifact -> remove it
+                # 4. If it's a normal beat -> add as manual artifact
+
+                if is_detected_artifact:
+                    if is_excluded:
+                        # Re-include detected artifact (was excluded, now re-mark it)
+                        artifact_exclusions.discard(original_idx)
+                        st.toast(f"✓ Re-enabled detected artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+                    else:
+                        # Exclude detected artifact (unmark it)
+                        artifact_exclusions.add(original_idx)
+                        st.toast(f"✗ Excluded detected artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+                    st.session_state[artifact_exclusions_key] = artifact_exclusions
+                elif existing_manual_entry:
                     # Remove from manual artifacts (toggle off)
-                    manual_artifacts.remove(existing_entry)
+                    manual_artifacts.remove(existing_manual_entry)
                     st.toast(f"Removed manual artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+                    st.session_state[manual_artifact_key] = manual_artifacts
                 else:
                     # Add to manual artifacts (toggle on)
                     manual_artifacts.append({
@@ -4419,8 +4505,8 @@ def render_rr_plot_fragment(participant_id: str):
                         'source': 'manual'
                     })
                     st.toast(f"Marked as artifact at {clicked_ts_str} (RR={clicked_rr}ms)")
+                    st.session_state[manual_artifact_key] = manual_artifacts
 
-                st.session_state[manual_artifact_key] = manual_artifacts
                 st.rerun()
 
             # Only show event add form if in "Add Events" mode
@@ -5166,7 +5252,28 @@ def main():
                         with col_mode2:
                             # Auto-maximize resolution for Signal Inspection mode
                             if interaction_mode == "Signal Inspection":
-                                st.caption("High resolution for beat-level inspection")
+                                # Inspection zoom button - resets to optimal viewing range
+                                zoom_key = f"inspection_zoom_{selected_participant}"
+                                col_zoom, col_clear = st.columns(2)
+                                with col_zoom:
+                                    if st.button("🔍 Inspection Zoom", key=f"zoom_btn_{selected_participant}",
+                                                help="Reset Y-axis to 400-1200ms (optimal for beat inspection)"):
+                                        # Calculate mean RR for centering
+                                        mean_rr = sum(rr_values) / len(rr_values) if rr_values else 700
+                                        # Set inspection zoom: Y-axis 400-1200ms, X-axis ~60s window
+                                        st.session_state[zoom_key] = {
+                                            'y_min': 400,
+                                            'y_max': 1200,
+                                            'x_window_seconds': 60,  # Show 60 seconds of data
+                                            'center_on_mean': True
+                                        }
+                                        st.rerun()
+                                with col_clear:
+                                    if zoom_key in st.session_state:
+                                        if st.button("↩ Auto", key=f"clear_zoom_{selected_participant}",
+                                                    help="Return to auto-scaling"):
+                                            del st.session_state[zoom_key]
+                                            st.rerun()
                         with col_mode3:
                             # Plot resolution slider - allow up to all points
                             n_total = plot_data['n_original']
