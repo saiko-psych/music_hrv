@@ -8,6 +8,7 @@ from typing import Any
 
 
 CONFIG_DIR = Path.home() / ".rrational"
+LEGACY_CONFIG_DIR = Path.home() / ".music_hrv"  # Pre-v0.7.0 config directory
 GROUPS_FILE = CONFIG_DIR / "groups.yml"
 EVENTS_FILE = CONFIG_DIR / "events.yml"
 SECTIONS_FILE = CONFIG_DIR / "sections.yml"
@@ -44,6 +45,51 @@ DEFAULT_SETTINGS = {
 def ensure_config_dir() -> None:
     """Create config directory if it doesn't exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def migrate_legacy_config() -> bool:
+    """Migrate configuration from legacy ~/.music_hrv to ~/.rrational.
+
+    This handles the v0.7.0 rename from music_hrv to rrational.
+    Only copies files that don't already exist in the new location.
+
+    Returns:
+        True if migration was performed, False if not needed
+    """
+    import shutil
+
+    if not LEGACY_CONFIG_DIR.exists():
+        return False  # No legacy config to migrate
+
+    # List of files to migrate
+    legacy_files = [
+        "groups.yml",
+        "events.yml",
+        "sections.yml",
+        "participants.yml",
+        "playlist_groups.yml",
+        "music_labels.yml",
+        "protocol.yml",
+        "participant_events.yml",
+        "settings.yml",
+    ]
+
+    migrated_any = False
+    ensure_config_dir()
+
+    for filename in legacy_files:
+        legacy_file = LEGACY_CONFIG_DIR / filename
+        new_file = CONFIG_DIR / filename
+
+        # Only copy if legacy exists and new doesn't
+        if legacy_file.exists() and not new_file.exists():
+            try:
+                shutil.copy2(legacy_file, new_file)
+                migrated_any = True
+            except Exception:
+                pass  # Silently continue if copy fails
+
+    return migrated_any
 
 
 def save_groups(groups: dict[str, Any]) -> None:
@@ -210,34 +256,12 @@ def load_protocol() -> dict[str, Any]:
 def save_participant_events(participant_id: str, events_data: dict[str, Any], data_dir: str | None = None) -> None:
     """Save participant events (edited events) to YAML.
 
-    Saves to TWO locations:
-    1. ~/.rrational/participant_events.yml (app config - for persistence across sessions)
-    2. {data_dir}/../processed/{participant_id}_events.yml (project folder - for data portability)
+    Single-location storage:
+    - If data_dir provided: saves to {data_dir}/../processed/{participant_id}_events.yml
+    - If no data_dir: saves to ~/.rrational/participant_events.yml (fallback)
 
-    Format per participant:
-    {
-        "participant_id": {
-            "events": [
-                {"raw_label": "...", "canonical": "...", "timestamp": "ISO8601", ...},
-                ...
-            ],
-            "manual": [...],
-            "music_events": [...],
-            "exclusion_zones": [
-                {"start": "ISO8601", "end": "ISO8601", "reason": "...", "exclude_from_duration": true},
-                ...
-            ]
-        }
-    }
+    This keeps event data with the project for portability.
     """
-    ensure_config_dir()
-
-    # Load existing data from app config
-    all_events = {}
-    if PARTICIPANT_EVENTS_FILE.exists():
-        with open(PARTICIPANT_EVENTS_FILE, "r", encoding="utf-8") as f:
-            all_events = yaml.safe_load(f) or {}
-
     # Convert EventStatus objects to serializable dicts
     serialized = {"events": [], "manual": [], "music_events": [], "exclusion_zones": []}
 
@@ -271,25 +295,15 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
             zone_dict["end"] = zone_dict["end"].isoformat()
         serialized["exclusion_zones"].append(zone_dict)
 
-    all_events[participant_id] = serialized
-
-    # Save to app config (always)
-    with open(PARTICIPANT_EVENTS_FILE, "w", encoding="utf-8") as f:
-        yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
-
-    # Also save to processed folder if data_dir is provided
-    # This creates portable per-participant files in a standardized format
+    # Single-location storage: project folder preferred, app config as fallback
     if data_dir:
+        # Save to processed folder (portable with project)
         data_path = Path(data_dir)
-        # Go up one level from data folder (e.g., data/hrv_logger -> data/processed)
         processed_dir = data_path.parent / "processed"
         processed_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save per-participant file in standardized format
-        # Format: {participant_id}_events.yml
         participant_file = processed_dir / f"{participant_id}_events.yml"
 
-        # Add metadata for data portability
         output_data = {
             "participant_id": participant_id,
             "format_version": "1.0",
@@ -299,14 +313,27 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
 
         with open(participant_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(output_data, f, default_flow_style=False, allow_unicode=True)
+    else:
+        # Fallback: save to app config (no project folder available)
+        ensure_config_dir()
+
+        all_events = {}
+        if PARTICIPANT_EVENTS_FILE.exists():
+            with open(PARTICIPANT_EVENTS_FILE, "r", encoding="utf-8") as f:
+                all_events = yaml.safe_load(f) or {}
+
+        all_events[participant_id] = serialized
+
+        with open(PARTICIPANT_EVENTS_FILE, "w", encoding="utf-8") as f:
+            yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
 
 
 def load_participant_events(participant_id: str, data_dir: str | None = None) -> dict[str, Any] | None:
     """Load saved participant events from YAML.
 
-    Checks TWO locations (processed folder takes priority):
-    1. {data_dir}/../processed/{participant_id}_events.yml (project folder - preferred)
-    2. ~/.rrational/participant_events.yml (app config - fallback)
+    Single-location storage with backwards compatibility:
+    - If data_dir provided: checks {data_dir}/../processed/{participant_id}_events.yml first
+    - Falls back to ~/.rrational/participant_events.yml for old data migration
 
     Returns None if no saved events exist for this participant.
     """
@@ -338,26 +365,41 @@ def load_participant_events(participant_id: str, data_dir: str | None = None) ->
     return all_events[participant_id]
 
 
-def delete_participant_events(participant_id: str) -> bool:
+def delete_participant_events(participant_id: str, data_dir: str | None = None) -> bool:
     """Delete saved events for a participant (reset to original).
 
-    Returns True if events were deleted, False if none existed.
+    Deletes from both locations for backwards compatibility:
+    - {data_dir}/../processed/{participant_id}_events.yml (project folder)
+    - ~/.rrational/participant_events.yml (app config - cleans up old data)
+
+    Returns True if events were deleted from either location, False if none existed.
     """
-    if not PARTICIPANT_EVENTS_FILE.exists():
-        return False
+    deleted_any = False
 
-    with open(PARTICIPANT_EVENTS_FILE, "r", encoding="utf-8") as f:
-        all_events = yaml.safe_load(f) or {}
+    # Delete from processed folder if data_dir provided
+    if data_dir:
+        data_path = Path(data_dir)
+        processed_dir = data_path.parent / "processed"
+        participant_file = processed_dir / f"{participant_id}_events.yml"
 
-    if participant_id not in all_events:
-        return False
+        if participant_file.exists():
+            participant_file.unlink()
+            deleted_any = True
 
-    del all_events[participant_id]
+    # Delete from app config
+    if PARTICIPANT_EVENTS_FILE.exists():
+        with open(PARTICIPANT_EVENTS_FILE, "r", encoding="utf-8") as f:
+            all_events = yaml.safe_load(f) or {}
 
-    with open(PARTICIPANT_EVENTS_FILE, "w", encoding="utf-8") as f:
-        yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
+        if participant_id in all_events:
+            del all_events[participant_id]
 
-    return True
+            with open(PARTICIPANT_EVENTS_FILE, "w", encoding="utf-8") as f:
+                yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
+
+            deleted_any = True
+
+    return deleted_any
 
 
 def list_saved_participant_events() -> list[str]:

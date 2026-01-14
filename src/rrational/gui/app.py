@@ -28,6 +28,7 @@ from rrational.gui.persistence import (
     load_settings,
     save_settings,
     DEFAULT_SETTINGS,
+    migrate_legacy_config,
 )
 from rrational.gui.help_text import (
     ARTIFACT_CORRECTION_HELP,
@@ -184,6 +185,13 @@ st.set_page_config(
     page_icon=_favicon,
     layout="wide",
 )
+
+# Migrate legacy config from ~/.music_hrv to ~/.rrational (v0.7.0 rename)
+# This runs once per session and only copies files that don't already exist
+if "legacy_migration_done" not in st.session_state:
+    if migrate_legacy_config():
+        st.toast("✓ Migrated settings from previous version", icon="📁")
+    st.session_state.legacy_migration_done = True
 
 
 def apply_custom_css():
@@ -1952,9 +1960,12 @@ def cached_load_hrv_logger_preview(data_dir_str, pattern, config_dict, gui_event
     return load_hrv_logger_preview(data_path, pattern=pattern, config=config, normalizer=normalizer)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def cached_load_participants():
-    """Cached version of load_participants for faster access."""
+    """Cached version of load_participants for faster access.
+
+    TTL ensures cache is refreshed periodically to prevent memory accumulation.
+    """
     return load_participants()
 
 
@@ -2566,11 +2577,13 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
 
     # Downsample if too many points (keeps every Nth point)
     step = 1
+    original_indices = list(range(n_points))  # Maps displayed index -> original index
     if n_points > downsample_threshold:
         step = n_points // downsample_threshold
         timestamps = timestamps[::step]
         rr_values = rr_values[::step]
         sequential_timestamps = sequential_timestamps[::step]
+        original_indices = original_indices[::step]  # Keep mapping after downsampling
         if flags:
             flags = flags[::step]
         # Downsample gap indices to match (convert to new indices)
@@ -2594,6 +2607,7 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
         'participant_id': participant_id,
         'detected_gaps': detected_gaps,  # Gaps for Signal Inspection mode
         'gap_adjacent_indices': gap_adjacent_indices,  # Beats after gaps (segment boundaries)
+        'original_indices': original_indices,  # Maps displayed index -> original index (for artifact marking)
         'total_gap_time_ms': total_gap_time_ms,  # For section validation
         'total_rr_time_ms': cumulative_ms if timestamps else 0,  # Sum of all RR intervals
     }
@@ -2760,6 +2774,8 @@ def render_participant_table_fragment():
             show_toast("Group assignments saved", icon="success")
         else:
             show_toast("Randomization assignments saved", icon="success")
+        # Rerun to immediately reflect saved changes (fixes double-click issue)
+        st.rerun()
 
     # Cache duplicate detection (only changes when data is reloaded)
     dup_cache_key = f"dup_{len(participants_data)}"
@@ -3411,6 +3427,20 @@ def render_settings_panel():
 
     # Save button
     if st.button("Save Settings", key="save_settings_btn", use_container_width=True):
+        # Validate auto_load requires folder to be set
+        if new_auto_load and not new_folder:
+            st.error("Auto-load requires a data folder to be set. Please enter a folder path above.")
+            st.stop()
+
+        # Validate folder exists if set
+        if new_folder:
+            folder_path = Path(new_folder)
+            if not folder_path.exists():
+                st.warning(f"Folder not found: {new_folder}. Auto-load will fail until the folder exists.")
+            elif not folder_path.is_dir():
+                st.error(f"Path is not a folder: {new_folder}")
+                st.stop()
+
         new_settings = {
             "data_folder": new_folder,
             "auto_load": new_auto_load,
@@ -4707,9 +4737,19 @@ def render_rr_plot_fragment(participant_id: str):
 
             # Handle Signal Inspection mode - manual artifact marking
             if current_mode == "Signal Inspection":
-                # Only process if this is a NEW click (avoid infinite loop on rerun)
-                if not is_new_click:
+                # For Signal Inspection, we need to allow clicking the same point to toggle
+                # So we use a different key that includes artifact state
+                signal_last_click_key = f"signal_last_click_{participant_id}"
+                manual_artifact_key_check = f"manual_artifacts_{participant_id}"
+                current_artifact_count = len(st.session_state.get(manual_artifact_key_check, []))
+                click_signature = f"{clicked_time_str}_{current_artifact_count}"
+
+                last_signal_click = st.session_state.get(signal_last_click_key)
+                if last_signal_click == click_signature:
+                    # Same click on same state - skip (rerun duplicate)
                     return
+                # Update the last click signature
+                st.session_state[signal_last_click_key] = click_signature
 
                 # Find nearest beat index to clicked timestamp
                 timestamps = plot_data['timestamps']
@@ -6695,10 +6735,14 @@ def main():
                         else:
                             default_time_str = "10:00:00"
 
+                        # Initialize session state key if not exists (don't use value= which resets on every render)
+                        time_key = f"event_time_{selected_participant}"
+                        if time_key not in st.session_state:
+                            st.session_state[time_key] = default_time_str
+
                         event_time_str = st.text_input(
                             "Time (HH:MM:SS)",
-                            value=default_time_str,
-                            key=f"event_time_{selected_participant}",
+                            key=time_key,
                             placeholder="HH:MM:SS",
                             help="Enter time as HH:MM:SS (e.g., 10:30:45)"
                         )
@@ -6742,20 +6786,29 @@ def main():
                             from rrational.prep.summaries import EventStatus
                             import datetime as dt
 
+                            # Read values from session state (not closure variables!)
+                            # This ensures we get the CURRENT input values, not stale ones
+                            curr_quick_event = st.session_state.get(f"quick_event_type_{selected_participant}")
+                            curr_custom_label = st.session_state.get(f"custom_event_label_{selected_participant}")
+                            curr_time_str = st.session_state.get(f"event_time_{selected_participant}", "")
+                            curr_use_offset = st.session_state.get(f"use_offset_{selected_participant}", False)
+                            curr_offset_min = st.session_state.get(f"offset_min_{selected_participant}", 0)
+                            curr_offset_sec = st.session_state.get(f"offset_sec_{selected_participant}", 0)
+
                             # Determine label
-                            label = custom_label if selected_quick_event == "Custom..." else selected_quick_event
+                            label = curr_custom_label if curr_quick_event == "Custom..." else curr_quick_event
                             if not label:
                                 show_toast("Please enter an event label", icon="error")
                                 return
 
                             # Determine timestamp
-                            if use_offset and first_rr_time:
+                            if curr_use_offset and first_rr_time:
                                 # Calculate from offset
-                                offset_delta = dt.timedelta(minutes=offset_min, seconds=offset_sec)
+                                offset_delta = dt.timedelta(minutes=curr_offset_min, seconds=curr_offset_sec)
                                 event_timestamp = first_rr_time + offset_delta
                             else:
                                 # Parse the time string
-                                parsed_time = parse_time_str(event_time_str)
+                                parsed_time = parse_time_str(curr_time_str)
                                 if not parsed_time:
                                     show_toast("Invalid time format. Use HH:MM:SS", icon="error")
                                     return
@@ -6778,6 +6831,23 @@ def main():
 
                             # Normalize the label
                             canonical = st.session_state.normalizer.normalize(label)
+
+                            # Check for duplicate events (same label/canonical and close timestamp)
+                            if selected_participant in st.session_state.participant_events:
+                                existing_data = st.session_state.participant_events[selected_participant]
+                                existing_events = existing_data.get('events', []) + existing_data.get('manual', [])
+                                for existing in existing_events:
+                                    # Check if same label (raw or canonical)
+                                    same_label = (
+                                        existing.raw_label.lower() == label.lower() or
+                                        (existing.canonical and existing.canonical == canonical)
+                                    )
+                                    # Check if timestamp within 1 second
+                                    if same_label and existing.first_timestamp:
+                                        time_diff = abs((existing.first_timestamp - event_timestamp).total_seconds())
+                                        if time_diff < 1:
+                                            show_toast(f"Event '{label}' already exists at this time", icon="warning")
+                                            return
 
                             new_event = EventStatus(
                                 raw_label=label,
@@ -6880,11 +6950,25 @@ def main():
                                         total_ms += rr
                                 return total_ms / 1000 / 60  # Convert to minutes
 
+                            # Get participant's group and filter sections by group-specific selections
+                            participant_group = st.session_state.participant_groups.get(selected_participant, "Default")
+                            group_data = st.session_state.groups.get(participant_group, {})
+                            selected_sections = group_data.get("selected_sections", [])
+
+                            # Filter sections to validate based on group's selected sections
+                            # If no sections are selected for the group, validate all sections
+                            if selected_sections:
+                                sections_to_validate = {k: v for k, v in sections.items() if k in selected_sections}
+                                st.caption(f"Showing sections for **{group_data.get('label', participant_group)}** group ({len(sections_to_validate)} of {len(sections)} sections)")
+                            else:
+                                sections_to_validate = sections
+                                st.caption(f"No group-specific sections configured - showing all {len(sections)} sections")
+
                             # Validate each section
                             valid_count = 0
                             issue_count = 0
 
-                            for section_code, section_data in sections.items():
+                            for section_code, section_data in sections_to_validate.items():
                                 start_evt = section_data.get("start_event", "")
                                 # Support both old (end_event) and new (end_events) format
                                 end_evts = section_data.get("end_events", [])
@@ -7014,12 +7098,82 @@ def main():
 
                     # Section 1: Event Editing - Individual Cards
                     st.markdown("### Event Management")
-                    st.caption("Edit event details, match to canonical events, or delete events")
+
+                    # Initialize undo stack for this participant
+                    undo_key = f"event_undo_stack_{selected_participant}"
+                    if undo_key not in st.session_state:
+                        st.session_state[undo_key] = []
+
+                    def _save_undo_state(participant_id: str, action_desc: str):
+                        """Save current state to undo stack before making changes."""
+                        import copy
+                        stored_data = st.session_state.participant_events.get(participant_id)
+                        if stored_data:
+                            # Deep copy the events
+                            state = {
+                                'events': copy.deepcopy(stored_data.get('events', [])),
+                                'manual': copy.deepcopy(stored_data.get('manual', [])),
+                                'action': action_desc
+                            }
+                            undo_stack = st.session_state.get(f"event_undo_stack_{participant_id}", [])
+                            undo_stack.append(state)
+                            # Keep only last 10 undo states
+                            if len(undo_stack) > 10:
+                                undo_stack = undo_stack[-10:]
+                            st.session_state[f"event_undo_stack_{participant_id}"] = undo_stack
+
+                    def _undo_last_action(participant_id: str):
+                        """Undo the last event management action."""
+                        undo_stack = st.session_state.get(f"event_undo_stack_{participant_id}", [])
+                        if undo_stack:
+                            prev_state = undo_stack.pop()
+                            st.session_state[f"event_undo_stack_{participant_id}"] = undo_stack
+                            # Restore the previous state
+                            st.session_state.participant_events[participant_id]['events'] = prev_state['events']
+                            st.session_state.participant_events[participant_id]['manual'] = prev_state['manual']
+                            show_toast(f"Undid: {prev_state['action']}", icon="success")
+                        else:
+                            show_toast("Nothing to undo", icon="info")
+
+                    # Undo button row
+                    col_caption, col_undo = st.columns([4, 1])
+                    with col_caption:
+                        st.caption("Edit event details, match to canonical events, or delete events")
+                    with col_undo:
+                        undo_stack = st.session_state.get(undo_key, [])
+                        st.button(
+                            "↩ Undo",
+                            key=f"undo_{selected_participant}",
+                            on_click=_undo_last_action,
+                            args=(selected_participant,),
+                            disabled=len(undo_stack) == 0,
+                            help=f"Undo last action ({len(undo_stack)} available)" if undo_stack else "No actions to undo"
+                        )
+
+                    # Define callbacks outside loop for better performance and to avoid stale closures
+                    def _update_raw_label(participant_id: str, event_idx: int, evt_key: str):
+                        """Callback to update raw label."""
+                        key = f"raw_{evt_key}"
+                        if key in st.session_state:
+                            new_val = st.session_state[key]
+                            stored_data = st.session_state.participant_events.get(participant_id)
+                            if stored_data:
+                                all_evts = stored_data['events'] + stored_data['manual']
+                                if event_idx < len(all_evts):
+                                    all_evts[event_idx].raw_label = new_val
+                                    st.session_state.participant_events[participant_id]['events'] = all_evts
+                                    st.session_state.participant_events[participant_id]['manual'] = []
 
                     if all_events:
                         events_to_delete = []
 
                         for idx, event in enumerate(all_events):
+                            # Create unique key based on event content (not index) to avoid Streamlit widget caching issues
+                            import hashlib
+                            ts_str = event.first_timestamp.isoformat() if event.first_timestamp else "none"
+                            event_hash = hashlib.md5(f"{event.raw_label}_{ts_str}".encode()).hexdigest()[:8]
+                            event_key = f"{selected_participant}_{event_hash}"
+
                             with st.container():
                                 # Create columns for this event
                                 col_status, col_raw, col_canonical, col_syn, col_time, col_delete = st.columns([0.5, 2.5, 2.5, 1, 1.5, 0.5])
@@ -7032,23 +7186,13 @@ def main():
                                         st.markdown("[!]")
 
                                 with col_raw:
-                                    # Editable raw label with callback
-                                    def update_raw_label():
-                                        key = f"raw_{selected_participant}_{idx}"
-                                        if key in st.session_state:
-                                            new_val = st.session_state[key]
-                                            stored_data = st.session_state.participant_events[selected_participant]
-                                            all_evts = stored_data['events'] + stored_data['manual']
-                                            all_evts[idx].raw_label = new_val
-                                            st.session_state.participant_events[selected_participant]['events'] = all_evts
-                                            st.session_state.participant_events[selected_participant]['manual'] = []
-
                                     st.text_input(
                                         "Raw Label",
                                         value=event.raw_label,
-                                        key=f"raw_{selected_participant}_{idx}",
+                                        key=f"raw_{event_key}",
                                         label_visibility="collapsed",
-                                        on_change=update_raw_label
+                                        on_change=_update_raw_label,
+                                        args=(selected_participant, idx, event_key)
                                     )
 
                                 with col_canonical:
@@ -7058,9 +7202,9 @@ def main():
                                     if current_value not in canonical_options:
                                         current_value = "unmatched"
 
-                                    def update_canonical(participant_id, event_idx):
+                                    def update_canonical(participant_id, event_idx, evt_key):
                                         """Update canonical mapping and save to persistence."""
-                                        key = f"canonical_{participant_id}_{event_idx}"
+                                        key = f"canonical_{evt_key}"
                                         if key in st.session_state:
                                             new_val = st.session_state[key]
                                             stored_data = st.session_state.participant_events[participant_id]
@@ -7081,19 +7225,19 @@ def main():
                                         "Canonical",
                                         options=canonical_options,
                                         index=canonical_options.index(current_value),
-                                        key=f"canonical_{selected_participant}_{idx}",
+                                        key=f"canonical_{event_key}",
                                         label_visibility="collapsed",
                                         on_change=update_canonical,
-                                        args=(selected_participant, idx)
+                                        args=(selected_participant, idx, event_key)
                                     )
 
                                 with col_syn:
                                     # Add to synonyms button (only if canonical is selected)
                                     if event.canonical and event.canonical != "unmatched":
-                                        def add_synonym(participant_id, event_idx):
+                                        def add_synonym(participant_id, event_idx, evt_key):
                                             """Add raw label as synonym to canonical event."""
                                             # Get the CURRENT canonical value from the selectbox
-                                            canonical_key = f"canonical_{participant_id}_{event_idx}"
+                                            canonical_key = f"canonical_{evt_key}"
                                             canonical_name = st.session_state.get(canonical_key)
 
                                             # Get the current event to get the raw label
@@ -7134,8 +7278,8 @@ def main():
                                             else:
                                                 show_toast(f"'{raw_lower}' is already a synonym for {canonical_name}", icon="info")
 
-                                        st.button("+Tag", key=f"syn_{selected_participant}_{idx}",
-                                                 on_click=add_synonym, args=(selected_participant, idx),
+                                        st.button("+Tag", key=f"syn_{event_key}",
+                                                 on_click=add_synonym, args=(selected_participant, idx, event_key),
                                                  help="Add raw label as synonym")
 
                                 with col_time:
@@ -7143,9 +7287,9 @@ def main():
                                     import datetime as dt
                                     current_time_str = event.first_timestamp.strftime("%H:%M:%S") if event.first_timestamp else "00:00:00"
 
-                                    def update_event_time(participant_id, event_idx, original_ts):
+                                    def update_event_time(participant_id, event_idx, original_ts, evt_key):
                                         """Update event timestamp from time text input."""
-                                        key = f"time_{participant_id}_{event_idx}"
+                                        key = f"time_{evt_key}"
                                         if key in st.session_state:
                                             time_str = st.session_state[key]
                                             # Parse HH:MM:SS
@@ -7170,26 +7314,33 @@ def main():
                                     st.text_input(
                                         "Time",
                                         value=current_time_str,
-                                        key=f"time_{selected_participant}_{idx}",
+                                        key=f"time_{event_key}",
                                         label_visibility="collapsed",
                                         on_change=update_event_time,
-                                        args=(selected_participant, idx, event.first_timestamp),
+                                        args=(selected_participant, idx, event.first_timestamp, event_key),
                                         help="HH:MM:SS"
                                     )
 
                                 with col_delete:
-                                    # Delete button
-                                    if st.button("X", key=f"delete_{selected_participant}_{idx}", help="Delete this event"):
+                                    # Delete button - use return value
+                                    if st.button("X", key=f"delete_{event_key}", help=f"Delete '{event.raw_label}'"):
                                         events_to_delete.append(idx)
 
                                 st.divider()
 
-                        # Apply deletions
+                        # Apply deletions after the loop (reverse order to preserve indices)
                         if events_to_delete:
-                            for idx in sorted(events_to_delete, reverse=True):
-                                del all_events[idx]
+                            for del_idx in sorted(events_to_delete, reverse=True):
+                                _save_undo_state(selected_participant, f"Delete '{all_events[del_idx].raw_label}'")
+                                del all_events[del_idx]
                             st.session_state.participant_events[selected_participant]['events'] = all_events
                             st.session_state.participant_events[selected_participant]['manual'] = []
+                            from rrational.gui.persistence import save_participant_events
+                            save_participant_events(
+                                selected_participant,
+                                st.session_state.participant_events[selected_participant],
+                                st.session_state.data_dir
+                            )
                             st.rerun()
 
                     else:
@@ -7375,21 +7526,29 @@ def main():
 
                     with col_reset:
                         def reset_to_original():
-                            """Reset participant events to original (from file)."""
-                            # Delete saved events
-                            delete_participant_events(selected_participant)
-                            # Clear from session state so it reloads from original
+                            """Reset participant events to original (from raw data file)."""
+                            # Delete saved events YAML file (from both locations)
+                            delete_participant_events(selected_participant, st.session_state.data_dir)
+                            # Clear from session state so it reloads from original raw data
                             if selected_participant in st.session_state.participant_events:
                                 del st.session_state.participant_events[selected_participant]
-                            show_toast(f"Reset {selected_participant} to original events", icon="success")
+                            # Also clear any manual events
+                            if selected_participant in st.session_state.get('manual_events', {}):
+                                del st.session_state.manual_events[selected_participant]
+                            # Clear undo stack for this participant
+                            undo_key = f"event_undo_stack_{selected_participant}"
+                            if undo_key in st.session_state:
+                                st.session_state[undo_key] = []
+                            show_toast(f"Reset {selected_participant} to original events from raw data", icon="success")
 
-                        # Only show reset if there are saved events
+                        # Get list of saved participants for status display
                         saved_participants = list_saved_participant_events()
-                        if selected_participant in saved_participants:
-                            st.button("Reset to Original",
-                                     key=f"reset_{selected_participant}",
-                                     on_click=reset_to_original,
-                                     help="Discard saved changes and reload original events")
+
+                        # Reset button is ALWAYS enabled - user can always reset to original raw data
+                        st.button("Reset to Original",
+                                 key=f"reset_{selected_participant}",
+                                 on_click=reset_to_original,
+                                 help="Discard all changes and reload original events from raw data file")
 
                     with col_status:
                         # Check if participant has saved events

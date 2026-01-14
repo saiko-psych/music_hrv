@@ -104,14 +104,21 @@ def _render_events_section():
 
         def create_event():
             """Callback to create new event."""
-            if new_event_name and new_event_name not in st.session_state.all_events:
-                synonyms_list = [s.strip().lower() for s in new_event_synonyms.split("\n") if s.strip()]
-                st.session_state.all_events[new_event_name] = synonyms_list
+            # Read from session state to avoid stale closure variables
+            event_name = st.session_state.get("new_event_name_global", "").strip()
+            synonyms_raw = st.session_state.get("new_event_synonyms_global", "")
+
+            if event_name and event_name not in st.session_state.all_events:
+                synonyms_list = [s.strip().lower() for s in synonyms_raw.split("\n") if s.strip()]
+                st.session_state.all_events[event_name] = synonyms_list
                 auto_save_config()
                 update_normalizer()
-                show_toast(f"Created event '{new_event_name}'", icon="success")
-            elif new_event_name in st.session_state.all_events:
-                show_toast(f"Event '{new_event_name}' already exists", icon="error")
+                show_toast(f"Created event '{event_name}'", icon="success")
+                # Clear the input fields after successful creation
+                st.session_state.new_event_name_global = ""
+                st.session_state.new_event_synonyms_global = ""
+            elif event_name in st.session_state.all_events:
+                show_toast(f"Event '{event_name}' already exists", icon="error")
             else:
                 show_toast("Please enter an event name", icon="error")
 
@@ -122,6 +129,74 @@ def _render_events_section():
     # Show all events
     st.subheader("All Available Events")
     st.info(f"**{len(st.session_state.all_events)} event(s) defined**")
+
+    # Define callbacks outside loop for better performance
+    def _rename_event(old_name: str):
+        """Callback to rename event - reads new name from session_state."""
+        new_name = st.session_state.get(f"edit_event_name_{old_name}", old_name)
+        if new_name != old_name and new_name not in st.session_state.all_events:
+            st.session_state.all_events[new_name] = st.session_state.all_events.pop(old_name)
+            for group_data in st.session_state.groups.values():
+                if old_name in group_data.get("expected_events", {}):
+                    group_data["expected_events"][new_name] = group_data["expected_events"].pop(old_name)
+            auto_save_config()
+            update_normalizer()
+            show_toast(f"Renamed to '{new_name}'", icon="success")
+        elif new_name == old_name:
+            show_toast("Name unchanged", icon="info")
+        else:
+            show_toast(f"Event '{new_name}' already exists", icon="error")
+
+    def _delete_synonym(evt_name: str, idx: int):
+        """Callback to delete synonym."""
+        if evt_name not in st.session_state.all_events:
+            return  # Event already deleted
+        syn_list = st.session_state.all_events[evt_name]
+        if idx < len(syn_list):
+            syn_list.pop(idx)
+            st.session_state.all_events[evt_name] = syn_list
+            for group_data in st.session_state.groups.values():
+                if evt_name in group_data.get("expected_events", {}):
+                    group_data["expected_events"][evt_name] = syn_list.copy()
+            auto_save_config()
+            update_normalizer()
+            show_toast("Synonym deleted", icon="success")
+
+    def _add_synonym(evt_name: str):
+        """Callback to add synonym - reads new synonym from session_state."""
+        if evt_name not in st.session_state.all_events:
+            return  # Event already deleted
+        new_syn = st.session_state.get(f"new_syn_{evt_name}", "")
+        synonym_lower = new_syn.strip().lower()
+        syn_list = st.session_state.all_events[evt_name]
+        if synonym_lower and synonym_lower not in syn_list:
+            syn_list.append(synonym_lower)
+            st.session_state.all_events[evt_name] = syn_list
+            for group_data in st.session_state.groups.values():
+                if evt_name in group_data.get("expected_events", {}):
+                    group_data["expected_events"][evt_name] = syn_list.copy()
+            auto_save_config()
+            update_normalizer()
+            show_toast(f"Added '{synonym_lower}'", icon="success")
+            # Clear input
+            st.session_state[f"new_syn_{evt_name}"] = ""
+        elif synonym_lower in syn_list:
+            show_toast("Synonym already exists", icon="warning")
+        else:
+            show_toast("Please enter a synonym", icon="error")
+
+    def _delete_event(evt_name: str):
+        """Callback to delete event."""
+        if evt_name not in st.session_state.all_events:
+            show_toast(f"Event '{evt_name}' already deleted", icon="info")
+            return  # Already deleted
+        del st.session_state.all_events[evt_name]
+        for group_data in st.session_state.groups.values():
+            if evt_name in group_data.get("expected_events", {}):
+                del group_data["expected_events"][evt_name]
+        auto_save_config()
+        update_normalizer()
+        show_toast(f"Deleted event '{evt_name}'", icon="success")
 
     if st.session_state.all_events:
         for event_name, synonyms in list(st.session_state.all_events.items()):
@@ -146,28 +221,13 @@ def _render_events_section():
                         name_valid = False
 
                 with col2:
-                    def rename_event(old_name, new_name):
-                        """Callback to rename event."""
-                        if new_name != old_name and new_name not in st.session_state.all_events:
-                            st.session_state.all_events[new_name] = st.session_state.all_events.pop(old_name)
-                            for group_data in st.session_state.groups.values():
-                                if old_name in group_data.get("expected_events", {}):
-                                    group_data["expected_events"][new_name] = group_data["expected_events"].pop(old_name)
-                            auto_save_config()
-                            update_normalizer()
-                            show_toast(f"Renamed to '{new_name}'", icon="success")
-                        elif new_name == old_name:
-                            show_toast("Name unchanged", icon="info")
-                        else:
-                            show_toast(f"Event '{new_name}' already exists", icon="error")
-
                     st.button(
                         "Save Name",
                         key=f"save_event_name_{event_name}",
-                        on_click=rename_event,
-                        args=(event_name, new_event_name_edit),
+                        on_click=_rename_event,
+                        args=(event_name,),
                         disabled=not name_valid or new_event_name_edit == event_name,
-                        width='stretch',
+                        use_container_width=True,
                     )
 
                 # Show used in groups
@@ -190,22 +250,10 @@ def _render_events_section():
                         with col1:
                             st.text(synonym)
                         with col2:
-                            def delete_synonym(evt_name, idx):
-                                """Callback to delete synonym."""
-                                syn_list = st.session_state.all_events[evt_name]
-                                syn_list.pop(idx)
-                                st.session_state.all_events[evt_name] = syn_list
-                                for group_data in st.session_state.groups.values():
-                                    if evt_name in group_data.get("expected_events", {}):
-                                        group_data["expected_events"][evt_name] = syn_list.copy()
-                                auto_save_config()
-                                update_normalizer()
-                                show_toast("Synonym deleted", icon="success")
-
                             st.button(
                                 "X",
                                 key=f"delete_syn_{event_name}_{syn_idx}",
-                                on_click=delete_synonym,
+                                on_click=_delete_synonym,
                                 args=(event_name, syn_idx),
                                 help="Delete this synonym",
                             )
@@ -232,53 +280,24 @@ def _render_events_section():
                 with col2:
                     st.write("")
                     st.write("")
-
-                    def add_synonym(evt_name, new_syn):
-                        """Callback to add synonym."""
-                        synonym_lower = new_syn.strip().lower()
-                        syn_list = st.session_state.all_events[evt_name]
-                        if synonym_lower and synonym_lower not in syn_list:
-                            syn_list.append(synonym_lower)
-                            st.session_state.all_events[evt_name] = syn_list
-                            for group_data in st.session_state.groups.values():
-                                if evt_name in group_data.get("expected_events", {}):
-                                    group_data["expected_events"][evt_name] = syn_list.copy()
-                            auto_save_config()
-                            update_normalizer()
-                            show_toast(f"Added '{synonym_lower}'", icon="success")
-                        elif synonym_lower in syn_list:
-                            show_toast("Synonym already exists", icon="warning")
-                        else:
-                            show_toast("Please enter a synonym", icon="error")
-
                     st.button(
                         "Add",
                         key=f"add_syn_btn_{event_name}",
-                        on_click=add_synonym,
-                        args=(event_name, new_synonym),
+                        on_click=_add_synonym,
+                        args=(event_name,),
                         type="primary",
                         disabled=not new_synonym or validate_regex_pattern(new_synonym.strip()) is not None,
                     )
 
                 # Delete event
                 st.markdown("---")
-
-                def delete_event(evt_name):
-                    """Callback to delete event."""
-                    del st.session_state.all_events[evt_name]
-                    for group_data in st.session_state.groups.values():
-                        if evt_name in group_data.get("expected_events", {}):
-                            del group_data["expected_events"][evt_name]
-                    auto_save_config()
-                    update_normalizer()
-                    show_toast(f"Deleted event '{evt_name}'", icon="success")
-
                 st.button(
                     f"Delete Event '{event_name}'",
                     key=f"delete_event_{event_name}",
-                    on_click=delete_event,
+                    on_click=_delete_event,
                     args=(event_name,),
                     type="secondary",
+                    use_container_width=True,
                 )
     else:
         st.info("No events defined yet. Create events above.")
@@ -363,8 +382,12 @@ def _render_groups_section():
                     key=f"edit_group_label_{group_name}"
                 )
 
-            def save_group_changes(old_name, new_name_val, new_label_val):
+            def save_group_changes(old_name):
                 """Callback to save group changes."""
+                # Read from session_state to avoid stale closure variables
+                new_name_val = st.session_state.get(f"edit_group_name_{old_name}", old_name)
+                new_label_val = st.session_state.get(f"edit_group_label_{old_name}", old_name)
+
                 current_name = old_name
                 if new_name_val != old_name:
                     st.session_state.groups[new_name_val] = st.session_state.groups.pop(old_name)
@@ -381,7 +404,7 @@ def _render_groups_section():
                 f"Save Changes to {group_name}",
                 key=f"save_group_{group_name}",
                 on_click=save_group_changes,
-                args=(group_name, new_name, new_label),
+                args=(group_name,),
                 type="primary",
             )
 
@@ -394,11 +417,11 @@ def _render_groups_section():
             st.markdown("**Select Sections for Analysis:**")
             available_sections = list(st.session_state.sections.keys()) if hasattr(st.session_state, 'sections') else []
             if available_sections:
-                def update_sections():
+                def update_sections(grp_name):
                     """Callback to update sections selection."""
-                    st.session_state.groups[group_name]["selected_sections"] = st.session_state[f"sections_select_{group_name}"]
+                    st.session_state.groups[grp_name]["selected_sections"] = st.session_state[f"sections_select_{grp_name}"]
                     auto_save_config()
-                    show_toast(f"Sections updated for {group_name}", icon="success")
+                    show_toast(f"Sections updated for {grp_name}", icon="success")
 
                 st.multiselect(
                     "Sections to use in analysis",
@@ -407,6 +430,7 @@ def _render_groups_section():
                     key=f"sections_select_{group_name}",
                     help="Choose which sections to analyze for participants in this group (saves automatically)",
                     on_change=update_sections,
+                    args=(group_name,),
                 )
             else:
                 st.info("No sections defined yet. Create sections in the Sections tab first.")

@@ -669,9 +669,12 @@ def cached_load_vns_preview(data_dir_str, pattern, config_dict, gui_events_dict,
     return load_vns_preview(data_path, pattern=pattern, config=config, normalizer=normalizer, use_corrected=use_corrected)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def cached_load_participants():
-    """Cached version of load_participants for faster access."""
+    """Cached version of load_participants for faster access.
+
+    TTL ensures cache is refreshed periodically to prevent memory accumulation.
+    """
     return load_participants()
 
 
