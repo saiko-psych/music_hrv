@@ -1204,6 +1204,31 @@ def apply_custom_css():
     [data-testid="stSidebar"] .stCheckbox span {
         color: var(--sidebar-text) !important;
     }
+
+    /* ============================================
+       LOADING INDICATOR OVERRIDE
+       ============================================ */
+
+    /* Hide the default Streamlit loading swimmer icon */
+    [data-testid="stStatusWidget"] .StatusWidget-swimming-icon,
+    [data-testid="stStatusWidget"] svg[class*="swimming"],
+    .stStatusWidget svg,
+    div[data-testid="stStatusWidget"] > div > svg {
+        display: none !important;
+    }
+
+    /* Style the status widget container */
+    [data-testid="stStatusWidget"] {
+        background-color: var(--bg-secondary) !important;
+        border-radius: 8px;
+    }
+
+    /* Add custom loading indicator using CSS */
+    [data-testid="stStatusWidget"]::before {
+        content: "⏳";
+        font-size: 16px;
+        margin-right: 4px;
+    }
     """
 
     # Apply CSS
@@ -1217,6 +1242,16 @@ def apply_custom_css():
             // Access parent document (Streamlit app)
             var parentDoc = window.parent.document;
             var root = parentDoc.documentElement;
+
+            // Immediately set page title and favicon (before Streamlit loads)
+            if (parentDoc.title === 'Streamlit' || parentDoc.title === '') {
+                parentDoc.title = 'RRational';
+            }
+            // Update favicon if it's the default Streamlit one
+            var existingFavicon = parentDoc.querySelector("link[rel*='icon']");
+            if (existingFavicon && existingFavicon.href.includes('streamlit')) {
+                existingFavicon.href = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📊</text></svg>';
+            }
 
             // Force Streamlit to use custom theme from config.toml on startup
             var savedTheme = window.parent.localStorage.getItem('music-hrv-theme') || 'light';
@@ -5073,6 +5108,12 @@ def main():
                         plot_data['source_app'] = source_app
                         st.session_state[f"plot_data_{selected_participant}"] = plot_data
 
+                        # Store FULL (non-downsampled) data for section validation
+                        st.session_state[f"full_rr_data_{selected_participant}"] = {
+                            'timestamps': list(timestamps),
+                            'rr_values': list(rr_values),
+                        }
+
                         # Mode selector for plot interaction (Events, Exclusions, or Signal Inspection)
                         st.markdown("---")
                         col_mode1, col_mode2, col_mode3 = st.columns([2, 1, 1])
@@ -6362,6 +6403,19 @@ def main():
                         # Get sections from session state
                         sections = st.session_state.get("sections", {})
 
+                        # Get FULL RR data for RR-based duration (HRV Logger only)
+                        full_rr_key = f"full_rr_data_{selected_participant}"
+                        full_rr_data = st.session_state.get(full_rr_key, {})
+                        summary = get_summary_dict().get(selected_participant)
+                        is_hrv_logger = (getattr(summary, 'source_app', 'HRV Logger') == "HRV Logger") if summary else True
+
+                        # Prepare RR data for section calculation if HRV Logger
+                        rr_timestamps = []
+                        rr_values_ms = []
+                        if is_hrv_logger and full_rr_data:
+                            rr_timestamps = full_rr_data.get('timestamps', [])
+                            rr_values_ms = full_rr_data.get('rr_values', [])
+
                         if not sections:
                             st.info("No sections defined. Define sections in the **Sections** tab (under Setup).")
                         else:
@@ -6394,6 +6448,19 @@ def main():
                                     if overlap_s < overlap_e:
                                         total += (overlap_e - overlap_s).total_seconds()
                                 return total
+
+                            def calc_rr_duration(start_ts, end_ts):
+                                """Calculate duration by summing RR intervals within time range."""
+                                if not rr_timestamps or not rr_values_ms or not start_ts or not end_ts:
+                                    return None
+                                start_ts = normalize_ts(start_ts)
+                                end_ts = normalize_ts(end_ts)
+                                total_ms = 0
+                                for ts, rr in zip(rr_timestamps, rr_values_ms):
+                                    ts_norm = normalize_ts(ts) if hasattr(ts, 'tzinfo') else ts
+                                    if start_ts <= ts_norm < end_ts:
+                                        total_ms += rr
+                                return total_ms / 1000 / 60  # Convert to minutes
 
                             # Validate each section
                             valid_count = 0
@@ -6432,20 +6499,31 @@ def main():
                                     st.write(f"**{label}**: missing any of `{end_evts_str}`")
                                     issue_count += 1
                                 else:
-                                    # Calculate duration
+                                    # Calculate event-based duration
                                     raw_dur = (normalize_ts(end_ts) - normalize_ts(start_ts)).total_seconds()
                                     excluded = calc_excluded_time(start_ts, end_ts)
-                                    actual_dur = (raw_dur - excluded) / 60
+                                    event_dur = (raw_dur - excluded) / 60
+
+                                    # Calculate RR-based duration (HRV Logger only)
+                                    rr_dur = calc_rr_duration(start_ts, end_ts) if is_hrv_logger else None
 
                                     excl_note = f" (excl: {excluded/60:.1f}m)" if excluded > 0 else ""
                                     end_evt_note = f" → {matched_end_evt}" if len(end_evts) > 1 else ""
 
-                                    # Check if within tolerance
-                                    if expected_dur > 0 and abs(actual_dur - expected_dur) > tolerance:
-                                        st.write(f"**{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                    # Build display string with both durations
+                                    if rr_dur is not None:
+                                        diff = event_dur - rr_dur
+                                        diff_note = f" (Δ{diff:+.1f}m)" if abs(diff) > 0.1 else ""
+                                        dur_display = f"{event_dur:.1f}m | RR: {rr_dur:.1f}m{diff_note}"
+                                    else:
+                                        dur_display = f"{event_dur:.1f}m"
+
+                                    # Check if within tolerance (use event-based duration)
+                                    if expected_dur > 0 and abs(event_dur - expected_dur) > tolerance:
+                                        st.write(f"**{label}**: {dur_display}{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
                                         issue_count += 1
                                     else:
-                                        st.write(f"**{label}**: {actual_dur:.1f}m{excl_note}{end_evt_note}")
+                                        st.write(f"**{label}**: {dur_display}{excl_note}{end_evt_note}")
                                         valid_count += 1
 
                             # Summary
@@ -6453,125 +6531,6 @@ def main():
                                 st.success(f"All {valid_count} section(s) valid")
                             elif valid_count == 0 and issue_count > 0:
                                 st.error(f"All {issue_count} section(s) have issues")
-
-                            # Coverage check - do sections cover the measurement?
-                            if valid_count > 0 and event_timestamps:
-                                st.markdown("---")
-                                st.markdown("**Coverage Check**")
-                                st.caption("Checks if defined sections cover the entire measurement period")
-
-                                # Calculate section time ranges
-                                section_ranges = []
-                                for section_code, section_data in sections.items():
-                                    start_evt = section_data.get("start_event", "")
-                                    end_evts = section_data.get("end_events", [])
-                                    if not end_evts and "end_event" in section_data:
-                                        end_evts = [section_data["end_event"]]
-                                    label = section_data.get("label", section_code)
-
-                                    start_ts = event_timestamps.get(start_evt)
-                                    end_ts = None
-                                    for end_evt in end_evts:
-                                        if end_evt in event_timestamps:
-                                            end_ts = event_timestamps[end_evt]
-                                            break
-
-                                    if start_ts and end_ts:
-                                        section_ranges.append({
-                                            'label': label,
-                                            'start': normalize_ts(start_ts),
-                                            'end': normalize_ts(end_ts)
-                                        })
-
-                                if section_ranges:
-                                    # Sort by start time
-                                    section_ranges.sort(key=lambda x: x['start'])
-
-                                    # Get measurement boundaries (first to last event)
-                                    all_ts = [normalize_ts(ts) for ts in event_timestamps.values() if ts]
-                                    measurement_start = min(all_ts)
-                                    measurement_end = max(all_ts)
-                                    measurement_duration = (measurement_end - measurement_start).total_seconds()
-
-                                    # Merge overlapping intervals to calculate actual coverage
-                                    # Convert to list of (start_seconds, end_seconds) from measurement_start
-                                    intervals = []
-                                    for sec in section_ranges:
-                                        start_s = (sec['start'] - measurement_start).total_seconds()
-                                        end_s = (sec['end'] - measurement_start).total_seconds()
-                                        intervals.append((start_s, end_s, sec['label']))
-
-                                    # Sort by start time
-                                    intervals.sort(key=lambda x: x[0])
-
-                                    # Merge overlapping intervals
-                                    merged = []
-                                    for start_s, end_s, label in intervals:
-                                        if merged and start_s <= merged[-1][1]:
-                                            # Overlapping - extend the last merged interval
-                                            merged[-1] = (merged[-1][0], max(merged[-1][1], end_s))
-                                        else:
-                                            merged.append((start_s, end_s))
-
-                                    # Calculate actual covered time (from merged intervals)
-                                    actual_covered = sum(end - start for start, end in merged)
-
-                                    # Calculate raw section time (sum of all sections, may include overlaps)
-                                    raw_section_time = sum((sec['end'] - sec['start']).total_seconds() for sec in section_ranges)
-
-                                    # Find gaps (time not covered by any merged interval)
-                                    gaps = []
-
-                                    # Gap before first merged interval
-                                    if merged[0][0] > 1:
-                                        gaps.append({
-                                            'label': 'Before first section',
-                                            'duration_s': merged[0][0]
-                                        })
-
-                                    # Gaps between merged intervals
-                                    for i in range(len(merged) - 1):
-                                        gap_start = merged[i][1]
-                                        gap_end = merged[i + 1][0]
-                                        if gap_end - gap_start > 1:
-                                            gaps.append({
-                                                'label': f'Gap at {gap_start/60:.1f}m - {gap_end/60:.1f}m',
-                                                'duration_s': gap_end - gap_start
-                                            })
-
-                                    # Gap after last merged interval
-                                    if measurement_duration - merged[-1][1] > 1:
-                                        gaps.append({
-                                            'label': 'After last section',
-                                            'duration_s': measurement_duration - merged[-1][1]
-                                        })
-
-                                    # Calculate coverage percentage
-                                    coverage_pct = (actual_covered / measurement_duration * 100) if measurement_duration > 0 else 0
-
-                                    # Check for overlaps
-                                    overlap_time = raw_section_time - actual_covered
-                                    has_overlaps = overlap_time > 1
-
-                                    # Display results
-                                    col_cov1, col_cov2 = st.columns(2)
-                                    with col_cov1:
-                                        st.metric("Coverage", f"{coverage_pct:.1f}%",
-                                                  help=f"{actual_covered/60:.1f}m covered of {measurement_duration/60:.1f}m total")
-                                    with col_cov2:
-                                        st.metric("Gaps", f"{len(gaps)}")
-
-                                    if has_overlaps:
-                                        st.info(f"Note: Sections overlap by {overlap_time/60:.1f}m (nested sections like Pause inside Measurement)")
-
-                                    if gaps:
-                                        total_gap = sum(g['duration_s'] for g in gaps)
-                                        gap_details = [f"**{total_gap/60:.1f}m uncovered:**"]
-                                        for gap in gaps:
-                                            gap_details.append(f"• {gap['label']}: {gap['duration_s']/60:.1f}m")
-                                        st.warning("\n".join(gap_details))
-                                    elif coverage_pct >= 99.9:
-                                        st.success("Sections fully cover the measurement period")
 
                         # RR+Gap Duration Validation (HRV Logger only)
                         # Compare event-based duration vs sum of RR intervals + gaps
