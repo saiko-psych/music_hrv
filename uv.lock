@@ -1098,6 +1098,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "streamlit" },
     { name = "streamlit-plotly-events" },
+    { name = "streamlit-shortcuts" },
 ]
 
 [package.dev-dependencies]
@@ -1116,6 +1117,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "streamlit", specifier = ">=1.28" },
     { name = "streamlit-plotly-events", specifier = ">=0.0.6" },
+    { name = "streamlit-shortcuts", specifier = ">=1.2.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -1294,6 +1296,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/8c/e51c4867cc4d819f8452811199241d0edbcec73621768270ada66153f874/streamlit-plotly-events-0.0.6.tar.gz", hash = "sha256:1fe25dbf0e5d803aeb90253be04d7b395f5bcfdf3c654f96ff3c19424e7f9582", size = 4874598, upload-time = "2021-04-26T23:36:16.973Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/08/51dd5c822e27410f6452c3cfe61f7163fdeb40f4d285f2da6c2b9f88584d/streamlit_plotly_events-0.0.6-py3-none-any.whl", hash = "sha256:e63fbe3c6a0746fdfce20060fc45ba5cd97805505c332b27372dcbd02c2ede29", size = 14802161, upload-time = "2021-04-26T23:36:09.194Z" },
+]
+
+[[package]]
+name = "streamlit-shortcuts"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/6d/a3b9befa11528163b96c216f7e4152c7e6df8976bb6ad8a42fb82e8c1778/streamlit_shortcuts-1.2.1.tar.gz", hash = "sha256:c982ace38ce6f887beef2bd3f16c36d645bdcbee010c5585e6963e4615fc8f16", size = 111285, upload-time = "2025-07-31T21:02:57.65Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/b5/a9d1ad477ae69db0b6cef35bf40154ec634a42657ff684a4b3c2024dde36/streamlit_shortcuts-1.2.1-py3-none-any.whl", hash = "sha256:58fa6d375c9f91068bf1400f9870ff3d382b4e4f1dcbf26e05567e4db3547375", size = 6856, upload-time = "2025-07-31T21:02:56.273Z" },
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=1.24",
     "plotly>=5.18",
     "streamlit-plotly-events>=0.0.6",
+    "streamlit-shortcuts>=1.2.1",
 ]
 
 [dependency-groups]

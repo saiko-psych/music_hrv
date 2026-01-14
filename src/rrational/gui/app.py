@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import streamlit as st
+from streamlit_shortcuts import shortcut_button
 from pathlib import Path
 import time
 import re
@@ -3732,11 +3733,18 @@ def render_rr_plot_fragment(participant_id: str):
         # Also set X-axis range if time window specified
         ts_for_zoom = plot_data.get('timestamps', [])
         if inspection_zoom.get('x_window_seconds') and ts_for_zoom:
-            # Find center of data
+            # Find center of data (with pan offset)
             mid_idx = len(ts_for_zoom) // 2
             mid_time = get_pandas().to_datetime(ts_for_zoom[mid_idx])
+
+            # Apply pan offset (from arrow key navigation)
+            pan_key = f"pan_position_{participant_id}"
+            pan_offset_seconds = st.session_state.get(pan_key, 0)
+            pan_offset = get_pandas().Timedelta(seconds=pan_offset_seconds)
+
             half_window = get_pandas().Timedelta(seconds=inspection_zoom['x_window_seconds'] / 2)
-            xaxis_config['range'] = [mid_time - half_window, mid_time + half_window]
+            center_time = mid_time + pan_offset
+            xaxis_config['range'] = [center_time - half_window, center_time + half_window]
 
     fig.update_layout(
         title=f"Tachogram - {participant_id}",
@@ -5260,8 +5268,8 @@ def main():
                                 zoom_key = f"inspection_zoom_{selected_participant}"
                                 col_zoom, col_clear = st.columns(2)
                                 with col_zoom:
-                                    if st.button("Inspection Zoom (I)", key=f"zoom_btn_{selected_participant}",
-                                                help="Reset Y-axis to 400-1200ms, X to 60s window (keyboard: I)"):
+                                    if shortcut_button("Inspection Zoom", "i", key=f"zoom_btn_{selected_participant}",
+                                                help="Reset Y-axis to 400-1200ms, X to 60s window (press I)"):
                                         # Calculate mean RR for centering
                                         mean_rr = sum(rr_values) / len(rr_values) if rr_values else 700
                                         # Set inspection zoom: Y-axis 400-1200ms, X-axis ~60s window
@@ -5278,6 +5286,25 @@ def main():
                                                     help="Return to auto-scaling"):
                                             del st.session_state[zoom_key]
                                             st.rerun()
+
+                                # Arrow key navigation (hidden buttons - shortcuts only)
+                                pan_key = f"pan_position_{selected_participant}"
+                                pan_step = 15  # Pan by 15 seconds
+
+                                # Left arrow - pan earlier
+                                if shortcut_button("←", "arrowleft", key=f"pan_left_{selected_participant}",
+                                                  hint=False):
+                                    current_pan = st.session_state.get(pan_key, 0)
+                                    st.session_state[pan_key] = current_pan - pan_step
+                                    st.rerun()
+
+                                # Right arrow - pan later
+                                if shortcut_button("→", "arrowright", key=f"pan_right_{selected_participant}",
+                                                  hint=False):
+                                    current_pan = st.session_state.get(pan_key, 0)
+                                    st.session_state[pan_key] = current_pan + pan_step
+                                    st.rerun()
+
                         with col_mode3:
                             # Plot resolution slider - allow up to all points
                             n_total = plot_data['n_original']
