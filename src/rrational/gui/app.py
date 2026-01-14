@@ -1217,52 +1217,15 @@ def apply_custom_css():
         display: none !important;
     }
 
-    /* Style the status widget container */
+    /* Clean status widget - remove grey box, hide swimmer */
     [data-testid="stStatusWidget"] {
-        background-color: var(--bg-secondary) !important;
-        border-radius: 8px;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
 
-    /* Pixel-style animated loading indicator */
-    @keyframes pixelLoad {
-        0%, 100% { opacity: 0.3; }
-        50% { opacity: 1; }
-    }
-
-    [data-testid="stStatusWidget"]::before {
-        content: "";
-        display: inline-flex;
-        gap: 3px;
-        margin-right: 8px;
-        vertical-align: middle;
-    }
-
-    [data-testid="stStatusWidget"]::after {
-        content: "■ ■ ■";
-        font-size: 10px;
-        letter-spacing: 2px;
-        color: var(--accent-primary, #2E86AB);
-        animation: pixelPulse 1.2s ease-in-out infinite;
-        margin-right: 6px;
-    }
-
-    @keyframes pixelPulse {
-        0%, 100% {
-            opacity: 0.4;
-            transform: scale(0.9);
-        }
-        25% {
-            opacity: 1;
-            transform: scale(1);
-        }
-        50% {
-            opacity: 0.4;
-            transform: scale(0.9);
-        }
-        75% {
-            opacity: 1;
-            transform: scale(1);
-        }
+    [data-testid="stStatusWidget"] svg {
+        display: none !important;
     }
     """
 
