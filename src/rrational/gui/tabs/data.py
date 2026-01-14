@@ -494,141 +494,160 @@ def render_data_tab():
         # _render_batch_processing()
 
 
-def _render_participants_table():
-    """Render the participants overview table."""
-    st.subheader("Participants Overview")
-
-    # Smart status summary - only show issues if they exist
-    issues = []
-    total_participants = len(st.session_state.summaries)
-
-    # Check for high artifact rates
-    high_artifact = [s for s in st.session_state.summaries if s.artifact_ratio > 0.15]
-    if high_artifact:
-        issues.append(f"**{len(high_artifact)}** participant(s) with high artifact rates (>15%)")
-
-    # Check for duplicates
-    with_duplicates = [s for s in st.session_state.summaries if s.duplicate_rr_intervals > 0]
-    if with_duplicates:
-        issues.append(f"**{len(with_duplicates)}** participant(s) with duplicate RR intervals")
-
-    # Check for multiple files
-    with_multi_files = [s for s in st.session_state.summaries
-                       if getattr(s, 'rr_file_count', 1) > 1 or getattr(s, 'events_file_count', 0) > 1]
-    if with_multi_files:
-        issues.append(f"**{len(with_multi_files)}** participant(s) with multiple files (merged)")
-
-    # Check for missing events
-    no_events = [s for s in st.session_state.summaries if s.events_detected == 0]
-    if no_events:
-        issues.append(f"**{len(no_events)}** participant(s) with no events detected")
-
-    # Display status summary
-    if issues:
-        with st.container():
-            st.markdown("**Issues Detected:**")
-            for issue in issues:
-                st.markdown(f"- {issue}")
-            st.markdown("---")
-    else:
-        st.success(f"All {total_participants} participants look good! No issues detected.")
-
-    # Create editable dataframe
-    participants_data = []
+def _build_participants_csv() -> str:
+    """Build CSV string from participants data for download."""
     loaded_participants = cached_load_participants()
+    rows = []
 
     for summary in st.session_state.summaries:
         recording_dt_str = ""
         if summary.recording_datetime:
             recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
 
-        # Show file counts
         rr_count = getattr(summary, 'rr_file_count', 1)
         ev_count = getattr(summary, 'events_file_count', 1 if summary.events_detected > 0 else 0)
         files_str = f"{rr_count}RR/{ev_count}Ev"
-        if rr_count > 1 or ev_count > 1:
-            files_str = f"* {files_str}"
 
-        quality_badge = get_quality_badge(100, summary.artifact_ratio)
-
-        # Get device info from session state
-        device_settings = st.session_state.get("default_device_settings", {})
-        device_name = device_settings.get("device", "Unknown")
-
-        # Get playlist assignment
         playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
         group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
 
-        # Get group label for display (show only label if defined, otherwise code)
         group_data = st.session_state.groups.get(group_code, {})
         group_label = group_data.get("label", "") if isinstance(group_data, dict) else ""
         group_display = group_label if group_label else group_code
 
-        # Get playlist label for display (show only label if defined, otherwise code)
         playlist_display = ""
         if playlist_code:
             playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
             playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
             playlist_display = playlist_label if playlist_label else playlist_code
 
-        # Get source app
         source_app = getattr(summary, 'source_app', 'Unknown')
+        device_settings = st.session_state.get("default_device_settings", {})
+        device_name = device_settings.get("device", "Unknown")
 
-        # Check if participant has CSV data (group or playlist assigned)
-        has_group_assigned = group_code != "Default"
-        has_playlist_assigned = bool(playlist_code)
-        csv_status = ""
-        if has_group_assigned and has_playlist_assigned:
-            csv_status = "**"  # Both
-        elif has_group_assigned:
-            csv_status = "G"  # Group only
-        elif has_playlist_assigned:
-            csv_status = "P"  # Playlist only
-        else:
-            csv_status = "—"  # None
-
-        participants_data.append({
+        rows.append({
             "Participant": summary.participant_id,
-            "CSV": csv_status,
-            "Quality": quality_badge,
-            "Saved": "Y" if summary.participant_id in loaded_participants else "N",
+            "Group": group_display,
+            "Playlist": playlist_display,
             "App": source_app,
             "Device": device_name,
             "Files": files_str,
             "Date/Time": recording_dt_str,
-            "Group": group_display,
-            "Playlist": playlist_display,
             "Total Beats": summary.total_beats,
             "Retained": summary.retained_beats,
             "Duplicates": summary.duplicate_rr_intervals,
             "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
             "Duration (min)": f"{summary.duration_s / 60:.1f}",
             "Events": summary.events_detected,
-            "Total Events": summary.events_detected + summary.duplicate_events,
-            "Duplicate Events": summary.duplicate_events,
-            "RR Range (ms)": f"{int(summary.rr_min_ms)}-{int(summary.rr_max_ms)}",
-            "Mean RR (ms)": f"{summary.rr_mean_ms:.0f}",
         })
 
-    df_participants = pd.DataFrame(participants_data)
+    df = pd.DataFrame(rows)
+    return df.to_csv(index=False)
 
-    # Build group display options (show only label, map label→code)
-    group_display_options = []
-    group_label_to_code = {}  # Map label back to code for saving
-    for gid, gdata in st.session_state.groups.items():
-        glabel = gdata.get("label", "") if isinstance(gdata, dict) else ""
-        display = glabel if glabel else gid
-        group_display_options.append(display)
-        group_label_to_code[display] = gid
 
-    # Build playlist display options (show only label, map label→code)
-    playlist_display_options = [""]
-    playlist_label_to_code = {"": ""}  # Map label back to code for saving
-    for pid, pdata in st.session_state.get("playlist_groups", {}).items():
-        plabel = pdata.get("label", "") if isinstance(pdata, dict) else ""
-        display = plabel if plabel else pid
-        playlist_display_options.append(display)
-        playlist_label_to_code[display] = pid
+@st.fragment
+def _render_participants_data_editor(group_display_options, group_label_to_code,
+                                      playlist_display_options, playlist_label_to_code):
+    """Render the data editor as a fragment to allow consecutive edits.
+
+    Using @st.fragment isolates this component - when changes are made,
+    only this fragment reruns, not the whole page. This prevents the
+    data_editor from resetting between consecutive edits.
+
+    IMPORTANT: We store the dataframe in session state and only rebuild it
+    when summaries change. This prevents the data_editor from resetting
+    when we update session_state after detecting a change.
+    """
+    # Check if we need to rebuild the dataframe
+    # Only rebuild when: summaries change, or dataframe doesn't exist yet
+    summaries_key = tuple(s.participant_id for s in st.session_state.summaries) if st.session_state.summaries else ()
+    need_rebuild = (
+        "_participants_df" not in st.session_state or
+        st.session_state.get("_participants_df_key") != summaries_key
+    )
+
+    if need_rebuild:
+        # Build dataframe from current session state
+        participants_data = []
+        loaded_participants = cached_load_participants()
+
+        for summary in st.session_state.summaries:
+            recording_dt_str = ""
+            if summary.recording_datetime:
+                recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
+
+            # Show file counts
+            rr_count = getattr(summary, 'rr_file_count', 1)
+            ev_count = getattr(summary, 'events_file_count', 1 if summary.events_detected > 0 else 0)
+            files_str = f"{rr_count}RR/{ev_count}Ev"
+            if rr_count > 1 or ev_count > 1:
+                files_str = f"* {files_str}"
+
+            quality_badge = get_quality_badge(100, summary.artifact_ratio)
+
+            # Get device info from session state
+            device_settings = st.session_state.get("default_device_settings", {})
+            device_name = device_settings.get("device", "Unknown")
+
+            # Get playlist assignment
+            playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
+            group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
+
+            # Get group label for display (show only label if defined, otherwise code)
+            group_data = st.session_state.groups.get(group_code, {})
+            group_label = group_data.get("label", "") if isinstance(group_data, dict) else ""
+            group_display = group_label if group_label else group_code
+
+            # Get playlist label for display (show only label if defined, otherwise code)
+            playlist_display = ""
+            if playlist_code:
+                playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
+                playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
+                playlist_display = playlist_label if playlist_label else playlist_code
+
+            # Get source app
+            source_app = getattr(summary, 'source_app', 'Unknown')
+
+            # Check if participant has CSV data (group or playlist assigned)
+            has_group_assigned = group_code != "Default"
+            has_playlist_assigned = bool(playlist_code)
+            csv_status = ""
+            if has_group_assigned and has_playlist_assigned:
+                csv_status = "**"  # Both
+            elif has_group_assigned:
+                csv_status = "G"  # Group only
+            elif has_playlist_assigned:
+                csv_status = "P"  # Playlist only
+            else:
+                csv_status = "—"  # None
+
+            participants_data.append({
+                "Participant": summary.participant_id,
+                "CSV": csv_status,
+                "Quality": quality_badge,
+                "Saved": "Y" if summary.participant_id in loaded_participants else "N",
+                "App": source_app,
+                "Device": device_name,
+                "Files": files_str,
+                "Date/Time": recording_dt_str,
+                "Group": group_display,
+                "Playlist": playlist_display,
+                "Total Beats": summary.total_beats,
+                "Retained": summary.retained_beats,
+                "Duplicates": summary.duplicate_rr_intervals,
+                "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
+                "Duration (min)": f"{summary.duration_s / 60:.1f}",
+                "Events": summary.events_detected,
+                "Total Events": summary.events_detected + summary.duplicate_events,
+                "Duplicate Events": summary.duplicate_events,
+                "RR Range (ms)": f"{int(summary.rr_min_ms)}-{int(summary.rr_max_ms)}",
+                "Mean RR (ms)": f"{summary.rr_mean_ms:.0f}",
+            })
+
+        st.session_state._participants_df = pd.DataFrame(participants_data)
+        st.session_state._participants_df_key = summaries_key
+
+    df_participants = st.session_state._participants_df
 
     # Editable dataframe
     edited_df = st.data_editor(
@@ -693,7 +712,6 @@ def _render_participants_table():
 
     if groups_changed or playlists_changed:
         save_participant_data()
-        cached_load_participants.clear()
         msg = []
         if groups_changed:
             msg.append("Groups")
@@ -701,11 +719,73 @@ def _render_participants_table():
             msg.append("Playlists")
         show_toast(f"{' & '.join(msg)} saved", icon="success")
 
-    # Show warning if any participant has duplicate RR intervals
+
+def _render_participants_table():
+    """Render the participants overview table."""
+    st.subheader("Participants Overview")
+
+    # Smart status summary - only show issues if they exist
+    issues = []
+    total_participants = len(st.session_state.summaries)
+
+    # Check for high artifact rates
+    high_artifact = [s for s in st.session_state.summaries if s.artifact_ratio > 0.15]
+    if high_artifact:
+        issues.append(f"**{len(high_artifact)}** participant(s) with high artifact rates (>15%)")
+
+    # Check for duplicates
+    with_duplicates = [s for s in st.session_state.summaries if s.duplicate_rr_intervals > 0]
+    if with_duplicates:
+        issues.append(f"**{len(with_duplicates)}** participant(s) with duplicate RR intervals")
+
+    # Check for multiple files
+    with_multi_files = [s for s in st.session_state.summaries
+                       if getattr(s, 'rr_file_count', 1) > 1 or getattr(s, 'events_file_count', 0) > 1]
+    if with_multi_files:
+        issues.append(f"**{len(with_multi_files)}** participant(s) with multiple files (merged)")
+
+    # Check for missing events
+    no_events = [s for s in st.session_state.summaries if s.events_detected == 0]
+    if no_events:
+        issues.append(f"**{len(no_events)}** participant(s) with no events detected")
+
+    # Display status summary
+    if issues:
+        with st.container():
+            st.markdown("**Issues Detected:**")
+            for issue in issues:
+                st.markdown(f"- {issue}")
+            st.markdown("---")
+    else:
+        st.success(f"All {total_participants} participants look good! No issues detected.")
+
+    # Build group display options (show only label, map label→code)
+    group_display_options = []
+    group_label_to_code = {}  # Map label back to code for saving
+    for gid, gdata in st.session_state.groups.items():
+        glabel = gdata.get("label", "") if isinstance(gdata, dict) else ""
+        display = glabel if glabel else gid
+        group_display_options.append(display)
+        group_label_to_code[display] = gid
+
+    # Build playlist display options (show only label, map label→code)
+    playlist_display_options = [""]
+    playlist_label_to_code = {"": ""}  # Map label back to code for saving
+    for pid, pdata in st.session_state.get("playlist_groups", {}).items():
+        plabel = pdata.get("label", "") if isinstance(pdata, dict) else ""
+        display = plabel if plabel else pid
+        playlist_display_options.append(display)
+        playlist_label_to_code[display] = pid
+
+    # Render the editable table as a fragment to prevent resets during consecutive edits
+    _render_participants_data_editor(group_display_options, group_label_to_code,
+                                      playlist_display_options, playlist_label_to_code)
+
+    # Show warning if any participant has duplicate RR intervals (use session state directly)
     high_duplicates = [
-        (row["Participant"], row["Duplicates"])
-        for _, row in df_participants.iterrows()
-        if row["Duplicates"] > 0
+        (s.participant_id, s.duplicate_rr_intervals)
+        for s in st.session_state.summaries
+        if s.duplicate_rr_intervals > 0
     ]
     if high_duplicates:
         st.warning(
@@ -716,14 +796,15 @@ def _render_participants_table():
             for pid, dup_count in high_duplicates:
                 st.text(f"- {pid}: {dup_count} duplicates removed")
 
-    # Download and Import buttons in columns
+    # Download and Import section
     col_dl, col_import = st.columns([1, 2])
 
     with col_dl:
-        csv_participants = df_participants.to_csv(index=False)
+        # Build CSV from session state
+        csv_data = _build_participants_csv()
         st.download_button(
             label="Download Participants CSV",
-            data=csv_participants,
+            data=csv_data,
             file_name="participants_overview.csv",
             mime="text/csv",
             width='stretch',
