@@ -230,28 +230,59 @@ are independent of RR values, so removal doesn't affect timing).
 ARTIFACT_CORRECTION_HELP = """
 ### Signal Inspection and Artifact Correction
 
-RRational provides two artifact detection methods:
+RRational provides multiple artifact detection methods:
 
-| Method | Description | Best For |
-|--------|-------------|----------|
-| **Threshold** | Detects RR changes > X% from previous beat (Malik method) | Long recordings (>1 hour), simple artifacts |
-| **Kubios** | NeuroKit2's algorithm detecting ectopic/missed/extra beats | Short recordings, complex artifacts |
+#### Detection Methods
 
-#### Artifact Types Detected:
+| Method | Algorithm | Best For |
+|--------|-----------|----------|
+| **Threshold (Malik)** | Simple ratio check - flags beats differing >X% from previous | Quick screening, very long recordings (>1 hour) |
+| **Lipponen 2019** | State-of-the-art beat classification algorithm | Standard recordings (<10 min), most accurate detection |
+| **Lipponen 2019 (segmented)** | Same algorithm, processes in ~5-min chunks | Long recordings (>10 min) - better sensitivity across time |
 
-| Type | Description | Correction |
-|------|-------------|------------|
-| **Threshold** | Beat differs >20% from previous | Interpolated |
-| **Ectopic** | Premature/delayed beat | Interpolated from neighbors |
-| **Missed** | Undetected R-peak | Splits long interval |
-| **Extra** | False positive detection | Removes extra beat |
+> **Note**: This is the same algorithm that NeuroKit2 calls "Kubios". We use the scientific name
+> (Lipponen & Tarvainen, 2019) for clarity and proper attribution.
+
+#### Which Method Should I Use?
+
+| Recording Length | Recommended Method | Why |
+|-----------------|-------------------|-----|
+| **< 10 min** | Lipponen 2019 | Full context for beat classification |
+| **10-60 min** | Lipponen 2019 (segmented) | Better sensitivity in later segments |
+| **> 60 min** | Threshold (Malik) or Lipponen 2019 (segmented) | Fast screening or segment-by-segment analysis |
+| **Quick screening** | Threshold (Malik) | Fast, adjustable sensitivity via slider |
+
+#### Segmented Mode Explained
+
+For long recordings, artifact characteristics may change over time (fatigue, movement, electrode drift).
+Segmented mode divides the recording into ~5-minute chunks (300 beats) and runs detection independently
+on each segment. This provides:
+
+- **Better sensitivity**: Local thresholds adapt to each segment
+- **Per-segment statistics**: See artifact % for each 5-min chunk (expand "Segment Artifact Details")
+- **Identify problem periods**: Segments >10% artifacts should be excluded
+
+#### Artifact Types Detected (Lipponen/Kubios methods):
+
+| Type | Description | How Corrected |
+|------|-------------|---------------|
+| **Ectopic** | Premature/delayed beat (PVC, PAC) | Interpolated from neighbors |
+| **Missed** | Undetected R-peak | Interval split |
+| **Extra** | False positive detection | Beat removed |
+| **Long/Short** | Physiologically implausible | Interpolated |
+
+#### Threshold Method:
+- Simple: flags beats where `RR[i] / RR[i-1]` differs by > threshold %
+- Default 20% - adjust slider to tune sensitivity
+- No beat classification, just ratio check
 
 #### Signal Inspection Mode:
 1. Select **"Signal Inspection"** mode in participant view
 2. Resolution auto-increases for beat-level inspection
-3. Red markers show detected artifacts on the plot
+3. Orange X markers show detected artifacts on the plot
 4. Green dotted line shows corrected NN intervals (preview)
 5. Quality assessment shows artifact rate and recommendations
+6. For segmented methods, expand **"Segment Artifact Details"** to see per-segment statistics
 
 #### Quality Guidelines (Quigley et al. 2024):
 
@@ -260,15 +291,21 @@ RRational provides two artifact detection methods:
 | < 2% | Excellent | All metrics valid |
 | 2-5% | Good | Use with correction |
 | 5-10% | Acceptable | Prefer time-domain metrics |
-| > 10% | Poor | Exclude or use only RMSSD/SDNN |
+| > 10% | Poor | Exclude segment or use only RMSSD/SDNN |
 
 #### Workflow:
 1. **Visual inspection** in Signal Inspection mode
-2. **Adjust threshold** if too many false positives (try 25-30%)
-3. **Switch methods** if one performs better for your data
-4. **Enable correction preview** to see interpolated values
-5. **Define exclusions** for problematic regions (switch to Exclusions mode)
-6. **Apply correction** during analysis (Analysis tab checkbox)
+2. **Choose method**: Lipponen 2019 for accuracy, Threshold for speed
+3. **Use segmented** for recordings > 10 minutes
+4. **Check segment stats** to identify problem periods
+5. **Adjust threshold** if using Threshold method (try 25-30%)
+6. **Define exclusions** for persistently bad regions (switch to Exclusions mode)
+7. **Apply correction** during analysis (Analysis tab checkbox)
+
+#### Reference:
+Lipponen, J. A., & Tarvainen, M. P. (2019). A robust algorithm for heart rate variability
+time series artefact correction using novel beat classification. *J Med Eng Technol*, 43(3), 173-181.
+https://doi.org/10.1088/1361-6579/ab3c96
 """
 
 EXCLUSION_ZONES_HELP = """

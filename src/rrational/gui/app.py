@@ -858,9 +858,13 @@ def apply_custom_css():
     }
 
     .stPopover button {
-        background-color: var(--bg-tertiary) !important;
+        background-color: transparent !important;
         color: var(--text-primary) !important;
-        border: 1px solid var(--border-color) !important;
+        border: none !important;
+    }
+
+    .stPopover button:hover {
+        background-color: var(--bg-tertiary) !important;
     }
 
     /* ============================================
@@ -1993,12 +1997,14 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
     Args:
         rr_values_tuple: Tuple of RR interval values in ms
         timestamps_tuple: Tuple of corresponding timestamps
-        method: Detection method - "threshold" (simple), "kubios" (single pass),
-                or "kubios_segmented" (segmented for long recordings)
+        method: Detection method - "threshold" (simple), "kubios"/"lipponen2019" (single pass),
+                or "kubios_segmented"/"lipponen2019_segmented" (segmented for long recordings)
         threshold_pct: For threshold method - max allowed change between beats (0.20 = 20%)
-        segment_beats: For kubios_segmented - number of beats per segment (default: 300 = ~5 min)
+        segment_beats: For segmented methods - number of beats per segment (default: 300 = ~5 min)
 
     Returns dict with artifact indices mapped to timestamps for plotting.
+    Note: "lipponen2019" uses NeuroKit2's Kubios method which implements
+          Lipponen & Tarvainen (2019) artifact detection algorithm.
     """
     rr_list = list(rr_values_tuple)
     timestamps_list = list(timestamps_tuple)
@@ -2006,7 +2012,7 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
     if len(rr_list) < 10:
         return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                 "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                "method": method}
+                "method": method, "segment_stats": []}
 
     try:
         import numpy as np
@@ -2024,13 +2030,15 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                     artifact_indices.append(i)
 
             by_type = {"threshold": len(artifact_indices)}
+            segment_stats = []  # No segments for threshold method
 
-        elif method == "kubios_segmented":
-            # Segmented Kubios - process long recordings in chunks for better sensitivity
+        elif method in ("kubios_segmented", "lipponen2019_segmented"):
+            # Segmented Lipponen/Kubios - process long recordings in chunks for better sensitivity
+            # Lipponen2019 uses NeuroKit2's Kubios method (Lipponen & Tarvainen, 2019)
             if not NEUROKIT_AVAILABLE:
                 return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                         "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                        "method": method}
+                        "method": method, "segment_stats": []}
 
             nk = get_neurokit()
             rr_array = np.array(rr_list, dtype=float)
@@ -2039,10 +2047,12 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             # Initialize combined results
             artifact_indices_set = set()
             by_type = {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0}
+            segment_stats = []  # Track per-segment artifact percentages
 
             # Process in overlapping segments for continuity
             overlap = min(30, segment_beats // 10)  # 10% overlap or 30 beats
             start_idx = 0
+            segment_num = 0
 
             while start_idx < n_beats:
                 end_idx = min(start_idx + segment_beats, n_beats)
@@ -2055,6 +2065,7 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 peak_indices = np.cumsum(segment_rr).astype(int)
                 peak_indices = np.insert(peak_indices, 0, 0)
 
+                segment_artifacts = 0
                 try:
                     info, _ = nk.signal_fixpeaks(
                         peak_indices,
@@ -2065,6 +2076,7 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                     )
 
                     # Collect artifacts and adjust indices to global position
+                    segment_artifact_indices = set()
                     for artifact_type in ["ectopic", "missed", "extra", "longshort"]:
                         indices = info.get(artifact_type, [])
                         if isinstance(indices, np.ndarray):
@@ -2076,20 +2088,36 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                         global_indices = [i + start_idx for i in indices if 0 <= i < len(segment_rr)]
                         by_type[artifact_type] += len(global_indices)
                         artifact_indices_set.update(global_indices)
+                        segment_artifact_indices.update(range(len(indices)))
+
+                    segment_artifacts = len(segment_artifact_indices)
 
                 except Exception:
                     pass  # Skip failed segments
+
+                # Record segment statistics
+                segment_num += 1
+                segment_pct = (segment_artifacts / len(segment_rr) * 100) if len(segment_rr) > 0 else 0.0
+                segment_stats.append({
+                    "segment": segment_num,
+                    "start_beat": start_idx,
+                    "end_beat": end_idx,
+                    "n_beats": len(segment_rr),
+                    "n_artifacts": segment_artifacts,
+                    "artifact_pct": round(segment_pct, 2),
+                })
 
                 # Move to next segment (with overlap)
                 start_idx = end_idx - overlap if end_idx < n_beats else n_beats
 
             artifact_indices = sorted(artifact_indices_set)
 
-        else:  # kubios method (single pass)
+        elif method in ("kubios", "lipponen2019"):
+            # Single-pass Lipponen/Kubios method (Lipponen & Tarvainen, 2019)
             if not NEUROKIT_AVAILABLE:
                 return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                         "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                        "method": method}
+                        "method": method, "segment_stats": []}
 
             nk = get_neurokit()
             rr_array = np.array(rr_list, dtype=float)
@@ -2118,6 +2146,13 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 artifact_indices_set.update(indices)
 
             artifact_indices = sorted(artifact_indices_set)
+            segment_stats = []  # No segments for single-pass methods
+
+        else:
+            # Unknown method, fall back to threshold
+            artifact_indices = []
+            by_type = {}
+            segment_stats = []
 
         # Filter to valid range and get timestamps/values
         valid_indices = [i for i in artifact_indices if 0 <= i < len(timestamps_list)]
@@ -2132,11 +2167,12 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             "artifact_ratio": len(valid_indices) / len(rr_list) if rr_list else 0.0,
             "by_type": by_type,
             "method": method,
+            "segment_stats": segment_stats,
         }
     except Exception:
         return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                 "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                "method": method}
+                "method": method, "segment_stats": []}
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -2325,7 +2361,6 @@ def cached_build_participant_table(summaries_data: tuple, participant_groups: di
             "Total Beats": s["total_beats"],
             "Retained": s["retained_beats"],
             "Duplicates": s["duplicate_rr_intervals"],
-            "Artifacts (%)": f"{s['artifact_ratio'] * 100:.1f}",
             "Duration (min)": f"{s['duration_s'] / 60:.1f}",
             "Events": s["events_detected"],
             "Total Events": s["events_detected"] + s["duplicate_events"],
@@ -2603,11 +2638,6 @@ def render_participant_table_fragment():
                 disabled=True,
                 format="%d",
             ),
-            "Artifacts (%)": st.column_config.TextColumn(
-                "Artifacts (%)",
-                disabled=True,
-                width="small",
-            ),
             "Total Events": st.column_config.NumberColumn(
                 "Total Events",
                 disabled=True,
@@ -2624,7 +2654,7 @@ def render_participant_table_fragment():
         width='stretch',
         hide_index=True,
         key="participants_table",
-        disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates", "Artifacts (%)", "Duration (min)", "Events", "Total Events", "Duplicate Events", "RR Range (ms)", "Mean RR (ms)"]
+        disabled=["Participant", "Saved", "Date/Time", "Total Beats", "Retained", "Duplicates", "Duration (min)", "Events", "Total Events", "Duplicate Events", "RR Range (ms)", "Mean RR (ms)"]
     )
 
     # Auto-save group assignments when changed (map label back to group ID)
@@ -3283,7 +3313,7 @@ def render_settings_panel():
         new_show_exclusions = st.checkbox("Exclusions", value=plot_opts.get("show_exclusions", True), key="settings_show_exclusions")
         new_show_gaps = st.checkbox("Gaps", value=plot_opts.get("show_gaps", True), key="settings_show_gaps")
     with col2:
-        new_show_music_sec = st.checkbox("Music sections", value=plot_opts.get("show_music_sections", True), key="settings_show_music_sec")
+        new_show_music_sec = st.checkbox("Sections", value=plot_opts.get("show_music_sections", True), key="settings_show_music_sec")
         new_show_artifacts = st.checkbox("Artifacts", value=plot_opts.get("show_artifacts", False), key="settings_show_artifacts")
         new_show_variability = st.checkbox("Variability", value=plot_opts.get("show_variability", False), key="settings_show_variability")
 
@@ -3419,12 +3449,21 @@ def render_rr_plot_fragment(participant_id: str):
                                      help="Detect artifacts using selected method")
         # Artifact detection settings (only when enabled)
         if show_artifacts:
+            # Method display names for dropdown
+            # Note: Kubios and Lipponen2019 are the same algorithm - we only show Lipponen2019
+            # to avoid redundancy. The internal code still accepts "kubios" for compatibility.
+            method_options = {
+                "threshold": "Threshold (Malik)",
+                "lipponen2019": "Lipponen 2019",
+                "lipponen2019_segmented": "Lipponen 2019 (segmented)",
+            }
             artifact_method = st.selectbox(
                 "Method",
-                options=["threshold", "kubios", "kubios_segmented"],
+                options=list(method_options.keys()),
+                format_func=lambda x: method_options[x],
                 index=0,  # Default to threshold (better for long recordings)
                 key=f"frag_artifact_method_{participant_id}",
-                help="Threshold: simple ratio check. Kubios: NeuroKit2 single pass. Kubios Segmented: processes in 5-min chunks (better for long recordings)."
+                help="**Threshold**: Fast ratio check (>X% change). **Lipponen 2019**: State-of-the-art beat classification (=Kubios). **Segmented**: 5-min chunks for long recordings. Use Lipponen for <10min, Segmented for >10min."
             )
             if artifact_method == "threshold":
                 artifact_threshold = st.slider(
@@ -3434,7 +3473,7 @@ def render_rr_plot_fragment(participant_id: str):
                     help="Max allowed RR change between beats (20% = Malik method)"
                 ) / 100.0
                 segment_beats = 300  # Default, not used for threshold
-            elif artifact_method == "kubios_segmented":
+            elif artifact_method in ("kubios_segmented", "lipponen2019_segmented"):
                 segment_beats = st.slider(
                     "Segment size (beats)",
                     min_value=100, max_value=600, value=300, step=50,
@@ -3443,8 +3482,9 @@ def render_rr_plot_fragment(participant_id: str):
                 )
                 artifact_threshold = 0.20  # Not used
             else:
-                artifact_threshold = 0.20  # Not used for kubios
-                segment_beats = 300  # Default, not used for kubios
+                # kubios or lipponen2019 single-pass methods
+                artifact_threshold = 0.20  # Not used
+                segment_beats = 300  # Not used
             # Show corrected only when artifacts enabled
             show_corrected = st.checkbox("Show corrected (NN)", value=plot_defaults.get("show_corrected", False),
                                          key=f"frag_show_corrected_{participant_id}",
@@ -3753,10 +3793,20 @@ def render_rr_plot_fragment(participant_id: str):
             if boundary_count > 0:
                 gap_suffix += f" | {boundary_count} segment boundaries"
 
+            # Format method display name
+            method_display_names = {
+                "threshold": f"Threshold ({artifact_threshold*100:.0f}%)",
+                "lipponen2019": "Lipponen 2019",
+                "lipponen2019_segmented": "Lipponen 2019 (segmented)",
+                "kubios": "Kubios",
+                "kubios_segmented": "Kubios (segmented)",
+            }
+            method_display = method_display_names.get(method_used, method_used)
+
             if method_used == "threshold":
                 st.info(f"**{artifact_result['total_artifacts']} artifacts detected** "
                        f"({artifact_result['artifact_ratio']*100:.1f}%) - "
-                       f"Method: Threshold ({artifact_threshold*100:.0f}%){gap_suffix}")
+                       f"Method: {method_display}{gap_suffix}")
             else:
                 st.info(f"**{artifact_result['total_artifacts']} artifacts detected** "
                        f"({artifact_result['artifact_ratio']*100:.1f}%) - "
@@ -3764,6 +3814,34 @@ def render_rr_plot_fragment(participant_id: str):
                        f"Missed: {by_type.get('missed', 0)}, "
                        f"Extra: {by_type.get('extra', 0)}, "
                        f"Long/Short: {by_type.get('longshort', 0)}{gap_suffix}")
+
+            # Display per-segment artifact percentages for segmented methods
+            segment_stats = artifact_result.get("segment_stats", [])
+            if segment_stats:
+                with st.expander(f"Segment Artifact Details ({len(segment_stats)} segments)"):
+                    import pandas as pd
+                    df = pd.DataFrame(segment_stats)
+                    df.columns = ["Segment", "Start Beat", "End Beat", "N Beats", "N Artifacts", "Artifact %"]
+
+                    # Highlight segments with high artifact rates
+                    def highlight_high_artifacts(row):
+                        if row["Artifact %"] > 10:
+                            return ["background-color: #ffcccc"] * len(row)  # Red for >10%
+                        elif row["Artifact %"] > 5:
+                            return ["background-color: #fff3cd"] * len(row)  # Yellow for >5%
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        df.style.apply(highlight_high_artifacts, axis=1).format({"Artifact %": "{:.1f}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    # Summary statistics
+                    avg_pct = df["Artifact %"].mean()
+                    max_pct = df["Artifact %"].max()
+                    high_segments = len(df[df["Artifact %"] > 10])
+                    st.caption(f"Avg: {avg_pct:.1f}% | Max: {max_pct:.1f}% | Segments >10%: {high_segments}")
 
             # Add artifact markers to plot (orange X markers)
             if artifact_result["artifact_timestamps"]:
@@ -4815,7 +4893,7 @@ def main():
                 st.markdown(f"**{selected_participant}** | Group: {group_display} | Randomization: {rand_display} | ({current_idx + 1} of {len(participant_list)})")
 
                 # Metrics row
-                col1, col2, col3, col4, col5 = st.columns(5)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Total Beats", summary.total_beats)
                 with col2:
@@ -4823,8 +4901,6 @@ def main():
                 with col3:
                     st.metric("Duplicates", summary.duplicate_rr_intervals)
                 with col4:
-                    st.metric("Artifacts", f"{summary.artifact_ratio * 100:.1f}%")
-                with col5:
                     st.metric("Duration", f"{summary.duration_s / 60:.1f} min")
 
                 # ISSUE 1 FIX: Show warning and expandable duplicate details if duplicates detected
@@ -5846,21 +5922,22 @@ def main():
                             - **Colored regions** = variability segments (green=stable, orange=moderate, red=high)
                             """)
 
-                    # Music Change Event Generator (inside events mode)
-                    with st.expander("Generate Music Change Events", expanded=False):
+                    # Repetitive Event Generator (inside events mode)
+                    with st.expander("Generate Repetitive Events", expanded=False):
                         st.markdown("""
-                        **Auto-generate music section boundaries** based on timing intervals and playlist group.
+                        **Auto-generate section events** at fixed time intervals within any time range.
 
-                        Music changes every 5 minutes in a cycling pattern based on the participant's randomization group.
+                        Use this to mark repeating conditions, phases, or treatments that cycle at regular intervals
+                        (e.g., music changes, stimuli presentations, condition blocks).
                         """)
 
                         # Ensure participant is initialized in events dict
                         if selected_participant not in st.session_state.participant_events:
                             st.session_state.participant_events[selected_participant] = {'events': [], 'manual': []}
 
-                        # Get existing events to find measurement boundaries
+                        # Get existing events for boundary selection
                         stored_data = st.session_state.participant_events.get(selected_participant, {'events': [], 'manual': []})
-                        raw_events = stored_data.get('events', []) + stored_data.get('manual', [])
+                        raw_events = stored_data.get('events', []) + stored_data.get('manual', []) + stored_data.get('generated_events', [])
 
                         # Helper to handle dicts (defensive for stale session state)
                         def get_event_attr(evt, attr, default=None):
@@ -5869,194 +5946,192 @@ def main():
                                 return evt.get(attr, default)
                             return getattr(evt, attr, default)
 
-                        # Find all relevant boundary events for music generation
-                        boundary_events = {}
+                        # Build list of available events with timestamps
+                        available_events = {}
                         for evt in raw_events:
                             canonical = get_event_attr(evt, 'canonical')
-                            if canonical in ['measurement_start', 'measurement_end', 'pause_start', 'pause_end']:
-                                first_ts = get_event_attr(evt, 'first_timestamp')
-                                if first_ts:
-                                    boundary_events[canonical] = first_ts
+                            first_ts = get_event_attr(evt, 'first_timestamp')
+                            if canonical and first_ts:
+                                available_events[canonical] = first_ts
 
-                        st.markdown("**Music Change Settings:**")
+                        st.markdown("**Time Range:**")
 
-                        # Initialize playlist groups if needed
-                        if "playlist_groups" not in st.session_state:
-                            st.session_state.playlist_groups = {}
-                        if "participant_playlists" not in st.session_state:
-                            st.session_state.participant_playlists = {}
-
-                        # Playlist group selection for this participant
-                        playlist_options = ["(None - use custom order)"] + list(st.session_state.playlist_groups.keys())
-                        current_playlist = st.session_state.participant_playlists.get(selected_participant, "(None - use custom order)")
-                        if current_playlist not in playlist_options:
-                            current_playlist = "(None - use custom order)"
-
-                        selected_playlist = st.selectbox(
-                            "Playlist Group (Randomization)",
-                            options=playlist_options,
-                            index=playlist_options.index(current_playlist) if current_playlist in playlist_options else 0,
-                            key=f"playlist_select_{selected_participant}",
-                            help="Select the randomization group for this participant"
+                        # Let user select start and end events OR enter manual times
+                        range_mode = st.radio(
+                            "Define range using:",
+                            options=["Existing events", "Manual times"],
+                            horizontal=True,
+                            key=f"range_mode_{selected_participant}"
                         )
 
-                        # Save playlist assignment
-                        if selected_playlist != "(None - use custom order)":
-                            if st.session_state.participant_playlists.get(selected_participant) != selected_playlist:
-                                st.session_state.participant_playlists[selected_participant] = selected_playlist
-                            playlist_data = st.session_state.playlist_groups.get(selected_playlist, {})
-                            music_label_list = playlist_data.get("music_order", ["music_1", "music_2", "music_3"])
-                            st.success(f"Using **{selected_playlist}** music order: {' → '.join(music_label_list)}")
-                        else:
-                            if selected_participant in st.session_state.participant_playlists:
-                                del st.session_state.participant_playlists[selected_participant]
+                        start_time = None
+                        end_time = None
 
-                            # Custom order input
-                            col_m1, col_m2 = st.columns(2)
-                            with col_m1:
-                                music_interval_min = st.number_input(
-                                    "Interval (minutes)",
-                                    min_value=1,
-                                    max_value=30,
-                                    value=5,
-                                    step=1,
-                                    key=f"music_interval_{selected_participant}",
-                                    help="How often the music changes (in minutes)"
+                        if range_mode == "Existing events":
+                            event_list = list(available_events.keys())
+                            if event_list:
+                                col_start, col_end = st.columns(2)
+                                with col_start:
+                                    start_event = st.selectbox(
+                                        "Start event",
+                                        options=event_list,
+                                        key=f"gen_start_event_{selected_participant}",
+                                        help="Events will be generated starting from this time"
+                                    )
+                                    if start_event:
+                                        start_time = available_events[start_event]
+                                        st.caption(f"Time: {start_time.strftime('%H:%M:%S') if start_time else 'N/A'}")
+
+                                with col_end:
+                                    end_event = st.selectbox(
+                                        "End event",
+                                        options=event_list,
+                                        key=f"gen_end_event_{selected_participant}",
+                                        help="Events will be generated up to this time"
+                                    )
+                                    if end_event:
+                                        end_time = available_events[end_event]
+                                        st.caption(f"Time: {end_time.strftime('%H:%M:%S') if end_time else 'N/A'}")
+                            else:
+                                st.warning("No events detected yet. Add events first or use manual times.")
+
+                        else:  # Manual times
+                            col_start, col_end = st.columns(2)
+                            with col_start:
+                                start_time_str = st.text_input(
+                                    "Start time (HH:MM:SS)",
+                                    value="00:00:00",
+                                    key=f"gen_start_manual_{selected_participant}"
                                 )
-                            with col_m2:
-                                music_labels = st.text_area(
-                                    "Music type labels (one per line)",
-                                    value="music_1\nmusic_2\nmusic_3",
-                                    height=100,
-                                    key=f"music_labels_{selected_participant}",
-                                    help="Custom labels for each music type"
+                            with col_end:
+                                end_time_str = st.text_input(
+                                    "End time (HH:MM:SS)",
+                                    value="01:00:00",
+                                    key=f"gen_end_manual_{selected_participant}"
                                 )
 
-                            # Parse music labels
-                            music_label_list = [line.strip() for line in music_labels.strip().split('\n') if line.strip()]
-                            if not music_label_list:
-                                music_label_list = ["music_1", "music_2", "music_3"]
+                            # Parse manual times (use recording start date as base)
+                            try:
+                                from datetime import datetime, timedelta
+                                # Get recording base date from summary
+                                summary = get_summary_dict().get(selected_participant)
+                                base_date = summary.recording_datetime.date() if summary and summary.recording_datetime else datetime.now().date()
 
-                        # Always show interval setting when using playlist group
-                        if selected_playlist != "(None - use custom order)":
-                            music_interval_min = st.number_input(
+                                h, m, s = map(int, start_time_str.split(':'))
+                                start_time = datetime.combine(base_date, datetime.min.time()) + timedelta(hours=h, minutes=m, seconds=s)
+
+                                h, m, s = map(int, end_time_str.split(':'))
+                                end_time = datetime.combine(base_date, datetime.min.time()) + timedelta(hours=h, minutes=m, seconds=s)
+                            except Exception:
+                                st.error("Invalid time format. Use HH:MM:SS")
+
+                        st.markdown("---")
+                        st.markdown("**Condition Settings:**")
+
+                        col_interval, col_labels = st.columns(2)
+                        with col_interval:
+                            event_interval_min = st.number_input(
                                 "Interval (minutes)",
                                 min_value=1,
-                                max_value=30,
+                                max_value=60,
                                 value=5,
                                 step=1,
-                                key=f"music_interval_pl_{selected_participant}",
-                                help="How often the music changes (in minutes)"
+                                key=f"event_interval_{selected_participant}",
+                                help="Duration of each condition/phase"
                             )
 
+                        with col_labels:
+                            condition_labels = st.text_area(
+                                "Condition labels (one per line)",
+                                value="condition_1\ncondition_2\ncondition_3",
+                                height=100,
+                                key=f"condition_labels_{selected_participant}",
+                                help="Labels for each condition that cycles"
+                            )
+
+                        # Parse condition labels
+                        condition_label_list = [line.strip() for line in condition_labels.strip().split('\n') if line.strip()]
+                        if not condition_label_list:
+                            condition_label_list = ["condition_1", "condition_2", "condition_3"]
+
+                        # Preview
                         st.markdown("**Preview:**")
-                        st.write(f"Music cycle: {' → '.join(music_label_list)} → (repeat)")
+                        if start_time and end_time:
+                            duration_min = (end_time - start_time).total_seconds() / 60
+                            num_segments = int(duration_min / event_interval_min)
+                            st.write(f"Cycle: {' → '.join(condition_label_list)} → (repeat)")
+                            st.caption(f"Duration: {duration_min:.1f} min → ~{num_segments} segments of {event_interval_min} min each")
+                        else:
+                            st.write(f"Cycle: {' → '.join(condition_label_list)} → (repeat)")
+                            st.caption("Select start and end times above")
 
                         # Generate button
-                        if st.button("Generate Music Events", key=f"gen_music_{selected_participant}"):
+                        can_generate = start_time is not None and end_time is not None and start_time < end_time
+                        if st.button("Generate Events", key=f"gen_events_{selected_participant}", disabled=not can_generate):
                             from rrational.prep.summaries import EventStatus
                             from datetime import timedelta
 
                             events_added = 0
-                            interval_seconds = music_interval_min * 60
-                            num_music_types = len(music_label_list)
+                            interval_seconds = event_interval_min * 60
+                            num_conditions = len(condition_label_list)
 
-                            # Initialize music_events list if not present
-                            if 'music_events' not in st.session_state.participant_events[selected_participant]:
-                                st.session_state.participant_events[selected_participant]['music_events'] = []
-                            # Clear existing music events before generating new ones
-                            st.session_state.participant_events[selected_participant]['music_events'] = []
+                            # Initialize generated_events list if not present
+                            if 'generated_events' not in st.session_state.participant_events[selected_participant]:
+                                st.session_state.participant_events[selected_participant]['generated_events'] = []
+                            # Clear existing generated events before generating new ones
+                            st.session_state.participant_events[selected_participant]['generated_events'] = []
 
-                            # Generate for pre-pause period (measurement_start to pause_start)
-                            if 'measurement_start' in boundary_events:
-                                start_time = boundary_events['measurement_start']
-                                end_time = boundary_events.get('pause_start') or boundary_events.get('measurement_end')
+                            # Generate events for the selected time range
+                            current_time = start_time
+                            condition_idx = 0
 
-                                if end_time:
-                                    current_time = start_time
-                                    music_idx = 0
+                            while current_time < end_time:
+                                # Create condition start event
+                                label = condition_label_list[condition_idx % num_conditions]
+                                event_label = f"{label}_start"
 
-                                    while current_time < end_time:
-                                        # Create music section start event
-                                        label = music_label_list[music_idx % num_music_types]
-                                        event_label = f"{label}_start"
+                                new_event = EventStatus(
+                                    raw_label=event_label,
+                                    canonical=event_label,
+                                    first_timestamp=current_time,
+                                    last_timestamp=current_time
+                                )
+                                st.session_state.participant_events[selected_participant]['generated_events'].append(new_event)
+                                events_added += 1
 
-                                        new_event = EventStatus(
-                                            raw_label=event_label,
-                                            canonical=event_label,
-                                            first_timestamp=current_time,
-                                            last_timestamp=current_time
-                                        )
-                                        st.session_state.participant_events[selected_participant]['music_events'].append(new_event)
-                                        events_added += 1
+                                # Calculate end time for this condition segment
+                                segment_end = current_time + timedelta(seconds=interval_seconds)
+                                if segment_end > end_time:
+                                    segment_end = end_time
 
-                                        # Calculate end time for this music segment
-                                        segment_end = current_time + timedelta(seconds=interval_seconds)
-                                        if segment_end > end_time:
-                                            segment_end = end_time
+                                # Create condition end event
+                                end_event = EventStatus(
+                                    raw_label=f"{label}_end",
+                                    canonical=f"{label}_end",
+                                    first_timestamp=segment_end,
+                                    last_timestamp=segment_end
+                                )
+                                st.session_state.participant_events[selected_participant]['generated_events'].append(end_event)
+                                events_added += 1
 
-                                        # Create music section end event
-                                        end_event = EventStatus(
-                                            raw_label=f"{label}_end",
-                                            canonical=f"{label}_end",
-                                            first_timestamp=segment_end,
-                                            last_timestamp=segment_end
-                                        )
-                                        st.session_state.participant_events[selected_participant]['music_events'].append(end_event)
-                                        events_added += 1
-
-                                        current_time = segment_end
-                                        music_idx += 1
-
-                            # Generate for post-pause period (pause_end to measurement_end)
-                            if 'pause_end' in boundary_events and 'measurement_end' in boundary_events:
-                                start_time = boundary_events['pause_end']
-                                end_time = boundary_events['measurement_end']
-
-                                current_time = start_time
-                                music_idx = 0  # Reset cycle after pause
-
-                                while current_time < end_time:
-                                    label = music_label_list[music_idx % num_music_types]
-                                    event_label = f"{label}_start"
-
-                                    new_event = EventStatus(
-                                        raw_label=event_label,
-                                        canonical=event_label,
-                                        first_timestamp=current_time,
-                                        last_timestamp=current_time
-                                    )
-                                    st.session_state.participant_events[selected_participant]['music_events'].append(new_event)
-                                    events_added += 1
-
-                                    segment_end = current_time + timedelta(seconds=interval_seconds)
-                                    if segment_end > end_time:
-                                        segment_end = end_time
-
-                                    end_event = EventStatus(
-                                        raw_label=f"{label}_end",
-                                        canonical=f"{label}_end",
-                                        first_timestamp=segment_end,
-                                        last_timestamp=segment_end
-                                    )
-                                    st.session_state.participant_events[selected_participant]['music_events'].append(end_event)
-                                    events_added += 1
-
-                                    current_time = segment_end
-                                    music_idx += 1
+                                current_time = segment_end
+                                condition_idx += 1
 
                             if events_added > 0:
-                                show_toast(f"Created {events_added} music section events", icon="success")
+                                show_toast(f"Created {events_added} section events", icon="success")
                             else:
-                                show_toast("No events created - check boundary events", icon="warning")
+                                show_toast("No events created - check time range", icon="warning")
                             st.rerun()
+
+                        if not can_generate and start_time and end_time:
+                            st.warning("End time must be after start time")
 
                         st.caption("""
                         **How it works:**
-                        1. Uses the participant's playlist group to determine music order
-                        2. Finds `measurement_start`, `pause_start`, `pause_end`, `measurement_end` events
-                        3. Creates music section events every 5 minutes between these boundaries
-                        4. Restarts cycle after the pause
+                        1. Select start/end time using existing events or enter manually
+                        2. Set the interval duration (how long each condition lasts)
+                        3. Define condition labels that will cycle
+                        4. Generated events appear as `label_start` and `label_end` pairs
                         """)
 
                 # ================== EVENTS MANAGEMENT (only in Add Events mode) ==================
@@ -6378,6 +6453,125 @@ def main():
                                 st.success(f"All {valid_count} section(s) valid")
                             elif valid_count == 0 and issue_count > 0:
                                 st.error(f"All {issue_count} section(s) have issues")
+
+                            # Coverage check - do sections cover the measurement?
+                            if valid_count > 0 and event_timestamps:
+                                st.markdown("---")
+                                st.markdown("**Coverage Check**")
+                                st.caption("Checks if defined sections cover the entire measurement period")
+
+                                # Calculate section time ranges
+                                section_ranges = []
+                                for section_code, section_data in sections.items():
+                                    start_evt = section_data.get("start_event", "")
+                                    end_evts = section_data.get("end_events", [])
+                                    if not end_evts and "end_event" in section_data:
+                                        end_evts = [section_data["end_event"]]
+                                    label = section_data.get("label", section_code)
+
+                                    start_ts = event_timestamps.get(start_evt)
+                                    end_ts = None
+                                    for end_evt in end_evts:
+                                        if end_evt in event_timestamps:
+                                            end_ts = event_timestamps[end_evt]
+                                            break
+
+                                    if start_ts and end_ts:
+                                        section_ranges.append({
+                                            'label': label,
+                                            'start': normalize_ts(start_ts),
+                                            'end': normalize_ts(end_ts)
+                                        })
+
+                                if section_ranges:
+                                    # Sort by start time
+                                    section_ranges.sort(key=lambda x: x['start'])
+
+                                    # Get measurement boundaries (first to last event)
+                                    all_ts = [normalize_ts(ts) for ts in event_timestamps.values() if ts]
+                                    measurement_start = min(all_ts)
+                                    measurement_end = max(all_ts)
+                                    measurement_duration = (measurement_end - measurement_start).total_seconds()
+
+                                    # Merge overlapping intervals to calculate actual coverage
+                                    # Convert to list of (start_seconds, end_seconds) from measurement_start
+                                    intervals = []
+                                    for sec in section_ranges:
+                                        start_s = (sec['start'] - measurement_start).total_seconds()
+                                        end_s = (sec['end'] - measurement_start).total_seconds()
+                                        intervals.append((start_s, end_s, sec['label']))
+
+                                    # Sort by start time
+                                    intervals.sort(key=lambda x: x[0])
+
+                                    # Merge overlapping intervals
+                                    merged = []
+                                    for start_s, end_s, label in intervals:
+                                        if merged and start_s <= merged[-1][1]:
+                                            # Overlapping - extend the last merged interval
+                                            merged[-1] = (merged[-1][0], max(merged[-1][1], end_s))
+                                        else:
+                                            merged.append((start_s, end_s))
+
+                                    # Calculate actual covered time (from merged intervals)
+                                    actual_covered = sum(end - start for start, end in merged)
+
+                                    # Calculate raw section time (sum of all sections, may include overlaps)
+                                    raw_section_time = sum((sec['end'] - sec['start']).total_seconds() for sec in section_ranges)
+
+                                    # Find gaps (time not covered by any merged interval)
+                                    gaps = []
+
+                                    # Gap before first merged interval
+                                    if merged[0][0] > 1:
+                                        gaps.append({
+                                            'label': 'Before first section',
+                                            'duration_s': merged[0][0]
+                                        })
+
+                                    # Gaps between merged intervals
+                                    for i in range(len(merged) - 1):
+                                        gap_start = merged[i][1]
+                                        gap_end = merged[i + 1][0]
+                                        if gap_end - gap_start > 1:
+                                            gaps.append({
+                                                'label': f'Gap at {gap_start/60:.1f}m - {gap_end/60:.1f}m',
+                                                'duration_s': gap_end - gap_start
+                                            })
+
+                                    # Gap after last merged interval
+                                    if measurement_duration - merged[-1][1] > 1:
+                                        gaps.append({
+                                            'label': 'After last section',
+                                            'duration_s': measurement_duration - merged[-1][1]
+                                        })
+
+                                    # Calculate coverage percentage
+                                    coverage_pct = (actual_covered / measurement_duration * 100) if measurement_duration > 0 else 0
+
+                                    # Check for overlaps
+                                    overlap_time = raw_section_time - actual_covered
+                                    has_overlaps = overlap_time > 1
+
+                                    # Display results
+                                    col_cov1, col_cov2 = st.columns(2)
+                                    with col_cov1:
+                                        st.metric("Coverage", f"{coverage_pct:.1f}%",
+                                                  help=f"{actual_covered/60:.1f}m covered of {measurement_duration/60:.1f}m total")
+                                    with col_cov2:
+                                        st.metric("Gaps", f"{len(gaps)}")
+
+                                    if has_overlaps:
+                                        st.info(f"Note: Sections overlap by {overlap_time/60:.1f}m (nested sections like Pause inside Measurement)")
+
+                                    if gaps:
+                                        total_gap = sum(g['duration_s'] for g in gaps)
+                                        gap_details = [f"**{total_gap/60:.1f}m uncovered:**"]
+                                        for gap in gaps:
+                                            gap_details.append(f"• {gap['label']}: {gap['duration_s']/60:.1f}m")
+                                        st.warning("\n".join(gap_details))
+                                    elif coverage_pct >= 99.9:
+                                        st.success("Sections fully cover the measurement period")
 
                         # RR+Gap Duration Validation (HRV Logger only)
                         # Compare event-based duration vs sum of RR intervals + gaps
