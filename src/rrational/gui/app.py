@@ -1223,11 +1223,46 @@ def apply_custom_css():
         border-radius: 8px;
     }
 
-    /* Add custom loading indicator using CSS */
+    /* Pixel-style animated loading indicator */
+    @keyframes pixelLoad {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 1; }
+    }
+
     [data-testid="stStatusWidget"]::before {
-        content: "⏳";
-        font-size: 16px;
-        margin-right: 4px;
+        content: "";
+        display: inline-flex;
+        gap: 3px;
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+
+    [data-testid="stStatusWidget"]::after {
+        content: "■ ■ ■";
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: var(--accent-primary, #2E86AB);
+        animation: pixelPulse 1.2s ease-in-out infinite;
+        margin-right: 6px;
+    }
+
+    @keyframes pixelPulse {
+        0%, 100% {
+            opacity: 0.4;
+            transform: scale(0.9);
+        }
+        25% {
+            opacity: 1;
+            transform: scale(1);
+        }
+        50% {
+            opacity: 0.4;
+            transform: scale(0.9);
+        }
+        75% {
+            opacity: 1;
+            transform: scale(1);
+        }
     }
     """
 
