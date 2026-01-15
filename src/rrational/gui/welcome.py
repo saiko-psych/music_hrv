@@ -29,6 +29,7 @@ def _open_folder_dialog(title: str = "Select Folder", initial_dir: str | None = 
     """Open a native folder picker dialog using subprocess.
 
     Uses subprocess to avoid blocking Streamlit's event loop.
+    Works on Windows, Mac, and Linux.
 
     Args:
         title: Dialog title
@@ -39,26 +40,41 @@ def _open_folder_dialog(title: str = "Select Folder", initial_dir: str | None = 
     """
     import subprocess
     import sys
+    import platform
 
     # Set initial directory - use home folder as default (works on all OS)
     if initial_dir is None or not Path(initial_dir).exists():
         initial_dir = str(Path.home())
 
-    # Python code to run in subprocess
+    # Escape any quotes in the paths/title for the script
+    title_escaped = title.replace('"', '\\"')
+    initial_dir_escaped = initial_dir.replace('\\', '\\\\').replace('"', '\\"')
+
+    # Python code to run in subprocess - cross-platform compatible
     script = f'''
 import tkinter as tk
 from tkinter import filedialog
+import platform
 
 root = tk.Tk()
 root.withdraw()
-root.wm_attributes("-topmost", True)
-root.focus_force()
+
+# Platform-specific window handling
+if platform.system() == "Darwin":  # macOS
+    # On Mac, bring window to front differently
+    root.lift()
+    root.call("wm", "attributes", ".", "-topmost", True)
+    root.after_idle(root.call, "wm", "attributes", ".", "-topmost", False)
+else:
+    root.wm_attributes("-topmost", True)
+    root.focus_force()
+
 root.update()
 
 folder = filedialog.askdirectory(
     parent=root,
-    title="{title}",
-    initialdir=r"{initial_dir}",
+    title="{title_escaped}",
+    initialdir="{initial_dir_escaped}",
 )
 
 root.destroy()
