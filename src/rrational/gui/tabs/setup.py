@@ -27,22 +27,48 @@ def render_setup_tab():
     """Render the Setup tab with nested sub-tabs for Events, Groups, Playlists, Sections."""
     st.header("Setup")
 
-    # Nested sub-tabs
-    tab_events, tab_groups, tab_playlists, tab_sections = st.tabs(
-        ["Events", "Groups", "Playlists", "Sections"]
-    )
+    # Use radio buttons instead of tabs to properly persist selection state
+    # st.tabs() doesn't persist state across reruns which causes tab jumping
+    if "setup_subtab" not in st.session_state:
+        st.session_state.setup_subtab = "Events"
 
-    with tab_events:
+    # Use columns to prevent radio button from taking full width and causing scroll issues
+    col_radio, _ = st.columns([2, 3])
+    with col_radio:
+        selected_subtab = st.radio(
+            "Select section:",
+            ["Events", "Groups", "Playlists", "Sections"],
+            key="setup_subtab",
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+    st.markdown("---")
+
+    if selected_subtab == "Events":
         _render_events_section()
-
-    with tab_groups:
+    elif selected_subtab == "Groups":
         _render_groups_section()
-
-    with tab_playlists:
+    elif selected_subtab == "Playlists":
         _render_playlists_section()
-
-    with tab_sections:
+    elif selected_subtab == "Sections":
         _render_sections_section()
+
+    # Scroll to top after content is rendered (fixes issue where page scrolls to middle)
+    if st.session_state.get("_setup_scroll_to_top", False):
+        st.session_state._setup_scroll_to_top = False
+        st.components.v1.html(
+            """
+            <script>
+                setTimeout(function() {
+                    var container = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                    if (container) container.scrollTop = 0;
+                    window.parent.scrollTo(0, 0);
+                }, 50);
+            </script>
+            """,
+            height=0
+        )
 
 
 def _render_events_section():
@@ -454,6 +480,9 @@ def _render_groups_section():
 
                     def toggle_event(grp_name, evt_name, currently_selected):
                         """Callback to toggle event selection."""
+                        # Ensure expected_events exists
+                        if "expected_events" not in st.session_state.groups[grp_name]:
+                            st.session_state.groups[grp_name]["expected_events"] = {}
                         exp_events = st.session_state.groups[grp_name]["expected_events"]
                         if st.session_state[f"event_select_{grp_name}_{evt_name}"]:
                             if evt_name not in exp_events:
@@ -766,78 +795,83 @@ def _render_sections_section():
     if "sections" not in st.session_state:
         loaded_sections = load_sections()
         if not loaded_sections:
-            # Default sections - end_events is a list (any of these events can end the section)
+            # Default sections - start_events/end_events are lists (any of these events can start/end the section)
             st.session_state.sections = {
-                "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_events": ["rest_pre_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
-                "pre_pause": {"label": "Pre-Pause", "description": "Music before pause", "start_event": "measurement_start", "end_events": ["pause_start"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
-                "post_pause": {"label": "Post-Pause", "description": "Music after pause", "start_event": "pause_end", "end_events": ["measurement_end"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
-                "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_events": ["rest_post_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
+                "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_events": ["rest_pre_start"], "end_events": ["rest_pre_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
+                "pre_pause": {"label": "Pre-Pause", "description": "Music before pause", "start_events": ["measurement_start"], "end_events": ["pause_start"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
+                "post_pause": {"label": "Post-Pause", "description": "Music after pause", "start_events": ["pause_end"], "end_events": ["measurement_end"], "expected_duration_min": 90.0, "tolerance_min": 5.0},
+                "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_events": ["rest_post_start"], "end_events": ["rest_post_end"], "expected_duration_min": 5.0, "tolerance_min": 1.0},
             }
         else:
-            # Migrate old format (end_event) to new format (end_events)
+            # Migrate old format (start_event/end_event) to new format (start_events/end_events)
             for section_data in loaded_sections.values():
+                if "start_event" in section_data and "start_events" not in section_data:
+                    section_data["start_events"] = [section_data.pop("start_event")]
                 if "end_event" in section_data and "end_events" not in section_data:
                     section_data["end_events"] = [section_data.pop("end_event")]
             st.session_state.sections = loaded_sections
 
-    # Create new section
+    # Create new section - use form to prevent Enter key from triggering rerun
     with st.expander("Create New Section"):
-        new_section_name = st.text_input("Section Code (internal ID)", key="new_section_name",
-                                         help="e.g., music_01, rest_pre")
-        new_section_label = st.text_input("Section Label (short name)", key="new_section_label",
-                                          help="e.g., Music 1, Pre-Rest")
-        new_section_desc = st.text_input("Description (detailed)", key="new_section_desc",
-                                         help="e.g., Brandenburg Concerto No. 3 - Bach")
-
         available_events = list(st.session_state.all_events.keys())
-        col1, col2 = st.columns(2)
-        with col1:
-            start_event = st.selectbox("Start Event", options=available_events, key="new_section_start")
-        with col2:
-            end_events = st.multiselect(
-                "End Event(s)",
-                options=available_events,
-                default=[available_events[0]] if available_events else [],
-                key="new_section_end",
-                help="Select one or more events. Section ends when ANY of these events occurs."
-            )
 
-        col3, col4 = st.columns(2)
-        with col3:
-            expected_duration = st.number_input("Expected Duration (min)", min_value=0.0, max_value=300.0, value=5.0,
-                                               key="new_section_duration", help="Expected section duration in minutes")
-        with col4:
-            tolerance = st.number_input("Tolerance (min)", min_value=0.0, max_value=60.0, value=1.0,
-                                       key="new_section_tolerance", help="Acceptable deviation from expected duration")
+        with st.form("create_section_form", clear_on_submit=True):
+            new_section_name = st.text_input("Section Code (internal ID)",
+                                             help="e.g., music_01, rest_pre")
+            new_section_label = st.text_input("Section Label (short name)",
+                                              help="e.g., Music 1, Pre-Rest")
+            new_section_desc = st.text_input("Description (detailed)",
+                                             help="e.g., Brandenburg Concerto No. 3 - Bach")
 
-        if new_section_name:
-            if new_section_name in st.session_state.sections:
-                st.warning(f"Section '{new_section_name}' already exists")
-            elif not new_section_name.replace("_", "").isalnum():
-                st.warning("Section name should be alphanumeric with underscores")
+            col1, col2 = st.columns(2)
+            with col1:
+                start_events = st.multiselect(
+                    "Start Event(s)",
+                    options=available_events,
+                    default=[available_events[0]] if available_events else [],
+                    help="Select one or more events. Section starts when ANY of these events occurs."
+                )
+            with col2:
+                end_events = st.multiselect(
+                    "End Event(s)",
+                    options=available_events,
+                    default=[available_events[1]] if len(available_events) > 1 else [],
+                    help="Select one or more events. Section ends when ANY of these events occurs."
+                )
 
-        def create_section():
-            """Callback to create section."""
-            if new_section_name and new_section_name not in st.session_state.sections:
-                if not end_events:
-                    show_toast("Please select at least one end event", icon="error")
-                    return
-                st.session_state.sections[new_section_name] = {
-                    "label": new_section_label or new_section_name,
-                    "description": new_section_desc or "",
-                    "start_event": start_event,
-                    "end_events": end_events,  # List of possible end events
-                    "expected_duration_min": expected_duration,
-                    "tolerance_min": tolerance,
-                }
-                auto_save_config()
-                show_toast(f"Created section '{new_section_name}'", icon="success")
-            elif new_section_name in st.session_state.sections:
-                show_toast(f"Section '{new_section_name}' already exists", icon="error")
-            else:
-                show_toast("Please enter a section name", icon="error")
+            col3, col4 = st.columns(2)
+            with col3:
+                expected_duration = st.number_input("Expected Duration (min)", min_value=0.0, max_value=300.0, value=5.0,
+                                                   help="Expected section duration in minutes")
+            with col4:
+                tolerance = st.number_input("Tolerance (min)", min_value=0.0, max_value=60.0, value=1.0,
+                                           help="Acceptable deviation from expected duration")
 
-        st.button("Create Section", key="create_section_btn", on_click=create_section, type="primary")
+            submitted = st.form_submit_button("Create Section", type="primary")
+
+            if submitted:
+                if new_section_name and new_section_name not in st.session_state.sections:
+                    if not start_events:
+                        st.error("Please select at least one start event")
+                    elif not end_events:
+                        st.error("Please select at least one end event")
+                    elif not new_section_name.replace("_", "").isalnum():
+                        st.error("Section name should be alphanumeric with underscores")
+                    else:
+                        st.session_state.sections[new_section_name] = {
+                            "label": new_section_label or new_section_name,
+                            "description": new_section_desc or "",
+                            "start_events": list(start_events),  # List of possible start events
+                            "end_events": list(end_events),  # List of possible end events
+                            "expected_duration_min": expected_duration,
+                            "tolerance_min": tolerance,
+                        }
+                        auto_save_config()
+                        st.success(f"Created section '{new_section_name}'")
+                elif new_section_name in st.session_state.sections:
+                    st.error(f"Section '{new_section_name}' already exists")
+                else:
+                    st.error("Please enter a section name")
 
     st.markdown("---")
 
@@ -847,14 +881,17 @@ def _render_sections_section():
     if st.session_state.sections:
         sections_list = []
         for section_name, section_data in st.session_state.sections.items():
-            # Support both old (end_event) and new (end_events) format
+            # Support both old (start_event/end_event) and new (start_events/end_events) format
+            start_events = section_data.get("start_events", [])
+            if not start_events and "start_event" in section_data:
+                start_events = [section_data["start_event"]]
             end_events = section_data.get("end_events", [])
             if not end_events and "end_event" in section_data:
                 end_events = [section_data["end_event"]]
             sections_list.append({
                 "Code": section_name,
                 "Label": section_data.get("label", section_name),
-                "Start Event": section_data.get("start_event", ""),
+                "Start Event(s)": ", ".join(start_events),  # Show as comma-separated
                 "End Event(s)": ", ".join(end_events),  # Show as comma-separated
                 "Duration (min)": section_data.get("expected_duration_min", 5.0),
                 "Tolerance (min)": section_data.get("tolerance_min", 1.0),
@@ -872,38 +909,62 @@ def _render_sections_section():
             column_config={
                 "Code": st.column_config.TextColumn("Code", help="Internal identifier", width="small"),
                 "Label": st.column_config.TextColumn("Label", help="Short display name", width="medium"),
-                "Start Event": st.column_config.SelectboxColumn("Start Event", options=available_events, required=True, width="medium"),
+                "Start Event(s)": st.column_config.TextColumn("Start Event(s)", help="Comma-separated list of events (any can start section)", width="medium"),
                 "End Event(s)": st.column_config.TextColumn("End Event(s)", help="Comma-separated list of events (any can end section)", width="medium"),
                 "Duration (min)": st.column_config.NumberColumn("Duration (min)", help="Expected duration in minutes", min_value=0.0, max_value=300.0, format="%.1f", width="small"),
                 "Tolerance (min)": st.column_config.NumberColumn("Tolerance (min)", help="Acceptable deviation", min_value=0.0, max_value=60.0, format="%.1f", width="small"),
             }
         )
 
-        def save_section_changes():
-            """Callback to save section changes."""
+        # Use button detection instead of callback to avoid session_state issues
+        if st.button("Save Section Changes", key="save_sections_btn", type="primary"):
             updated_sections = {}
+            validation_errors = []
+            valid_events = set(st.session_state.all_events.keys())
+
+            # edited_sections is the DataFrame returned by data_editor
             for _, row in edited_sections.iterrows():
                 section_code = row["Code"]
                 if section_code:  # Skip empty rows
+                    # Parse comma-separated start events
+                    start_events_str = row.get("Start Event(s)", "")
+                    start_events_list = [e.strip() for e in start_events_str.split(",") if e.strip()]
+                    if not start_events_list:
+                        start_events_list = ["measurement_start"]  # Fallback
+
+                    # Validate start events exist
+                    invalid_start = [e for e in start_events_list if e not in valid_events]
+                    if invalid_start:
+                        validation_errors.append(f"Section '{section_code}': invalid start event(s): {', '.join(invalid_start)}")
+
                     # Parse comma-separated end events
                     end_events_str = row.get("End Event(s)", "")
                     end_events_list = [e.strip() for e in end_events_str.split(",") if e.strip()]
                     if not end_events_list:
                         end_events_list = ["measurement_end"]  # Fallback
+
+                    # Validate end events exist
+                    invalid_end = [e for e in end_events_list if e not in valid_events]
+                    if invalid_end:
+                        validation_errors.append(f"Section '{section_code}': invalid end event(s): {', '.join(invalid_end)}")
+
                     updated_sections[section_code] = {
                         "label": row["Label"],
                         "description": "",  # Description removed from table view
-                        "start_event": row["Start Event"],
+                        "start_events": start_events_list,  # Store as list
                         "end_events": end_events_list,  # Store as list
                         "expected_duration_min": row.get("Duration (min)", 5.0),
                         "tolerance_min": row.get("Tolerance (min)", 1.0),
                     }
 
-            st.session_state.sections = updated_sections
-            auto_save_config()
-            show_toast("Saved section changes", icon="success")
-
-        st.button("Save Section Changes", key="save_sections_btn", on_click=save_section_changes, type="primary")
+            if validation_errors:
+                for err in validation_errors:
+                    st.error(err)
+                st.warning("Define missing events in the **Events** tab first, or correct the event names.")
+            else:
+                st.session_state.sections = updated_sections
+                auto_save_config()
+                st.success("Saved section changes")
 
         csv_sections = df_sections.to_csv(index=False)
         st.download_button(

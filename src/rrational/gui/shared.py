@@ -287,19 +287,22 @@ def extract_section_rr_intervals(recording, section_def, normalizer, saved_event
 
     Args:
         recording: Recording object with rr_intervals and events
-        section_def: Section definition dict with start_event and end_events
+        section_def: Section definition dict with start_events/end_events (lists) or
+                     start_event/end_event (legacy single values)
         normalizer: SectionNormalizer for mapping labels to canonical names
         saved_events: Optional list of saved/edited events (EventStatus objects or dicts).
                      If provided, uses these instead of recording.events.
                      This allows using user-edited events from session state.
     """
-    start_event_name = section_def.get("start_event")
-    # Support both old (end_event) and new (end_events) format
+    # Support both old (start_event/end_event) and new (start_events/end_events) format
+    start_event_names = section_def.get("start_events", [])
+    if not start_event_names and "start_event" in section_def:
+        start_event_names = [section_def["start_event"]]
     end_event_names = section_def.get("end_events", [])
     if not end_event_names and "end_event" in section_def:
         end_event_names = [section_def["end_event"]]
 
-    if not start_event_name or not end_event_names:
+    if not start_event_names or not end_event_names:
         return None
 
     start_ts = None
@@ -323,13 +326,13 @@ def extract_section_rr_intervals(recording, section_def, normalizer, saved_event
                 continue
 
             # Check canonical name (already normalized in saved events)
-            if canonical == start_event_name:
+            if canonical in start_event_names:
                 start_ts = timestamp
             elif canonical in end_event_names:
                 if end_ts is None:
                     end_ts = timestamp
             # Also check raw label as fallback
-            elif raw_label == start_event_name:
+            elif raw_label in start_event_names:
                 start_ts = timestamp
             elif raw_label in end_event_names:
                 if end_ts is None:
@@ -341,12 +344,12 @@ def extract_section_rr_intervals(recording, section_def, normalizer, saved_event
             canonical = normalizer.normalize(label)
 
             # First check if label is already a canonical name (for manual events)
-            if label == start_event_name and event.timestamp:
+            if label in start_event_names and event.timestamp:
                 start_ts = event.timestamp
             elif label in end_event_names and event.timestamp:
                 if end_ts is None:
                     end_ts = event.timestamp
-            elif canonical == start_event_name and event.timestamp:
+            elif canonical in start_event_names and event.timestamp:
                 start_ts = event.timestamp
             elif canonical in end_event_names and event.timestamp:
                 if end_ts is None:

@@ -1830,16 +1830,18 @@ if "all_events" not in st.session_state:
 if "sections" not in st.session_state:
     loaded_sections = load_sections()
     if not loaded_sections:
-        # Default sections - end_events is a list (any of these events can end the section)
+        # Default sections - start_events/end_events are lists (any of these events can start/end the section)
         st.session_state.sections = {
-            "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_event": "rest_pre_start", "end_events": ["rest_pre_end"]},
-            "measurement": {"label": "Measurement", "description": "Main measurement period", "start_event": "measurement_start", "end_events": ["measurement_end"]},
-            "pause": {"label": "Pause", "description": "Break between blocks", "start_event": "pause_start", "end_events": ["pause_end"]},
-            "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_event": "rest_post_start", "end_events": ["rest_post_end"]},
+            "rest_pre": {"label": "Pre-Rest", "description": "Baseline rest period", "start_events": ["rest_pre_start"], "end_events": ["rest_pre_end"]},
+            "measurement": {"label": "Measurement", "description": "Main measurement period", "start_events": ["measurement_start"], "end_events": ["measurement_end"]},
+            "pause": {"label": "Pause", "description": "Break between blocks", "start_events": ["pause_start"], "end_events": ["pause_end"]},
+            "rest_post": {"label": "Post-Rest", "description": "Post-measurement rest", "start_events": ["rest_post_start"], "end_events": ["rest_post_end"]},
         }
     else:
-        # Migrate old format (end_event) to new format (end_events)
+        # Migrate old format (start_event/end_event) to new format (start_events/end_events)
         for section_data in loaded_sections.values():
+            if "start_event" in section_data and "start_events" not in section_data:
+                section_data["start_events"] = [section_data.pop("start_event")]
             if "end_event" in section_data and "end_events" not in section_data:
                 section_data["end_events"] = [section_data.pop("end_event")]
         st.session_state.sections = loaded_sections
@@ -5203,6 +5205,9 @@ def main():
                 if st.button(page_id, key=f"nav_{page_id}", width='stretch', type="secondary"):
                     st.session_state.active_page = page_id
                     st.session_state._scroll_to_top = True  # Scroll to top on tab switch
+                    # Extra scroll trigger for Setup tab (content renders after main scroll)
+                    if page_id == "Setup":
+                        st.session_state._setup_scroll_to_top = True
                     st.rerun()
 
         st.markdown("---")
