@@ -323,12 +323,20 @@ def render_data_tab():
             st.text_input("Sampling Rate", value=f"{sampling_rate} Hz", disabled=True,
                          help="Based on device selection")
 
-    # Data directory input
+    # Data directory input - default to project data dir if available
+    project_manager = st.session_state.get("project_manager")
+    if project_manager:
+        default_data_dir = str(project_manager.get_data_dir())
+    elif st.session_state.data_dir:
+        default_data_dir = st.session_state.data_dir
+    else:
+        default_data_dir = "data/raw"
+
     col1, col2 = st.columns([3, 1])
     with col1:
         data_dir_input = st.text_input(
             "Raw data directory path",
-            value=st.session_state.data_dir or "data/raw",
+            value=default_data_dir,
             help="Path to your raw data folder (should contain subfolders like hrv_logger, vns, etc.)",
         )
     with col2:

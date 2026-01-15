@@ -1,4 +1,8 @@
-"""Persistence layer for GUI configuration (groups, events, sections)."""
+"""Persistence layer for GUI configuration (groups, events, sections).
+
+Supports both global config (~/.rrational/) and project-based config.
+When project_path is provided, config is stored in project/config/ folder.
+"""
 
 from __future__ import annotations
 
@@ -39,12 +43,33 @@ DEFAULT_SETTINGS = {
             "artifact": "#FF6B6B",  # Artifact marker color
         },
     },
+    "recent_projects": [],  # List of recently opened projects
+    "max_recent_projects": 10,
+    "last_project": "",  # Path to last used project (auto-load on startup)
 }
 
 
 def ensure_config_dir() -> None:
     """Create config directory if it doesn't exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _get_config_path(filename: str, project_path: Path | None = None) -> Path:
+    """Get the path for a config file, supporting project-based storage.
+
+    Args:
+        filename: Name of the config file (e.g., 'groups.yml')
+        project_path: If provided, returns project/config/{filename}
+                      Otherwise returns ~/.rrational/{filename}
+
+    Returns:
+        Path to the config file
+    """
+    if project_path:
+        config_dir = Path(project_path) / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / filename
+    return CONFIG_DIR / filename
 
 
 def migrate_legacy_config() -> bool:
@@ -109,53 +134,110 @@ def migrate_legacy_config() -> bool:
     return migrated_any
 
 
-def save_groups(groups: dict[str, Any]) -> None:
-    """Save groups configuration to YAML."""
-    ensure_config_dir()
-    with open(GROUPS_FILE, "w", encoding="utf-8") as f:
+# --- Groups ---
+
+def save_groups(groups: dict[str, Any], project_path: Path | None = None) -> None:
+    """Save groups configuration to YAML.
+
+    Args:
+        groups: Groups configuration dict
+        project_path: If provided, saves to project/config/groups.yml
+    """
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("groups.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(groups, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_groups() -> dict[str, Any]:
-    """Load groups configuration from YAML."""
-    if not GROUPS_FILE.exists():
+def load_groups(project_path: Path | None = None) -> dict[str, Any]:
+    """Load groups configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/groups.yml
+
+    Returns:
+        Groups configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("groups.yml", project_path)
+    if not target.exists():
         return {}
-    with open(GROUPS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_events(events: dict[str, list[str]]) -> None:
-    """Save events configuration to YAML."""
-    ensure_config_dir()
-    with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+# --- Events ---
+
+def save_events(events: dict[str, list[str]], project_path: Path | None = None) -> None:
+    """Save events configuration to YAML.
+
+    Args:
+        events: Events configuration dict (canonical -> synonyms)
+        project_path: If provided, saves to project/config/events.yml
+    """
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("events.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(events, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_events() -> dict[str, list[str]]:
-    """Load events configuration from YAML."""
-    if not EVENTS_FILE.exists():
+def load_events(project_path: Path | None = None) -> dict[str, list[str]]:
+    """Load events configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/events.yml
+
+    Returns:
+        Events configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("events.yml", project_path)
+    if not target.exists():
         return {}
-    with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_sections(sections: dict[str, Any]) -> None:
-    """Save sections configuration to YAML."""
-    ensure_config_dir()
-    with open(SECTIONS_FILE, "w", encoding="utf-8") as f:
+# --- Sections ---
+
+def save_sections(sections: dict[str, Any], project_path: Path | None = None) -> None:
+    """Save sections configuration to YAML.
+
+    Args:
+        sections: Sections configuration dict
+        project_path: If provided, saves to project/config/sections.yml
+    """
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("sections.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(sections, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_sections() -> dict[str, Any]:
-    """Load sections configuration from YAML."""
-    if not SECTIONS_FILE.exists():
+def load_sections(project_path: Path | None = None) -> dict[str, Any]:
+    """Load sections configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/sections.yml
+
+    Returns:
+        Sections configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("sections.yml", project_path)
+    if not target.exists():
         return {}
-    with open(SECTIONS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_participants(participants_data: dict[str, Any]) -> None:
+# --- Participants ---
+
+def save_participants(participants_data: dict[str, Any], project_path: Path | None = None) -> None:
     """Save participants configuration to YAML.
+
+    Args:
+        participants_data: Participant data dict
+        project_path: If provided, saves to project/config/participants.yml
 
     Format:
     {
@@ -166,21 +248,37 @@ def save_participants(participants_data: dict[str, Any]) -> None:
         }
     }
     """
-    ensure_config_dir()
-    with open(PARTICIPANTS_FILE, "w", encoding="utf-8") as f:
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("participants.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(participants_data, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_participants() -> dict[str, Any]:
-    """Load participants configuration from YAML."""
-    if not PARTICIPANTS_FILE.exists():
+def load_participants(project_path: Path | None = None) -> dict[str, Any]:
+    """Load participants configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/participants.yml
+
+    Returns:
+        Participants configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("participants.yml", project_path)
+    if not target.exists():
         return {}
-    with open(PARTICIPANTS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_playlist_groups(playlist_groups: dict[str, Any]) -> None:
+# --- Playlist Groups ---
+
+def save_playlist_groups(playlist_groups: dict[str, Any], project_path: Path | None = None) -> None:
     """Save playlist/randomization groups configuration to YAML.
+
+    Args:
+        playlist_groups: Playlist groups configuration dict
+        project_path: If provided, saves to project/config/playlist_groups.yml
 
     Format:
     {
@@ -194,21 +292,37 @@ def save_playlist_groups(playlist_groups: dict[str, Any]) -> None:
         }
     }
     """
-    ensure_config_dir()
-    with open(PLAYLIST_GROUPS_FILE, "w", encoding="utf-8") as f:
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("playlist_groups.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(playlist_groups, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_playlist_groups() -> dict[str, Any]:
-    """Load playlist/randomization groups configuration from YAML."""
-    if not PLAYLIST_GROUPS_FILE.exists():
+def load_playlist_groups(project_path: Path | None = None) -> dict[str, Any]:
+    """Load playlist/randomization groups configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/playlist_groups.yml
+
+    Returns:
+        Playlist groups configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("playlist_groups.yml", project_path)
+    if not target.exists():
         return {}
-    with open(PLAYLIST_GROUPS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_music_labels(music_labels: dict[str, Any]) -> None:
+# --- Music Labels ---
+
+def save_music_labels(music_labels: dict[str, Any], project_path: Path | None = None) -> None:
     """Save music labels configuration to YAML.
+
+    Args:
+        music_labels: Music labels configuration dict
+        project_path: If provided, saves to project/config/music_labels.yml
 
     Format:
     {
@@ -222,21 +336,37 @@ def save_music_labels(music_labels: dict[str, Any]) -> None:
         }
     }
     """
-    ensure_config_dir()
-    with open(MUSIC_LABELS_FILE, "w", encoding="utf-8") as f:
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("music_labels.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(music_labels, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_music_labels() -> dict[str, Any]:
-    """Load music labels configuration from YAML."""
-    if not MUSIC_LABELS_FILE.exists():
+def load_music_labels(project_path: Path | None = None) -> dict[str, Any]:
+    """Load music labels configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/music_labels.yml
+
+    Returns:
+        Music labels configuration dict, or empty dict if not found
+    """
+    target = _get_config_path("music_labels.yml", project_path)
+    if not target.exists():
         return {}
-    with open(MUSIC_LABELS_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_protocol(protocol: dict[str, Any]) -> None:
+# --- Protocol ---
+
+def save_protocol(protocol: dict[str, Any], project_path: Path | None = None) -> None:
     """Save protocol configuration to YAML.
+
+    Args:
+        protocol: Protocol configuration dict
+        project_path: If provided, saves to project/config/protocol.yml
 
     Format:
     {
@@ -249,14 +379,24 @@ def save_protocol(protocol: dict[str, Any]) -> None:
         "mismatch_strategy": "flag_only"
     }
     """
-    ensure_config_dir()
-    with open(PROTOCOL_FILE, "w", encoding="utf-8") as f:
+    if not project_path:
+        ensure_config_dir()
+    target = _get_config_path("protocol.yml", project_path)
+    with open(target, "w", encoding="utf-8") as f:
         yaml.safe_dump(protocol, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_protocol() -> dict[str, Any]:
-    """Load protocol configuration from YAML."""
-    if not PROTOCOL_FILE.exists():
+def load_protocol(project_path: Path | None = None) -> dict[str, Any]:
+    """Load protocol configuration from YAML.
+
+    Args:
+        project_path: If provided, loads from project/config/protocol.yml
+
+    Returns:
+        Protocol configuration dict with defaults for missing keys
+    """
+    target = _get_config_path("protocol.yml", project_path)
+    if not target.exists():
         return {
             "expected_duration_min": 90.0,
             "section_length_min": 5.0,
@@ -266,16 +406,24 @@ def load_protocol() -> dict[str, Any]:
             "min_section_beats": 100,
             "mismatch_strategy": "flag_only",
         }
-    with open(PROTOCOL_FILE, "r", encoding="utf-8") as f:
+    with open(target, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_participant_events(participant_id: str, events_data: dict[str, Any], data_dir: str | None = None) -> None:
+# --- Participant Events ---
+
+def save_participant_events(
+    participant_id: str,
+    events_data: dict[str, Any],
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> None:
     """Save participant events (edited events) to YAML.
 
-    Single-location storage:
-    - If data_dir provided: saves to {data_dir}/../processed/{participant_id}_events.yml
-    - If no data_dir: saves to ~/.rrational/participant_events.yml (fallback)
+    Storage priority:
+    1. If project_path provided: saves to project/processed/{participant_id}_events.yml
+    2. If data_dir provided: saves to {data_dir}/../processed/{participant_id}_events.yml
+    3. Otherwise: saves to ~/.rrational/participant_events.yml (fallback)
 
     This keeps event data with the project for portability.
     """
@@ -312,8 +460,23 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
             zone_dict["end"] = zone_dict["end"].isoformat()
         serialized["exclusion_zones"].append(zone_dict)
 
-    # Single-location storage: project folder preferred, app config as fallback
-    if data_dir:
+    # Determine save location (priority: project > data_dir > global)
+    if project_path:
+        processed_dir = Path(project_path) / "processed"
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        participant_file = processed_dir / f"{participant_id}_events.yml"
+
+        output_data = {
+            "participant_id": participant_id,
+            "format_version": "1.0",
+            "source_type": "rrational_toolkit",
+            **serialized
+        }
+
+        with open(participant_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(output_data, f, default_flow_style=False, allow_unicode=True)
+
+    elif data_dir:
         # Save to processed folder (portable with project)
         data_path = Path(data_dir)
         processed_dir = data_path.parent / "processed"
@@ -345,16 +508,35 @@ def save_participant_events(participant_id: str, events_data: dict[str, Any], da
             yaml.safe_dump(all_events, f, default_flow_style=False, allow_unicode=True)
 
 
-def load_participant_events(participant_id: str, data_dir: str | None = None) -> dict[str, Any] | None:
+def load_participant_events(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> dict[str, Any] | None:
     """Load saved participant events from YAML.
 
-    Single-location storage with backwards compatibility:
-    - If data_dir provided: checks {data_dir}/../processed/{participant_id}_events.yml first
-    - Falls back to ~/.rrational/participant_events.yml for old data migration
+    Storage priority:
+    1. If project_path provided: checks project/processed/{participant_id}_events.yml
+    2. If data_dir provided: checks {data_dir}/../processed/{participant_id}_events.yml
+    3. Falls back to ~/.rrational/participant_events.yml
 
     Returns None if no saved events exist for this participant.
     """
-    # First, try to load from processed folder (preferred source for data portability)
+    # First, try to load from project folder
+    if project_path:
+        processed_dir = Path(project_path) / "processed"
+        participant_file = processed_dir / f"{participant_id}_events.yml"
+
+        if participant_file.exists():
+            with open(participant_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            # Remove metadata fields before returning
+            data.pop("participant_id", None)
+            data.pop("format_version", None)
+            data.pop("source_type", None)
+            return data
+
+    # Try to load from data_dir processed folder
     if data_dir:
         data_path = Path(data_dir)
         processed_dir = data_path.parent / "processed"
@@ -382,18 +564,32 @@ def load_participant_events(participant_id: str, data_dir: str | None = None) ->
     return all_events[participant_id]
 
 
-def delete_participant_events(participant_id: str, data_dir: str | None = None) -> bool:
+def delete_participant_events(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> bool:
     """Delete saved events for a participant (reset to original).
 
-    Deletes from both locations for backwards compatibility:
-    - {data_dir}/../processed/{participant_id}_events.yml (project folder)
-    - ~/.rrational/participant_events.yml (app config - cleans up old data)
+    Deletes from all locations for backwards compatibility:
+    - project/processed/{participant_id}_events.yml (project folder)
+    - {data_dir}/../processed/{participant_id}_events.yml (data folder)
+    - ~/.rrational/participant_events.yml (app config)
 
-    Returns True if events were deleted from either location, False if none existed.
+    Returns True if events were deleted from any location, False if none existed.
     """
     deleted_any = False
 
-    # Delete from processed folder if data_dir provided
+    # Delete from project folder
+    if project_path:
+        processed_dir = Path(project_path) / "processed"
+        participant_file = processed_dir / f"{participant_id}_events.yml"
+
+        if participant_file.exists():
+            participant_file.unlink()
+            deleted_any = True
+
+    # Delete from data_dir processed folder
     if data_dir:
         data_path = Path(data_dir)
         processed_dir = data_path.parent / "processed"
@@ -430,18 +626,19 @@ def list_saved_participant_events() -> list[str]:
     return list(all_events.keys())
 
 
+# --- Settings (always global) ---
+
 def save_settings(settings: dict[str, Any]) -> None:
     """Save application settings to YAML.
+
+    Settings are always saved to ~/.rrational/settings.yml (global).
 
     Format:
     {
         "data_folder": "/path/to/data",
         "plot_resolution": 5000,
-        "plot_options": {
-            "show_events": true,
-            "show_exclusions": true,
-            ...
-        }
+        "plot_options": {...},
+        "recent_projects": [...]
     }
     """
     ensure_config_dir()
@@ -501,17 +698,52 @@ def get_setting(key: str, default: Any = None) -> Any:
     return settings.get(key, default)
 
 
-def get_processed_dir(data_dir: str | Path | None = None) -> Path:
+def save_last_project(project_path: str | Path | None) -> None:
+    """Save the last used project path for auto-load on startup.
+
+    Args:
+        project_path: Path to the project, or None/empty to clear
+    """
+    settings = load_settings()
+    settings["last_project"] = str(project_path) if project_path else ""
+    save_settings(settings)
+
+
+def get_last_project() -> str | None:
+    """Get the last used project path.
+
+    Returns:
+        Path to last project, or None if not set or doesn't exist
+    """
+    last = get_setting("last_project", "")
+    if last and Path(last).exists():
+        return last
+    return None
+
+
+# --- Processed Directory ---
+
+def get_processed_dir(
+    data_dir: str | Path | None = None,
+    project_path: Path | None = None,
+) -> Path:
     """Get the processed directory path for storing .rrational files.
 
     Args:
-        data_dir: The data directory path. If provided, returns {data_dir}/../processed/
-                  If None, returns ~/.rrational/exports/
+        data_dir: The data directory path
+        project_path: Project path (takes priority if provided)
+
+    Priority:
+    1. If project_path: returns project/processed/
+    2. If data_dir: returns {data_dir}/../processed/
+    3. Otherwise: returns ~/.rrational/exports/
 
     Returns:
         Path to the processed/exports directory (created if needed)
     """
-    if data_dir:
+    if project_path:
+        processed_dir = Path(project_path) / "processed"
+    elif data_dir:
         processed_dir = Path(data_dir).parent / "processed"
     else:
         processed_dir = CONFIG_DIR / "exports"
@@ -520,7 +752,11 @@ def get_processed_dir(data_dir: str | Path | None = None) -> Path:
     return processed_dir
 
 
-def list_ready_files_for_participant(participant_id: str, data_dir: str | Path | None = None) -> list[Path]:
+def list_ready_files_for_participant(
+    participant_id: str,
+    data_dir: str | Path | None = None,
+    project_path: Path | None = None,
+) -> list[Path]:
     """List all .rrational ready files for a participant.
 
     Convenience wrapper around rrational_export.find_rrational_files()
@@ -529,9 +765,10 @@ def list_ready_files_for_participant(participant_id: str, data_dir: str | Path |
     Args:
         participant_id: The participant ID to find files for
         data_dir: Optional data directory to search
+        project_path: Project path (takes priority if provided)
 
     Returns:
         List of .rrational file paths, sorted by modification time (newest first)
     """
     from rrational.gui.rrational_export import find_rrational_files
-    return find_rrational_files(participant_id, data_dir)
+    return find_rrational_files(participant_id, data_dir, project_path)

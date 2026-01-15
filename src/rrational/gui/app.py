@@ -190,12 +190,20 @@ st.set_page_config(
 # This runs once per session and migrates if legacy has more data than current
 if "legacy_migration_done" not in st.session_state:
     if migrate_legacy_config():
-        st.toast("✓ Migrated settings from previous version", icon="📁")
+        st.toast("Migrated settings from previous version", icon="info")
         # Clear session state keys so migrated data will be loaded fresh
         for key in ["groups", "all_events", "sections", "playlist_groups"]:
             if key in st.session_state:
                 del st.session_state[key]
     st.session_state.legacy_migration_done = True
+
+# Project management session state
+if "current_project" not in st.session_state:
+    st.session_state.current_project = None  # Path to current project or None
+if "project_manager" not in st.session_state:
+    st.session_state.project_manager = None  # ProjectManager instance
+if "show_welcome" not in st.session_state:
+    st.session_state.show_welcome = True  # Show welcome screen on first load
 
 
 def apply_custom_css():
@@ -1804,9 +1812,10 @@ if "playlist_groups" not in st.session_state:
 if "cleaning_config" not in st.session_state:
     st.session_state.cleaning_config = CleaningConfig()
 
-# Load persisted groups and events
+# Load persisted groups and events (use project path if available)
+_project_path = st.session_state.get("current_project")
 if "groups" not in st.session_state:
-    loaded_groups = load_groups()
+    loaded_groups = load_groups(_project_path)
     if not loaded_groups:
         # Initialize Default Group with canonical events
         st.session_state.groups = {
@@ -1824,7 +1833,7 @@ if "groups" not in st.session_state:
         st.session_state.groups = loaded_groups
 
 if "all_events" not in st.session_state:
-    loaded_events = load_events()
+    loaded_events = load_events(_project_path)
     if not loaded_events:
         st.session_state.all_events = DEFAULT_CANONICAL_EVENTS.copy()
     else:
@@ -1832,7 +1841,7 @@ if "all_events" not in st.session_state:
 
 # Initialize sections at startup (so Analysis tab can use them before Setup is visited)
 if "sections" not in st.session_state:
-    loaded_sections = load_sections()
+    loaded_sections = load_sections(_project_path)
     if not loaded_sections:
         # Default sections - start_events/end_events are lists (any of these events can start/end the section)
         st.session_state.sections = {
@@ -1858,7 +1867,7 @@ if "normalizer" not in st.session_state or st.session_state.get("_events_hash") 
 
 # Load participant-specific data (groups, playlists, labels, event orders, manual events)
 if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
-    loaded_participants = load_participants()
+    loaded_participants = load_participants(_project_path)
     if loaded_participants:
         # Extract randomization labels if present
         if "_randomization_labels" in loaded_participants:
@@ -1905,15 +1914,17 @@ if "participant_groups" not in st.session_state or "event_order" not in st.sessi
 
 def save_all_config():
     """Save all configuration to persistent storage."""
-    save_groups(st.session_state.groups)
-    save_events(st.session_state.all_events)
+    project_path = st.session_state.get("current_project")
+    save_groups(st.session_state.groups, project_path)
+    save_events(st.session_state.all_events, project_path)
     if hasattr(st.session_state, 'sections'):
-        save_sections(st.session_state.sections)
+        save_sections(st.session_state.sections, project_path)
     save_participant_data()
 
 
 def save_participant_data():
     """Save participant-specific data (groups, randomizations, event orders, manual events)."""
+    project_path = st.session_state.get("current_project")
     participants_data = {}
     all_participant_ids = set(
         list(st.session_state.participant_groups.keys()) +
@@ -1934,7 +1945,7 @@ def save_participant_data():
     if st.session_state.get("randomization_labels"):
         participants_data["_randomization_labels"] = st.session_state.randomization_labels
 
-    save_participants(participants_data)
+    save_participants(participants_data, project_path)
 
 
 def update_normalizer():
@@ -5166,10 +5177,82 @@ def detect_artifacts_fixpeaks(rr_values: list[int], sampling_rate: int = 1000) -
         }
 
 
+def _load_project(project_path: Path | str | None) -> None:
+    """Load project configuration into session state.
+
+    Args:
+        project_path: Path to project directory, or None for temporary workspace
+    """
+    from rrational.gui.persistence import save_last_project
+
+    if project_path is None or project_path == "":
+        # Temporary workspace mode - use global config
+        st.session_state.current_project = None
+        st.session_state.project_manager = None
+        save_last_project(None)  # Clear last project
+        return
+
+    from rrational.gui.project import ProjectManager, add_recent_project
+
+    project_path = Path(project_path)
+    pm = ProjectManager.open_project(project_path)
+    st.session_state.current_project = project_path
+    st.session_state.project_manager = pm
+
+    # Update recent projects and save as last project for auto-load
+    add_recent_project(project_path, pm.metadata.name if pm.metadata else project_path.name)
+    save_last_project(project_path)
+
+    # Clear and reload config from project
+    for key in ["groups", "all_events", "sections", "playlist_groups",
+                "participant_groups", "participant_randomizations",
+                "participant_playlists", "participant_labels",
+                "event_order", "manual_events"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+    # Set data_dir to project's data/raw folder
+    st.session_state.data_dir = str(pm.get_data_dir())
+
+    # Clear loaded data - delete key entirely so auto-load can trigger
+    if "summaries" in st.session_state:
+        del st.session_state["summaries"]
+
+
 def main():
     """Main Streamlit app."""
     import time as _time
     _script_start = _time.time()
+
+    # Auto-load last project on startup (only on first run)
+    if "startup_complete" not in st.session_state:
+        st.session_state.startup_complete = True
+        if not TEST_MODE:
+            from rrational.gui.persistence import get_last_project
+            last_project = get_last_project()
+            if last_project:
+                # Auto-load the last used project
+                _load_project(Path(last_project))
+                st.session_state.show_welcome = False
+                st.rerun()
+
+    # Project selection gate - show welcome screen if no project selected
+    if st.session_state.get("show_welcome", True) and not st.session_state.get("current_project"):
+        # Don't show welcome in TEST_MODE
+        if not TEST_MODE:
+            from rrational.gui.welcome import render_welcome_screen
+            result = render_welcome_screen()
+            if result is not None:
+                if result == "":  # Temporary workspace
+                    st.session_state.show_welcome = False
+                else:
+                    _load_project(Path(result))
+                    st.session_state.show_welcome = False
+                st.rerun()
+            return  # Don't render main app until project selected
+        else:
+            # In test mode, skip welcome screen
+            st.session_state.show_welcome = False
 
     if TEST_MODE:
         st.title("RRational [TEST MODE]")
@@ -5213,6 +5296,25 @@ def main():
                     if page_id == "Setup":
                         st.session_state._setup_scroll_to_top = True
                     st.rerun()
+
+        st.markdown("---")
+
+        # Project indicator
+        if st.session_state.get("current_project"):
+            pm = st.session_state.project_manager
+            project_name = pm.metadata.name if pm and pm.metadata else "Project"
+            st.caption(f"Project: **{project_name}**")
+            if st.button("Switch Project", key="switch_project", use_container_width=True):
+                # Clear current project to show welcome screen
+                st.session_state.current_project = None
+                st.session_state.project_manager = None
+                st.session_state.show_welcome = True
+                st.rerun()
+        else:
+            st.caption("Temporary Workspace")
+            if st.button("Open Project", key="open_project", use_container_width=True):
+                st.session_state.show_welcome = True
+                st.rerun()
 
         st.markdown("---")
 
@@ -7669,7 +7771,7 @@ def main():
                                 build_export_filename, get_quality_grade, get_quigley_recommendation
                             )
                             from datetime import datetime
-                            from pathlib import Path
+                            # Path is already imported at module level
 
                             # Get data directory
                             data_dir = st.session_state.get("data_dir")

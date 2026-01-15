@@ -426,17 +426,30 @@ def get_quigley_recommendation(artifact_rate: float, beat_count: int) -> str:
         return "suitable_for_all_metrics"
 
 
-def find_rrational_files(participant_id: str, data_dir: Path | str | None = None) -> list[Path]:
+def find_rrational_files(
+    participant_id: str,
+    data_dir: Path | str | None = None,
+    project_path: Path | None = None,
+) -> list[Path]:
     """Find all .rrational files for a participant.
 
     Args:
         participant_id: The participant to find files for
         data_dir: Optional data directory (checks ../processed/)
+        project_path: Project path (takes priority if provided)
 
     Returns:
         List of paths to .rrational files
     """
     files = []
+
+    # Check project processed folder (highest priority)
+    if project_path:
+        project_path = Path(project_path)
+        processed_dir = project_path / "processed"
+        if processed_dir.exists():
+            pattern = f"{participant_id}*.rrational"
+            files.extend(processed_dir.glob(pattern))
 
     # Check processed folder relative to data_dir
     if data_dir:
@@ -452,7 +465,9 @@ def find_rrational_files(participant_id: str, data_dir: Path | str | None = None
         pattern = f"{participant_id}*.rrational"
         files.extend(config_dir.glob(pattern))
 
-    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+    # Deduplicate (same file might be found via different paths)
+    unique_files = list({f.resolve(): f for f in files}.values())
+    return sorted(unique_files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def build_export_filename(participant_id: str, segment_name: str | None = None) -> str:
