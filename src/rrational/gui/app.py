@@ -4136,7 +4136,7 @@ def render_rr_plot_fragment(participant_id: str):
         # VNS timestamps and Signal Inspection mode use synthesized timestamps, gaps are meaningless
         gap_result = {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": is_vns_data}
     else:
-        # Use cached version with ORIGINAL timestamps to avoid recalculation
+        # Issue #11 fix: HRV Logger now uses RAW data for visualization, so original_timestamps are raw
         gap_result = cached_gap_detection(tuple(original_timestamps), tuple(rr_list), gap_threshold)
     st.session_state[f"gaps_{participant_id}"] = gap_result
 
@@ -5544,7 +5544,12 @@ def main():
                         if is_vns:
                             timestamps, rr_values, flags = zip(*rr_with_timestamps)
                         else:
-                            timestamps, rr_values = zip(*rr_with_timestamps)
+                            # Issue #11 fix: Use RAW data for visualization (not cleaned)
+                            # Cleaning cascade can remove large portions of data after artifacts,
+                            # but users need to see ALL data to understand measurement restarts
+                            raw_rr_data = recording_data['rr_intervals']
+                            timestamps = tuple(ts for ts, rr, _ in raw_rr_data if ts is not None)
+                            rr_values = tuple(rr for ts, rr, _ in raw_rr_data if ts is not None)
                             flags = None
 
                         # Get plot resolution from session state (use saved settings as default)
