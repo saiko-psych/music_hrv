@@ -187,10 +187,14 @@ st.set_page_config(
 )
 
 # Migrate legacy config from ~/.music_hrv to ~/.rrational (v0.7.0 rename)
-# This runs once per session and only copies files that don't already exist
+# This runs once per session and migrates if legacy has more data than current
 if "legacy_migration_done" not in st.session_state:
     if migrate_legacy_config():
         st.toast("✓ Migrated settings from previous version", icon="📁")
+        # Clear session state keys so migrated data will be loaded fresh
+        for key in ["groups", "all_events", "sections", "playlist_groups"]:
+            if key in st.session_state:
+                del st.session_state[key]
     st.session_state.legacy_migration_done = True
 
 

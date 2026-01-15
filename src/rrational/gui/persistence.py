@@ -51,7 +51,10 @@ def migrate_legacy_config() -> bool:
     """Migrate configuration from legacy ~/.music_hrv to ~/.rrational.
 
     This handles the v0.7.0 rename from music_hrv to rrational.
-    Only copies files that don't already exist in the new location.
+    Migrates files when:
+    - New file doesn't exist, OR
+    - Legacy file has more content (larger size) than new file
+      (indicates new file only has defaults, legacy has real user data)
 
     Returns:
         True if migration was performed, False if not needed
@@ -81,8 +84,22 @@ def migrate_legacy_config() -> bool:
         legacy_file = LEGACY_CONFIG_DIR / filename
         new_file = CONFIG_DIR / filename
 
-        # Only copy if legacy exists and new doesn't
-        if legacy_file.exists() and not new_file.exists():
+        if not legacy_file.exists():
+            continue
+
+        # Migrate if: new file doesn't exist OR legacy is larger (has more user data)
+        should_migrate = False
+        if not new_file.exists():
+            should_migrate = True
+        else:
+            # If legacy file is significantly larger, it likely has real user data
+            # while new file only has defaults
+            legacy_size = legacy_file.stat().st_size
+            new_size = new_file.stat().st_size
+            if legacy_size > new_size:
+                should_migrate = True
+
+        if should_migrate:
             try:
                 shutil.copy2(legacy_file, new_file)
                 migrated_any = True
