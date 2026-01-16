@@ -443,9 +443,23 @@ on each segment. This provides:
 1. Select **"Signal Inspection"** mode in participant view
 2. Resolution auto-increases for beat-level inspection
 3. Orange X markers show detected artifacts on the plot
-4. Green dotted line shows corrected NN intervals (preview)
-5. Quality assessment shows artifact rate and recommendations
-6. For segmented methods, expand **"Segment Artifact Details"** to see per-segment statistics
+4. Purple diamond markers show manually marked artifacts
+5. Gray circle-x markers show excluded (demarked) artifacts
+6. Green dotted line shows corrected NN intervals (preview)
+7. Quality assessment shows artifact rate and recommendations
+8. For segmented methods, expand **"Segment Artifact Details"** to see per-segment statistics
+
+#### Artifact Detection Workflow:
+1. **Show artifacts** checkbox displays saved/loaded artifacts (no auto-detection)
+2. **Detect New Artifacts** expander - configure method and click "Run Detection"
+3. **Clear** button removes algorithm-detected artifacts
+
+#### Manual Artifact Marking (Signal Inspection mode):
+- **Click on algorithm artifact** → Exclude it (gray circle-x)
+- **Click on excluded artifact** → Re-enable it (orange X)
+- **Click on normal beat** → Mark as manual artifact (purple diamond)
+- **Click on manual artifact** → Remove marking
+- Changes are saved automatically and persist across sessions
 
 #### Quality Guidelines (Quigley et al. 2024):
 
@@ -456,13 +470,13 @@ on each segment. This provides:
 | 5-10% | Acceptable | Prefer time-domain metrics |
 | > 10% | Poor | Exclude segment or use only RMSSD/SDNN |
 
-#### Workflow:
-1. **Visual inspection** in Signal Inspection mode
-2. **Choose method**: Lipponen 2019 for accuracy, Threshold for speed
-3. **Use segmented** for recordings > 10 minutes
-4. **Check segment stats** to identify problem periods
-5. **Adjust threshold** if using Threshold method (try 25-30%)
-6. **Define exclusions** for persistently bad regions (switch to Exclusions mode)
+#### Recommended Workflow:
+1. **Load participant** - saved artifacts auto-load if available
+2. **Visual inspection** in Signal Inspection mode
+3. **Run detection** if no saved artifacts (choose method in expander)
+4. **Manual review** - click to mark/unmark individual artifacts
+5. **Save corrections** using sidebar "Save Artifact Corrections" button
+6. **Define exclusions** for persistently bad regions (switch to Add Exclusions mode)
 7. **Apply correction** during analysis (Analysis tab checkbox)
 
 #### Reference:

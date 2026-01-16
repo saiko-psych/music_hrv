@@ -333,6 +333,206 @@ Check background task output for actual port: `Local URL: http://localhost:850X`
 
 ---
 
+## Session 2026-01-16: Artifact Detection Workflow Improvements
+
+### Version Tag: `v0.7.3`
+
+### Major Feature: Manual Artifact Demarking + Detection Controls
+
+Implemented comprehensive artifact management with manual controls:
+
+#### 1. Separated Saved Artifacts from New Detection
+- "Show artifacts" checkbox now shows saved/loaded artifacts by default
+- No automatic algorithm detection when checkbox enabled
+- Added "Detect New Artifacts" expander with Run Detection button
+- Clear button appears next to artifact summary when artifacts exist
+
+#### 2. Manual Artifact Marking/Demarking
+- Click on algorithm-detected artifacts to exclude them (gray circle-x marker)
+- Click again to re-enable excluded artifacts
+- Click on normal beats to mark as manual artifacts (purple diamonds)
+- Click on manual artifacts to remove them
+- All changes update Signal Inspection section immediately
+
+#### 3. Performance Optimizations
+- Added fast path for marker-only updates (skips heavy detection processing)
+- Uses full `st.rerun()` for proper UI updates (Signal Inspection section)
+- Fixed deprecation warnings (`use_container_width` → `width="stretch"`)
+
+#### 4. Artifact Persistence
+- Save/load algorithm artifacts with method and threshold settings
+- Save/load manual artifacts and exclusions
+- Auto-load artifacts when participant selected
+- Format version 1.2 with `saved_at` timestamp
+
+### Files Modified:
+- `src/rrational/gui/app.py` - Artifact workflow UI, detection controls, marking logic
+- `src/rrational/gui/persistence.py` - Artifact save/load with algorithm settings
+
+### Bug Fixes:
+1. **Clear button not appearing**: Moved to results section (after detection runs)
+2. **Manual marking not updating UI**: Changed to full `st.rerun()` instead of fragment-scoped
+3. **Algorithm detection running automatically**: Added explicit "Run Detection" button
+4. **Deprecation warnings**: Replaced `use_container_width=True` with `width="stretch"`
+
+### GitHub Issue Closed:
+- #4 "manual artifact demarking" - Fixed and closed
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ Commit: `1f163c7`
+
+---
+
+## Session 2026-01-15: Project Management System
+
+### Version Tag: `v0.7.2`
+
+### Major Feature: Project-Based Architecture
+
+Implemented comprehensive project management system for self-contained study organization:
+
+#### 1. New Project Structure
+Each project is a self-contained folder:
+```
+MyStudy/
+├── project.rrational          # Project metadata (YAML)
+├── data/
+│   ├── raw/                   # Raw HRV data files
+│   │   ├── hrv_logger/        # HRV Logger CSV files
+│   │   └── vns/               # VNS Analyse TXT files
+│   └── processed/             # Exported .rrational files + participant events
+├── config/                    # Project-specific configuration
+│   ├── groups.yml
+│   ├── events.yml
+│   ├── sections.yml
+│   └── ... (all config files)
+└── analysis/                  # Analysis results (future)
+```
+
+#### 2. New Files Created
+
+**`src/rrational/gui/project.py`** (509 lines):
+- `ProjectMetadata` dataclass for project.rrational content
+- `ProjectManager` class with methods:
+  - `create_project()` - Create new project with folder structure
+  - `open_project()` - Load existing project
+  - `is_valid_project()` - Validate project structure
+  - `repair_structure()` - Fix missing directories
+  - `get_data_dir()`, `get_processed_dir()`, `get_config_dir()`
+- Data source support: HRV Logger, VNS Analyse (extensible)
+- Recent projects management functions
+- Global config migration utilities
+
+**`src/rrational/gui/welcome.py`** (505 lines):
+- `render_welcome_screen()` - Main welcome UI
+- `_render_recent_projects()` - Clickable recent projects list
+- `_render_create_project_wizard()` - 4-step project creation:
+  1. Location selection (native folder dialog)
+  2. Project details (name, description, author)
+  3. Data sources selection (HRV Logger, VNS)
+  4. Review and create
+- `_open_folder_dialog()` - Cross-platform native folder picker via subprocess/tkinter
+
+#### 3. Key Implementation Details
+
+**Native Folder Dialog** (cross-platform):
+```python
+def _open_folder_dialog(title: str = "Select Folder", initial_dir: str | None = None) -> str | None:
+    import subprocess
+    import sys
+    import platform
+
+    script = '''
+import tkinter as tk
+from tkinter import filedialog
+import platform
+
+root = tk.Tk()
+root.withdraw()
+
+if platform.system() == "Darwin":  # macOS
+    root.lift()
+    root.call("wm", "attributes", ".", "-topmost", True)
+    root.after_idle(root.call, "wm", "attributes", ".", "-topmost", False)
+else:
+    root.wm_attributes("-topmost", True)
+    root.focus_force()
+
+root.update()
+folder = filedialog.askdirectory(...)
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else None
+```
+
+**Auto-Load Last Project**:
+```python
+# In main() - load last project on startup
+if "startup_complete" not in st.session_state:
+    st.session_state.startup_complete = True
+    last_project = get_last_project()
+    if last_project:
+        _load_project(Path(last_project))
+        st.session_state.show_welcome = False
+        st.rerun()
+```
+
+**Project-Aware Config Storage**:
+```python
+# persistence.py - all save/load functions now accept project_path
+def save_groups(groups: dict, project_path: Path | None = None) -> None:
+    if project_path:
+        target = project_path / "config" / "groups.yml"
+    else:
+        target = GROUPS_FILE  # ~/.rrational/groups.yml
+```
+
+#### 4. Files Modified
+
+- `src/rrational/gui/persistence.py`:
+  - Added `last_project` to DEFAULT_SETTINGS
+  - Added `save_last_project()`, `get_last_project()` functions
+  - All save/load functions now accept optional `project_path` parameter
+
+- `src/rrational/gui/app.py`:
+  - Added `_load_project()` helper function
+  - Added project gate in `main()` (shows welcome screen)
+  - Added auto-load last project on startup
+  - Added project indicator in sidebar with "Switch Project" button
+  - Fixed redundant Path import that caused UnboundLocalError
+
+- `src/rrational/gui/tabs/data.py`:
+  - Updated to use project data directory as default
+
+#### 5. Bug Fixes During Implementation
+
+1. **Browse button not sharing path**: Text input had separate key from browse result - fixed by using same session state key
+2. **UnboundLocalError for Path**: Redundant `from pathlib import Path` inside `main()` shadowed module-level import
+3. **Switch Project not working**: `current_project` wasn't cleared before showing welcome screen
+4. **Auto-load data not triggering**: Changed `summaries = []` to `del summaries` so auto-load triggers
+
+#### 6. Cross-Platform Considerations
+
+- Used `pathlib.Path` throughout for path handling
+- Default to `Path.home()` (not `Documents`) for cross-platform compatibility
+- Mac-specific tkinter window handling (different attributes)
+- Forward slash paths work on all platforms with pathlib
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ Commits: `bf5928b` (main feature), `eea299b` (Mac compatibility)
+- ✅ Issue #5 closed
+
+### Key Learnings:
+
+1. **Streamlit session state sharing**: Text inputs with explicit `key=` can share state with callbacks
+2. **tkinter in Streamlit**: Run via subprocess to avoid blocking event loop
+3. **Auto-load pattern**: Delete session state key entirely (not set to empty) to trigger auto-load
+4. **Platform detection**: Use `platform.system()` for OS-specific code paths
+
+---
+
 ## Session 2026-01-14: Ready for Analysis Export Feature
 
 ### Version Tag: `v0.7.1`

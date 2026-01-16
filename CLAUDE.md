@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.7.1` (RRational) | **Tests**: 18/18 passing
+**Version**: `v0.7.3` (RRational) | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -61,7 +61,10 @@ uv run ruff check src/ tests/ --fix            # Lint
 - Tab 4: Sections (time ranges between events)
 - Tab 5: Analysis (NeuroKit2 HRV metrics)
 
-**Storage**: `~/.rrational/*.yml` (groups, events, sections, participants, settings)
+**Storage**:
+- Project-based: `MyProject/config/*.yml` (groups, events, sections, etc.)
+- Global fallback: `~/.rrational/*.yml` (for temporary workspace)
+- Settings always in: `~/.rrational/settings.yml` (includes last_project for auto-load)
 
 **Settings**: Sidebar expander with persistent defaults for:
 - Default data folder
@@ -85,10 +88,12 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Key Files & Code Organization
 
-- `src/rrational/gui/app.py` - Main app + Participants tab (~3700 lines)
+- `src/rrational/gui/app.py` - Main app + Participants tab (~3800 lines)
 - `src/rrational/gui/tabs/` - Tab modules (data.py, setup.py, analysis.py)
 - `src/rrational/gui/shared.py` - Shared utilities, caching, helpers
-- `src/rrational/gui/persistence.py` - YAML storage
+- `src/rrational/gui/persistence.py` - YAML storage + settings
+- `src/rrational/gui/project.py` - Project management (ProjectManager class)
+- `src/rrational/gui/welcome.py` - Welcome screen + project creation wizard
 - `src/rrational/gui/rrational_export.py` - .rrational export format handling
 
 **IMPORTANT**: Keep `app.py` lean! Add new features to appropriate tab modules, not app.py.
@@ -98,8 +103,6 @@ uv run ruff check src/ tests/ --fix            # Lint
 **High Priority:**
 - [ ] Playlist group comparison (compare music types across playlists)
 - [ ] Setup section rework (better saving, design improvements)
-- [ ] Project management / data browsing (R-style projects, data can be anywhere)
-- [ ] Kubios workflow: manual beat editing (click to mark/unmark individual artifacts)
 - [ ] Evaluate hrv-analysis library for preprocessing (multiple ectopic methods, cleaner RR→NN pipeline)
 - [ ] R-R power spectrum plot
 - [ ] Generalized event system (music events with single border, extensible for other event types)
@@ -118,6 +121,8 @@ uv run ruff check src/ tests/ --fix            # Lint
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Done:**
+- [x] ~~Manual artifact demarking + improved detection workflow~~ (v0.7.3)
+- [x] ~~Project management system (welcome screen, project creation, auto-load last project)~~ (v0.7.2)
 - [x] ~~Ready for Analysis export (.rrational files with audit trail)~~ (v0.7.1)
 - [x] ~~Kubios-like artifact workflow (method selector, threshold, correction preview)~~ (v0.7.0)
 - [x] ~~Favicon (Poincaré plot style)~~ (v0.7.0)
