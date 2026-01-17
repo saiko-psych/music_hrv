@@ -3834,7 +3834,109 @@ def render_rr_plot_fragment(participant_id: str):
             "gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True
         }
 
-    # Keyboard shortcut for Signal Inspection mode (inside fragment for fast response)
+    # Keyboard shortcuts for inspection mode (I and R keys)
+    from streamlit_shortcuts import shortcut_button, clear_shortcuts
+
+    # Clear shortcuts on each render to ensure they get re-attached
+    clear_shortcuts()
+
+    # Store participant_id in session state so callback can access it
+    inspection_action_key = f"inspection_action_{participant_id}"
+    st.session_state["_inspection_participant_id"] = participant_id
+
+    def handle_inspection_shortcut():
+        """Handle I key press - switch mode and/or toggle zoom."""
+        pid = st.session_state.get("_inspection_participant_id", "")
+        if not pid:
+            return
+
+        plot_mode_key = f"plot_mode_{pid}"
+        zoom_key = f"inspection_zoom_{pid}"
+
+        current = st.session_state.get(plot_mode_key, "Add Events")
+
+        if current != "Signal Inspection":
+            # Switch to Signal Inspection mode AND enable zoom
+            st.session_state[plot_mode_key] = "Signal Inspection"
+            st.session_state[zoom_key] = {
+                'y_min': 400,
+                'y_max': 1200,
+                'x_window_seconds': 60,
+                'center_on_mean': True
+            }
+            st.toast("Signal Inspection + Zoom ON")
+        else:
+            # Toggle zoom
+            if zoom_key in st.session_state:
+                del st.session_state[zoom_key]
+                st.toast("Inspection zoom OFF")
+            else:
+                st.session_state[zoom_key] = {
+                    'y_min': 400,
+                    'y_max': 1200,
+                    'x_window_seconds': 60,
+                    'center_on_mean': True
+                }
+                st.toast("Inspection zoom ON")
+
+    def handle_reset_zoom():
+        """Handle R key press - reset zoom to auto-scaling."""
+        pid = st.session_state.get("_inspection_participant_id", "")
+        if not pid:
+            return
+        zoom_key = f"inspection_zoom_{pid}"
+        if zoom_key in st.session_state:
+            del st.session_state[zoom_key]
+            st.toast("Zoom reset to auto")
+
+    # Hidden shortcut buttons - use components.html with JS to hide them
+    reset_zoom_key = f"reset_zoom_{participant_id}"
+    shortcut_button("I", "i", key=inspection_action_key, on_click=handle_inspection_shortcut)
+    shortcut_button("R", "r", key=reset_zoom_key, on_click=handle_reset_zoom)
+
+    # Use components.html to inject JS that hides the buttons in the parent window
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+    (function() {
+        // Try multiple ways to access parent document
+        var doc = null;
+        try { doc = window.parent.document; } catch(e) {}
+        if (!doc) try { doc = window.top.document; } catch(e) {}
+        if (!doc) return;
+
+        function hideShortcutButtons() {
+            doc.querySelectorAll('button').forEach(function(btn) {
+                var text = btn.textContent.trim();
+                if (text === 'I i' || text === 'R r') {
+                    var el = btn;
+                    // Walk up to find the stButton container
+                    while (el && el.parentElement) {
+                        el = el.parentElement;
+                        if (el.getAttribute && el.getAttribute('data-testid') === 'stButton') {
+                            el.style.cssText = 'position:fixed;top:-100px;left:-100px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
+                            // But keep button clickable for keyboard shortcuts
+                            btn.style.pointerEvents = 'auto';
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        hideShortcutButtons();
+        setTimeout(hideShortcutButtons, 100);
+        setTimeout(hideShortcutButtons, 300);
+        setTimeout(hideShortcutButtons, 1000);
+
+        // Keep watching for rerenders
+        var observer = new MutationObserver(hideShortcutButtons);
+        observer.observe(doc.body, {childList: true, subtree: true});
+    })();
+    </script>
+    """, height=0, scrolling=False)
+
+    # Signal Inspection mode UI controls
     if current_mode == "Signal Inspection":
         zoom_key = f"inspection_zoom_{participant_id}"
 
@@ -3857,95 +3959,8 @@ def render_rr_plot_fragment(participant_id: str):
         with col_info:
             st.caption("Drag to pan, scroll to zoom, I / arrow keys")
 
-        # Inject JavaScript for instant keyboard shortcuts (client-side, no server roundtrip)
-        import streamlit.components.v1 as components
-        components.html("""
-        <script>
-        (function() {
-            // Only attach once per page load
-            if (window._rrationalKeysAttached) return;
-            window._rrationalKeysAttached = true;
-
-            const PAN_SECONDS = 10000; // 10 seconds in milliseconds
-
-            // Find Plotly plot in document or iframes
-            const findPlot = () => {
-                const findInDoc = (doc) => {
-                    try {
-                        const div = doc.querySelector('.js-plotly-plot');
-                        if (div) return {div, Plotly: doc.defaultView.Plotly};
-                    } catch(err) {}
-                    return null;
-                };
-
-                let result = findInDoc(document);
-                if (result) return result;
-
-                // Check iframes (streamlit-plotly-events uses iframe)
-                const iframes = document.querySelectorAll('iframe');
-                for (const iframe of iframes) {
-                    try {
-                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                        result = findInDoc(iframeDoc);
-                        if (result) return result;
-                    } catch(err) {} // Cross-origin will fail
-                }
-                return null;
-            };
-
-            // Click button without scrolling
-            const clickButtonNoScroll = (selector) => {
-                const scrollPos = window.scrollY;
-                const btn = document.querySelector(selector);
-                if (btn) {
-                    btn.click();
-                    // Restore scroll position after Streamlit rerun
-                    requestAnimationFrame(() => {
-                        window.scrollTo(0, scrollPos);
-                        setTimeout(() => window.scrollTo(0, scrollPos), 50);
-                        setTimeout(() => window.scrollTo(0, scrollPos), 150);
-                    });
-                }
-            };
-
-            document.addEventListener('keydown', function(e) {
-                // Don't trigger if typing in an input
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-                // Handle "I" key - click Inspection Zoom button
-                if (e.key === 'i' || e.key === 'I') {
-                    clickButtonNoScroll('button[data-testid="stBaseButton-secondary"]');
-                    e.preventDefault();
-                    return;
-                }
-
-                // Handle arrow keys - instant pan via Plotly
-                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-
-                const plot = findPlot();
-                if (!plot) return;
-
-                const {div, Plotly} = plot;
-                if (!div || !Plotly || !div.layout || !div.layout.xaxis) return;
-
-                const xaxis = div.layout.xaxis;
-                if (!xaxis.range || xaxis.range.length < 2) return;
-
-                const shift = e.key === 'ArrowRight' ? PAN_SECONDS : -PAN_SECONDS;
-                const newRange = [
-                    new Date(new Date(xaxis.range[0]).getTime() + shift),
-                    new Date(new Date(xaxis.range[1]).getTime() + shift)
-                ];
-
-                Plotly.relayout(div, {'xaxis.range': newRange});
-                e.preventDefault();
-            });
-        })();
-        </script>
-        """, height=0)
-
-        # Quick Save for Analysis expander
-        with st.expander("Quick Save for Analysis", expanded=False):
+    # Quick Save for Analysis expander (available in all modes)
+    with st.expander("Quick Save for Analysis", expanded=False):
             # Check for existing .rrational files
             from rrational.gui.rrational_export import find_rrational_files
             from rrational.gui.persistence import load_artifact_corrections, save_artifact_corrections
@@ -4835,6 +4850,14 @@ def render_rr_plot_fragment(participant_id: str):
     # Check if Signal Inspection section filter is active
     inspection_range = st.session_state.get(f"inspection_section_range_{participant_id}")
 
+    # Check zoom state early - needed for dynamic uirevision
+    zoom_key = f"inspection_zoom_{participant_id}"
+    inspection_zoom = st.session_state.get(zoom_key, None)
+
+    # Use dynamic uirevision so zoom state resets properly when toggled
+    # When zoom is active, use one value; when auto, use another
+    zoom_revision = f"zoom_{participant_id}" if inspection_zoom else f"auto_{participant_id}"
+
     # Configure x-axis based on mode
     if use_sequential_timestamps:
         # Signal Inspection mode: x-axis shows sequential beat time (each beat unique position)
@@ -4844,7 +4867,7 @@ def render_rr_plot_fragment(participant_id: str):
             gridcolor=theme['grid'],
             linecolor=theme['line'],
             tickfont=dict(color=theme['text']),
-            uirevision=True,
+            uirevision=zoom_revision,  # Dynamic - changes when zoom toggled
         )
     else:
         # Normal mode: x-axis shows real clock time (aligned with events)
@@ -4854,27 +4877,27 @@ def render_rr_plot_fragment(participant_id: str):
             gridcolor=theme['grid'],
             linecolor=theme['line'],
             tickfont=dict(color=theme['text']),
-            uirevision=True,  # Preserve x-axis zoom
+            uirevision=zoom_revision,  # Dynamic - changes when zoom toggled
         )
     # If a section is selected in Signal Inspection mode, zoom to that range
     if inspection_range and len(inspection_range) == 2:
         start_time, end_time = inspection_range
         xaxis_config['range'] = [start_time, end_time]
 
-    # Build Y-axis config (check for inspection zoom)
-    zoom_key = f"inspection_zoom_{participant_id}"
-    inspection_zoom = st.session_state.get(zoom_key, None)
+    # Build Y-axis config
+
     yaxis_config = dict(
         title=dict(text="RR Interval (ms)", font=dict(color=theme['text'])),
         gridcolor=theme['grid'],
         linecolor=theme['line'],
         tickfont=dict(color=theme['text']),
-        uirevision=True,  # Preserve y-axis zoom
+        uirevision=zoom_revision,  # Dynamic - changes when zoom toggled
     )
 
-    # Apply inspection zoom if set
+    # Apply inspection zoom if set, otherwise explicitly enable autorange
     if inspection_zoom:
         yaxis_config['range'] = [inspection_zoom['y_min'], inspection_zoom['y_max']]
+        yaxis_config['autorange'] = False
         # Also set X-axis range if time window specified
         ts_for_zoom = plot_data.get('timestamps', [])
         if inspection_zoom.get('x_window_seconds') and ts_for_zoom:
@@ -4884,6 +4907,11 @@ def render_rr_plot_fragment(participant_id: str):
             mid_time = get_pandas().to_datetime(ts_for_zoom[mid_idx])
             half_window = get_pandas().Timedelta(seconds=inspection_zoom['x_window_seconds'] / 2)
             xaxis_config['range'] = [mid_time - half_window, mid_time + half_window]
+            xaxis_config['autorange'] = False
+    else:
+        # Explicitly enable autorange when no zoom is set
+        yaxis_config['autorange'] = True
+        xaxis_config['autorange'] = True
 
     # Set dragmode based on interaction mode
     # Signal Inspection: pan mode for instant drag-to-pan (client-side, no server roundtrip)
@@ -4898,7 +4926,7 @@ def render_rr_plot_fragment(participant_id: str):
         height=600,
         showlegend=True,
         legend=dict(x=1.02, y=1, xanchor='left', yanchor='top', font=dict(color=theme['text'])),
-        uirevision=True,  # Preserve zoom/pan state across checkbox changes
+        uirevision=zoom_revision,  # Dynamic - resets when zoom toggled
         paper_bgcolor=theme['bg'],
         plot_bgcolor=theme['bg'],
         font=dict(color=theme['text']),
