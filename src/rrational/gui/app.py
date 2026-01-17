@@ -5348,7 +5348,10 @@ def render_rr_plot_fragment(participant_id: str):
             segment_stats = artifact_result.get("segment_stats", [])
             if segment_stats:
                 with st.expander(f"Segment Artifact Details ({len(segment_stats)} segments)"):
-                    df = get_pandas().DataFrame(segment_stats)
+                    # Filter to only the expected columns (remove extra fields like global_offset)
+                    expected_keys = ["segment", "start_beat", "end_beat", "n_beats", "n_artifacts", "artifact_pct"]
+                    filtered_stats = [{k: s.get(k) for k in expected_keys if k in s} for s in segment_stats]
+                    df = get_pandas().DataFrame(filtered_stats)
                     df.columns = ["Segment", "Start Beat", "End Beat", "N Beats", "N Artifacts", "Artifact %"]
 
                     # Highlight segments with high artifact rates
