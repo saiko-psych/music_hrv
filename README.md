@@ -256,6 +256,13 @@ On launch, choose how to work:
 
 ## Data Formats
 
+RRational supports data from two popular HRV recording apps:
+
+| App | Platform | Format | Link |
+|-----|----------|--------|------|
+| **HRV Logger** | iOS/Android | CSV | [hrv.tools](https://www.hrv.tools/hrv-logger-faq.html) |
+| **VNS Analyse** | iOS | TXT | [App Store](https://apps.apple.com/de/app/vns-analyse/id990667927) |
+
 ### HRV Logger (CSV)
 
 ```

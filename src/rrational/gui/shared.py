@@ -164,9 +164,12 @@ def init_session_state():
     if "cleaning_config" not in st.session_state:
         st.session_state.cleaning_config = CleaningConfig()
 
+    # Get project path for loading config
+    project_path = st.session_state.get("current_project")
+
     # Load persisted groups
     if "groups" not in st.session_state:
-        loaded_groups = load_groups()
+        loaded_groups = load_groups(project_path)
         if not loaded_groups:
             st.session_state.groups = {
                 "Default": {
@@ -183,7 +186,7 @@ def init_session_state():
 
     # Load persisted events
     if "all_events" not in st.session_state:
-        loaded_events = load_events()
+        loaded_events = load_events(project_path)
         if not loaded_events:
             st.session_state.all_events = DEFAULT_CANONICAL_EVENTS.copy()
         else:
@@ -194,7 +197,7 @@ def init_session_state():
 
     # Load participant-specific data
     if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
-        loaded_participants = load_participants()
+        loaded_participants = load_participants(project_path)
         if loaded_participants:
             st.session_state.participant_groups = {
                 pid: data.get("group", "Default")
@@ -216,15 +219,17 @@ def init_session_state():
 
 def save_all_config():
     """Save all configuration to persistent storage."""
-    save_groups(st.session_state.groups)
-    save_events(st.session_state.all_events)
+    project_path = st.session_state.get("current_project")
+    save_groups(st.session_state.groups, project_path)
+    save_events(st.session_state.all_events, project_path)
     if hasattr(st.session_state, 'sections'):
-        save_sections(st.session_state.sections)
+        save_sections(st.session_state.sections, project_path)
     save_participant_data()
 
 
 def save_participant_data():
     """Save participant-specific data (groups, playlists, labels, event orders, manual events)."""
+    project_path = st.session_state.get("current_project")
     participants_data = {}
     all_participant_ids = set(
         list(st.session_state.participant_groups.keys()) +
@@ -243,7 +248,7 @@ def save_participant_data():
             "manual_events": st.session_state.manual_events.get(pid, []),
         }
 
-    save_participants(participants_data)
+    save_participants(participants_data, project_path)
 
 
 def update_normalizer():

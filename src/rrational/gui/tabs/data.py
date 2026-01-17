@@ -1067,8 +1067,9 @@ def _render_participants_table():
 
                                 # Save all changes
                                 from rrational.gui.persistence import save_groups, save_playlist_groups
-                                save_groups(st.session_state.groups)
-                                save_playlist_groups(st.session_state.playlist_groups)
+                                project_path = st.session_state.get("current_project")
+                                save_groups(st.session_state.groups, project_path)
+                                save_playlist_groups(st.session_state.playlist_groups, project_path)
                                 save_participant_data()
                                 cached_load_participants.clear()
 

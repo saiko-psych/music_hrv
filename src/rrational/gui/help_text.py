@@ -171,6 +171,25 @@ Click "Continue" to load, or "Choose Different" to see all options.
 4. Start analyzing!
 """
 
+DATA_SOURCES_HELP = """
+## Supported Data Sources
+
+RRational supports data from two popular HRV recording apps:
+
+| App | Platform | Format | Link |
+|-----|----------|--------|------|
+| **HRV Logger** | iOS/Android | CSV | [hrv.tools](https://www.hrv.tools/hrv-logger-faq.html) |
+| **VNS Analyse** | iOS | TXT | [App Store](https://apps.apple.com/de/app/vns-analyse/id990667927) |
+
+### HRV Logger
+A cross-platform mobile app for recording RR intervals via Bluetooth heart rate monitors.
+Exports paired CSV files: one with RR intervals and timestamps, one with event markers.
+
+### VNS Analyse
+An iOS app by BioSign GmbH for heart rate variability analysis.
+Exports TXT files with both raw and corrected RR interval sections.
+"""
+
 DATA_CORRECTION_WORKFLOW = """
 ## Data Correction Workflow
 

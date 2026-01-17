@@ -54,18 +54,19 @@ def ensure_config_dir() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _get_config_path(filename: str, project_path: Path | None = None) -> Path:
+def _get_config_path(filename: str, project_path: Path | str | None = None) -> Path:
     """Get the path for a config file, supporting project-based storage.
 
     Args:
         filename: Name of the config file (e.g., 'groups.yml')
-        project_path: If provided, returns project/config/{filename}
+        project_path: If provided (Path or str), returns project/config/{filename}
                       Otherwise returns ~/.rrational/{filename}
 
     Returns:
         Path to the config file
     """
     if project_path:
+        # Ensure project_path is a Path object (handles both Path and str)
         config_dir = Path(project_path) / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / filename

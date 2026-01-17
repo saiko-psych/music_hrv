@@ -340,7 +340,7 @@ def _render_create_project_wizard() -> str | None:
     # Available data sources (can be extended in the future)
     data_sources = {
         "hrv_logger": "HRV Logger (iOS/Android app - CSV files)",
-        "vns": "VNS Analyse (Windows software - TXT files)",
+        "vns": "VNS Analyse (iOS app - TXT files)",
     }
 
     # Initialize data sources selection

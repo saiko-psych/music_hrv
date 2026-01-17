@@ -5581,7 +5581,15 @@ def main():
         st.info("**Test mode active** - Using demo data from `data/demo/hrv_logger`")
     else:
         st.title("RRational")
-    st.markdown("### HRV Analysis Pipeline for Music Psychology Research")
+
+    # Show current project name prominently below title
+    _current_project = st.session_state.get("current_project")
+    if _current_project:
+        _pm = st.session_state.get("project_manager")
+        _project_name = _pm.metadata.name if _pm and _pm.metadata else Path(_current_project).name
+        st.markdown(f"#### Project: {_project_name}")
+    else:
+        st.markdown("#### Temporary Workspace")
 
     # Sidebar navigation using buttons (fast - only renders active page)
     # Initialize active page
@@ -7901,7 +7909,7 @@ def main():
                                             if raw_lower not in st.session_state.all_events[canonical_name]:
                                                 st.session_state.all_events[canonical_name].append(raw_lower)
                                                 # Save to YAML using the save_events function
-                                                save_events(st.session_state.all_events)
+                                                save_events(st.session_state.all_events, st.session_state.get("current_project"))
                                                 # Update normalizer after adding synonym
                                                 update_normalizer()
                                                 # Update the current event's canonical value in session state
