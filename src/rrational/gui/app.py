@@ -4538,29 +4538,17 @@ def render_rr_plot_fragment(participant_id: str):
                 scope_label = "full recording"
 
                 if artifact_scope == "section" and selected_section:
-                    # Estimate section beats from events
+                    # Use centralized validation to get section boundaries
+                    from rrational.gui.shared import get_section_time_range
                     sections = st.session_state.get("sections", {})
-                    section_def = sections.get(selected_section, {})
-                    start_event_names = section_def.get("start_events", [])
-                    if not start_event_names and "start_event" in section_def:
-                        start_event_names = [section_def["start_event"]]
-                    end_event_names = section_def.get("end_events", [])
-                    if not end_event_names and "end_event" in section_def:
-                        end_event_names = [section_def["end_event"]]
+                    normalizer = st.session_state.get("normalizer")
 
-                    stored_data = st.session_state.participant_events.get(participant_id, {})
-                    all_events = stored_data.get('events', []) + stored_data.get('manual', [])
-                    start_ts = None
-                    end_ts = None
-                    for event in all_events:
-                        canonical = getattr(event, "canonical", None)
-                        timestamp = getattr(event, "first_timestamp", None)
-                        if not timestamp:
-                            continue
-                        if canonical in start_event_names and start_ts is None:
-                            start_ts = timestamp
-                        elif canonical in end_event_names and end_ts is None:
-                            end_ts = timestamp
+                    start_ts, end_ts = get_section_time_range(
+                        participant_id=participant_id,
+                        section_name=selected_section,
+                        sections_config=sections,
+                        normalizer=normalizer,
+                    )
 
                     if start_ts and end_ts and full_timestamps:
                         # Count beats in section
@@ -5093,53 +5081,36 @@ def render_rr_plot_fragment(participant_id: str):
             scope_info = {"type": "full"}
 
             if detection_scope == "section" and scope_settings.get("selected_section"):
-                # Get section time range from saved events
+                # Use centralized validation to get section boundaries
+                from rrational.gui.shared import get_section_time_range
                 section_name = scope_settings["selected_section"]
                 sections = st.session_state.get("sections", {})
-                section_def = sections.get(section_name)
+                normalizer = st.session_state.get("normalizer")
 
-                if section_def:
-                    # Get start/end event names from section definition
-                    start_event_names = section_def.get("start_events", [])
-                    if not start_event_names and "start_event" in section_def:
-                        start_event_names = [section_def["start_event"]]
-                    end_event_names = section_def.get("end_events", [])
-                    if not end_event_names and "end_event" in section_def:
-                        end_event_names = [section_def["end_event"]]
+                start_ts, end_ts = get_section_time_range(
+                    participant_id=participant_id,
+                    section_name=section_name,
+                    sections_config=sections,
+                    normalizer=normalizer,
+                )
 
-                    # Find timestamps from participant events (same location as section validation)
-                    stored_data = st.session_state.participant_events.get(participant_id, {})
-                    all_events = stored_data.get('events', []) + stored_data.get('manual', [])
-                    start_ts = None
-                    end_ts = None
+                if start_ts and end_ts:
+                    # Filter timestamps and RR values to section range
+                    filtered_data = []
+                    for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
+                        if start_ts <= ts <= end_ts:
+                            if not filtered_data:
+                                scope_offset = idx
+                            filtered_data.append((ts, rr))
 
-                    for event in all_events:
-                        canonical = getattr(event, "canonical", None)
-                        timestamp = getattr(event, "first_timestamp", None)
-                        if not timestamp:
-                            continue
-                        if canonical in start_event_names and start_ts is None:
-                            start_ts = timestamp
-                        elif canonical in end_event_names and end_ts is None:
-                            end_ts = timestamp
-
-                    if start_ts and end_ts:
-                        # Filter timestamps and RR values to section range
-                        filtered_data = []
-                        for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
-                            if start_ts <= ts <= end_ts:
-                                if not filtered_data:
-                                    scope_offset = idx
-                                filtered_data.append((ts, rr))
-
-                        if filtered_data:
-                            timestamps_for_detection = [d[0] for d in filtered_data]
-                            rr_for_detection = [d[1] for d in filtered_data]
-                            scope_info = {"type": "section", "name": section_name, "offset": scope_offset}
-                        else:
-                            st.warning(f"No data found in section '{section_name}'. Using full recording.")
+                    if filtered_data:
+                        timestamps_for_detection = [d[0] for d in filtered_data]
+                        rr_for_detection = [d[1] for d in filtered_data]
+                        scope_info = {"type": "section", "name": section_name, "offset": scope_offset}
                     else:
-                        st.warning(f"Could not find start/end events for section '{section_name}'. Using full recording.")
+                        st.warning(f"No data found in section '{section_name}'. Using full recording.")
+                else:
+                    st.warning(f"Could not find start/end events for section '{section_name}'. Using full recording.")
 
             elif detection_scope == "custom":
                 # Parse custom time range
@@ -7606,42 +7577,16 @@ def main():
 
                     # Show section time range info if a section is selected
                     if selected_section != "Full recording" and selected_section in sections:
-                        section_def = sections[selected_section]
-                        # participant_data and event_list already fetched above for filtering
+                        # Use centralized validation to get section boundaries
+                        from rrational.gui.shared import get_section_time_range
+                        normalizer = st.session_state.get("normalizer")
 
-                        # Build event timestamp lookup from stored events
-                        event_timestamps = {}
-                        for evt in event_list:
-                            if isinstance(evt, dict):
-                                canonical = evt.get("canonical")
-                                timestamp = evt.get("first_timestamp")
-                            else:
-                                canonical = getattr(evt, "canonical", None)
-                                timestamp = getattr(evt, "first_timestamp", None)
-                            if canonical and timestamp:
-                                event_timestamps[canonical] = timestamp
-
-                        # Get start events (handle both old and new format)
-                        start_events_lookup = section_def.get("start_events", [])
-                        if not start_events_lookup and "start_event" in section_def:
-                            start_events_lookup = [section_def["start_event"]]
-                        end_events = section_def.get("end_events", [])
-                        if not end_events and "end_event" in section_def:
-                            end_events = [section_def["end_event"]]
-
-                        # Find start time from any matching start event
-                        start_time = None
-                        for start_ev in start_events_lookup:
-                            start_time = event_timestamps.get(start_ev)
-                            if start_time:
-                                break
-
-                        # Find end time from any matching end event
-                        end_time = None
-                        for end_ev in end_events:
-                            end_time = event_timestamps.get(end_ev)
-                            if end_time:
-                                break
+                        start_time, end_time = get_section_time_range(
+                            participant_id=selected_participant,
+                            section_name=selected_section,
+                            sections_config=sections,
+                            normalizer=normalizer,
+                        )
 
                         if start_time and end_time:
                             # Calculate section stats
@@ -8636,18 +8581,13 @@ def main():
                     with st.expander("Section Validation", expanded=True):
                         st.caption("Validates that all defined sections have required events and expected durations.")
 
-                        # Get participant's events
-                        stored_data = st.session_state.participant_events.get(selected_participant, {})
-                        all_evts = stored_data.get('events', []) + stored_data.get('manual', [])
-
-                        # Build event timestamp lookup
-                        event_timestamps = {}
-                        for evt in all_evts:
-                            if evt.canonical and evt.first_timestamp:
-                                event_timestamps[evt.canonical] = evt.first_timestamp
+                        # Get participant's events from session state
+                        saved_events_key = f"events_{selected_participant}"
+                        saved_events = st.session_state.get(saved_events_key, [])
 
                         # Get sections from session state
                         sections = st.session_state.get("sections", {})
+                        normalizer = st.session_state.get("normalizer")
 
                         # Get FULL RR data for RR-based duration (HRV Logger only)
                         full_rr_key = f"full_rr_data_{selected_participant}"
@@ -8664,6 +8604,8 @@ def main():
 
                         if not sections:
                             st.info("No sections defined. Define sections in the **Sections** tab (under Setup).")
+                        elif not saved_events:
+                            st.warning("No events found. Events are needed for section validation.")
                         else:
                             # Helper to normalize timestamps
                             def normalize_ts(ts):
@@ -8674,6 +8616,7 @@ def main():
                                 return ts
 
                             # Get exclusion zones for duration calculation
+                            stored_data = st.session_state.participant_events.get(selected_participant, {})
                             participant_exclusion_zones = stored_data.get('exclusion_zones', [])
 
                             def calc_excluded_time(start_ts, end_ts):
@@ -8714,7 +8657,6 @@ def main():
                             selected_sections = group_data.get("selected_sections", [])
 
                             # Filter sections to validate based on group's selected sections
-                            # If no sections are selected for the group, validate all sections
                             if selected_sections:
                                 sections_to_validate = {k: v for k, v in sections.items() if k in selected_sections}
                                 st.caption(f"Showing sections for **{group_data.get('label', participant_group)}** group ({len(sections_to_validate)} of {len(sections)} sections)")
@@ -8722,81 +8664,132 @@ def main():
                                 sections_to_validate = sections
                                 st.caption(f"No group-specific sections configured - showing all {len(sections)} sections")
 
-                            # Validate each section
+                            # Use centralized validation system
+                            from rrational.gui.shared import (
+                                get_validated_sections_for_participant,
+                                save_section_selection,
+                            )
+
+                            validation_results = get_validated_sections_for_participant(
+                                participant_id=selected_participant,
+                                sections_config=sections_to_validate,
+                                normalizer=normalizer,
+                            )
+
+                            # Display validation results with disambiguation UI
                             valid_count = 0
                             issue_count = 0
+                            needs_save = False
 
-                            for section_code, section_data in sections_to_validate.items():
-                                # Support both old (start_event/end_event) and new (start_events/end_events) format
-                                start_evts = section_data.get("start_events", [])
-                                if not start_evts and "start_event" in section_data:
-                                    start_evts = [section_data["start_event"]]
-                                end_evts = section_data.get("end_events", [])
-                                if not end_evts and "end_event" in section_data:
-                                    end_evts = [section_data["end_event"]]
+                            for section_code, result in validation_results.items():
+                                section_data = sections_to_validate.get(section_code, {})
                                 label = section_data.get("label", section_code)
                                 expected_dur = section_data.get("expected_duration_min", 0)
                                 tolerance = section_data.get("tolerance_min", 1)
 
-                                # Find the first matching start event
-                                start_ts = None
-                                matched_start_evt = None
-                                for start_evt in start_evts:
-                                    if start_evt in event_timestamps:
-                                        start_ts = event_timestamps[start_evt]
-                                        matched_start_evt = start_evt
-                                        break
+                                if not result.is_valid:
+                                    st.write(f"**{label}**: {result.error_message}")
+                                    issue_count += 1
+                                    continue
 
-                                # Find the first matching end event
-                                end_ts = None
-                                matched_end_evt = None
-                                for end_evt in end_evts:
-                                    if end_evt in event_timestamps:
-                                        end_ts = event_timestamps[end_evt]
-                                        matched_end_evt = end_evt
-                                        break
+                                validated = result.validated_section
+                                start_ts = validated.start_event.timestamp
+                                end_ts = validated.end_event.timestamp
 
-                                # Check event presence
-                                start_evts_str = " | ".join(start_evts) if len(start_evts) > 1 else (start_evts[0] if start_evts else "none")
-                                end_evts_str = " | ".join(end_evts) if len(end_evts) > 1 else (end_evts[0] if end_evts else "none")
-                                if not start_ts and not end_ts:
-                                    st.write(f"**{label}**: missing `{start_evts_str}` and `{end_evts_str}`")
-                                    issue_count += 1
-                                elif not start_ts:
-                                    st.write(f"**{label}**: missing `{start_evts_str}`")
-                                    issue_count += 1
-                                elif not end_ts:
-                                    st.write(f"**{label}**: missing `{end_evts_str}`")
-                                    issue_count += 1
+                                # Show disambiguation UI if multiple candidates
+                                if result.needs_disambiguation:
+                                    with st.container():
+                                        st.write(f"**{label}** (multiple events found - please select):")
+                                        col1, col2 = st.columns(2)
+
+                                        with col1:
+                                            start_options = [c.display_label() for c in result.start_candidates]
+                                            current_start_idx = next(
+                                                (i for i, c in enumerate(result.start_candidates)
+                                                 if c.timestamp == validated.start_event.timestamp),
+                                                0
+                                            )
+                                            new_start_idx = st.selectbox(
+                                                "Start event",
+                                                options=range(len(start_options)),
+                                                format_func=lambda i: start_options[i],
+                                                index=current_start_idx,
+                                                key=f"section_start_{selected_participant}_{section_code}",
+                                            )
+
+                                        with col2:
+                                            end_options = [c.display_label() for c in result.end_candidates]
+                                            current_end_idx = next(
+                                                (i for i, c in enumerate(result.end_candidates)
+                                                 if c.timestamp == validated.end_event.timestamp),
+                                                0
+                                            )
+                                            new_end_idx = st.selectbox(
+                                                "End event",
+                                                options=range(len(end_options)),
+                                                format_func=lambda i: end_options[i],
+                                                index=current_end_idx,
+                                                key=f"section_end_{selected_participant}_{section_code}",
+                                            )
+
+                                        # Update if selection changed
+                                        if new_start_idx != current_start_idx or new_end_idx != current_end_idx:
+                                            save_section_selection(
+                                                selected_participant,
+                                                section_code,
+                                                new_start_idx,
+                                                new_end_idx,
+                                            )
+                                            needs_save = True
+
+                                        # Use selected timestamps
+                                        start_ts = result.start_candidates[new_start_idx].timestamp
+                                        end_ts = result.end_candidates[new_end_idx].timestamp
+
+                                # Calculate durations
+                                raw_dur = (normalize_ts(end_ts) - normalize_ts(start_ts)).total_seconds()
+                                excluded = calc_excluded_time(start_ts, end_ts)
+                                event_dur = (raw_dur - excluded) / 60
+
+                                # Calculate RR-based duration (HRV Logger only)
+                                rr_dur = calc_rr_duration(start_ts, end_ts) if is_hrv_logger else None
+
+                                excl_note = f" (excl: {excluded/60:.1f}m)" if excluded > 0 else ""
+
+                                # Build display string with both durations
+                                if rr_dur is not None:
+                                    diff = event_dur - rr_dur
+                                    diff_note = f" (Δ{diff:+.1f}m)" if abs(diff) > 0.1 else ""
+                                    dur_display = f"{event_dur:.1f}m | RR: {rr_dur:.1f}m{diff_note}"
                                 else:
-                                    # Calculate event-based duration
-                                    raw_dur = (normalize_ts(end_ts) - normalize_ts(start_ts)).total_seconds()
-                                    excluded = calc_excluded_time(start_ts, end_ts)
-                                    event_dur = (raw_dur - excluded) / 60
+                                    dur_display = f"{event_dur:.1f}m"
 
-                                    # Calculate RR-based duration (HRV Logger only)
-                                    rr_dur = calc_rr_duration(start_ts, end_ts) if is_hrv_logger else None
+                                # Time range display
+                                start_time = start_ts.strftime("%H:%M:%S") if start_ts else "?"
+                                end_time = end_ts.strftime("%H:%M:%S") if end_ts else "?"
+                                time_range = f"{start_time} - {end_time}"
 
-                                    excl_note = f" (excl: {excluded/60:.1f}m)" if excluded > 0 else ""
-                                    start_evt_note = f"{matched_start_evt} → " if len(start_evts) > 1 else ""
-                                    end_evt_note = f" → {matched_end_evt}" if len(end_evts) > 1 else ""
-
-                                    # Build display string with both durations
-                                    if rr_dur is not None:
-                                        diff = event_dur - rr_dur
-                                        diff_note = f" (Δ{diff:+.1f}m)" if abs(diff) > 0.1 else ""
-                                        dur_display = f"{event_dur:.1f}m | RR: {rr_dur:.1f}m{diff_note}"
-                                    else:
-                                        dur_display = f"{event_dur:.1f}m"
-
-                                    # Check if within tolerance (use event-based duration)
-                                    evt_notes = f" ({start_evt_note}{end_evt_note.strip(' → ')})" if start_evt_note or end_evt_note else ""
+                                # Check if within tolerance
+                                if not result.needs_disambiguation:  # Only show inline for simple cases
                                     if expected_dur > 0 and abs(event_dur - expected_dur) > tolerance:
-                                        st.write(f"**{label}**: {dur_display}{excl_note}{evt_notes} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                        st.write(f"**{label}**: {dur_display}{excl_note} [{time_range}] (expected {expected_dur:.0f}±{tolerance:.0f}m)")
                                         issue_count += 1
                                     else:
-                                        st.write(f"**{label}**: {dur_display}{excl_note}{evt_notes}")
+                                        st.write(f"**{label}**: {dur_display}{excl_note} [{time_range}]")
                                         valid_count += 1
+                                else:
+                                    # For disambiguation cases, show result after the selectors
+                                    if expected_dur > 0 and abs(event_dur - expected_dur) > tolerance:
+                                        st.caption(f"{dur_display}{excl_note} [{time_range}] (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                        issue_count += 1
+                                    else:
+                                        st.caption(f"{dur_display}{excl_note} [{time_range}]")
+                                        valid_count += 1
+
+                            # Auto-save if selections changed
+                            if needs_save:
+                                auto_save_config()
+                                st.rerun()
 
                             # Summary
                             if issue_count == 0 and valid_count > 0:

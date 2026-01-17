@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import streamlit as st
 
@@ -30,6 +33,15 @@ __all__ = [
     "DEFAULT_ID_PATTERN",
     "PREDEFINED_PATTERNS",
     "NEUROKIT_AVAILABLE",
+    # ValidatedSection System
+    "EventCandidate",
+    "ValidatedSection",
+    "SectionValidationResult",
+    "find_event_candidates",
+    "validate_section_for_participant",
+    "get_validated_sections_for_participant",
+    "save_section_selection",
+    "get_section_time_range",
     # Functions
     "get_neurokit",
     "get_matplotlib",
@@ -74,6 +86,341 @@ DEFAULT_CANONICAL_EVENTS = {
     "rest_post_start": [],
     "rest_post_end": [],
 }
+
+
+# ================== ValidatedSection System ==================
+# Centralized section validation to ensure consistent boundaries across all features
+
+
+@dataclass
+class EventCandidate:
+    """A candidate event that could be used as a section boundary."""
+    canonical_name: str
+    raw_label: str
+    timestamp: datetime
+    index: int  # Position in the events list (for disambiguation)
+
+    def display_label(self) -> str:
+        """Human-readable label for UI display."""
+        time_str = self.timestamp.strftime("%H:%M:%S") if self.timestamp else "?"
+        return f"{self.raw_label} @ {time_str}"
+
+
+@dataclass
+class ValidatedSection:
+    """A validated section with explicit event references.
+
+    This is the single source of truth for section boundaries.
+    All features (Analysis, Artifact Detection, Signal Inspection) should use this.
+    """
+    section_name: str  # e.g., "rest_pre", "measurement"
+    start_event: EventCandidate  # The selected start event
+    end_event: EventCandidate  # The selected end event
+    beat_count: int = 0  # Number of RR intervals in this section
+    duration_s: float = 0.0  # Duration in seconds
+    is_user_selected: bool = False  # True if user disambiguated multiple candidates
+
+
+@dataclass
+class SectionValidationResult:
+    """Result of attempting to validate a section for a participant."""
+    section_name: str
+    is_valid: bool
+    validated_section: Optional[ValidatedSection] = None
+    # For disambiguation UI when multiple candidates exist
+    start_candidates: list[EventCandidate] = field(default_factory=list)
+    end_candidates: list[EventCandidate] = field(default_factory=list)
+    needs_disambiguation: bool = False
+    error_message: Optional[str] = None
+
+
+def find_event_candidates(
+    events: list,
+    target_canonical_names: list[str],
+    normalizer,
+) -> list[EventCandidate]:
+    """Find all events that match the target canonical names.
+
+    Args:
+        events: List of event objects (EventStatus, dict, or raw Event)
+        target_canonical_names: List of canonical names to match (e.g., ["rest_pre_start"])
+        normalizer: SectionNormalizer for mapping raw labels
+
+    Returns:
+        List of EventCandidate objects, sorted by timestamp
+    """
+    candidates = []
+
+    for idx, event in enumerate(events):
+        # Handle different event formats
+        if isinstance(event, dict):
+            canonical = event.get("canonical")
+            raw_label = event.get("raw_label", event.get("label", ""))
+            timestamp = event.get("first_timestamp") or event.get("timestamp")
+        else:
+            # Object with attributes (EventStatus, Event, etc.)
+            canonical = getattr(event, "canonical", None)
+            raw_label = getattr(event, "raw_label", None) or getattr(event, "label", "")
+            timestamp = getattr(event, "first_timestamp", None) or getattr(event, "timestamp", None)
+
+            # If no canonical, normalize the raw label
+            if not canonical and raw_label and normalizer:
+                canonical = normalizer.normalize(raw_label)
+
+        if not timestamp:
+            continue
+
+        # Check if this event matches any target
+        if canonical in target_canonical_names or raw_label in target_canonical_names:
+            candidates.append(EventCandidate(
+                canonical_name=canonical or raw_label,
+                raw_label=raw_label,
+                timestamp=timestamp,
+                index=idx,
+            ))
+
+    # Sort by timestamp
+    candidates.sort(key=lambda c: c.timestamp)
+    return candidates
+
+
+def validate_section_for_participant(
+    section_def: dict,
+    events: list,
+    normalizer,
+    rr_intervals: list = None,
+    user_selection: dict = None,
+) -> SectionValidationResult:
+    """Validate a section for a participant, finding matching events.
+
+    This is the SINGLE centralized function for determining section boundaries.
+    All features should use this instead of implementing their own logic.
+
+    Args:
+        section_def: Section definition with start_events/end_events lists
+        events: Participant's events (saved/edited events from session state)
+        normalizer: SectionNormalizer for mapping labels
+        rr_intervals: Optional list of RR intervals to calculate beat count
+        user_selection: Optional dict with {"start_index": int, "end_index": int}
+                        specifying which candidate to use when multiple exist
+
+    Returns:
+        SectionValidationResult with validation status and any candidates for disambiguation
+    """
+    section_name = section_def.get("name", "unknown")
+
+    # Get target event names (support both old and new format)
+    start_event_names = section_def.get("start_events", [])
+    if not start_event_names and "start_event" in section_def:
+        start_event_names = [section_def["start_event"]]
+    end_event_names = section_def.get("end_events", [])
+    if not end_event_names and "end_event" in section_def:
+        end_event_names = [section_def["end_event"]]
+
+    if not start_event_names or not end_event_names:
+        return SectionValidationResult(
+            section_name=section_name,
+            is_valid=False,
+            error_message="Section definition missing start or end events",
+        )
+
+    # Find all matching candidates
+    start_candidates = find_event_candidates(events, start_event_names, normalizer)
+    end_candidates = find_event_candidates(events, end_event_names, normalizer)
+
+    if not start_candidates:
+        return SectionValidationResult(
+            section_name=section_name,
+            is_valid=False,
+            error_message=f"No start event found ({', '.join(start_event_names)})",
+        )
+
+    if not end_candidates:
+        return SectionValidationResult(
+            section_name=section_name,
+            is_valid=False,
+            error_message=f"No end event found ({', '.join(end_event_names)})",
+        )
+
+    # Determine if disambiguation is needed
+    needs_disambiguation = len(start_candidates) > 1 or len(end_candidates) > 1
+
+    # Select which candidate to use
+    if user_selection:
+        # User has explicitly selected
+        start_idx = user_selection.get("start_index", 0)
+        end_idx = user_selection.get("end_index", 0)
+        start_idx = min(start_idx, len(start_candidates) - 1)
+        end_idx = min(end_idx, len(end_candidates) - 1)
+        is_user_selected = True
+    else:
+        # Default: use first candidate
+        start_idx = 0
+        end_idx = 0
+        is_user_selected = False
+
+    selected_start = start_candidates[start_idx]
+    selected_end = end_candidates[end_idx]
+
+    # Validate that start comes before end
+    if selected_start.timestamp >= selected_end.timestamp:
+        return SectionValidationResult(
+            section_name=section_name,
+            is_valid=False,
+            start_candidates=start_candidates,
+            end_candidates=end_candidates,
+            needs_disambiguation=needs_disambiguation,
+            error_message="Start event must come before end event",
+        )
+
+    # Calculate beat count and duration if RR intervals provided
+    beat_count = 0
+    duration_s = 0.0
+    if rr_intervals:
+        for rr in rr_intervals:
+            ts = getattr(rr, "timestamp", None)
+            if ts and selected_start.timestamp <= ts <= selected_end.timestamp:
+                beat_count += 1
+                duration_s += getattr(rr, "rr_ms", 0) / 1000.0
+
+    validated = ValidatedSection(
+        section_name=section_name,
+        start_event=selected_start,
+        end_event=selected_end,
+        beat_count=beat_count,
+        duration_s=duration_s,
+        is_user_selected=is_user_selected,
+    )
+
+    return SectionValidationResult(
+        section_name=section_name,
+        is_valid=True,
+        validated_section=validated,
+        start_candidates=start_candidates,
+        end_candidates=end_candidates,
+        needs_disambiguation=needs_disambiguation,
+    )
+
+
+def get_validated_sections_for_participant(
+    participant_id: str,
+    sections_config: dict,
+    normalizer,
+    rr_intervals: list = None,
+) -> dict[str, SectionValidationResult]:
+    """Get all validated sections for a participant.
+
+    This retrieves saved events from session state and validates all sections.
+    User selections are loaded from session state if available.
+
+    Args:
+        participant_id: The participant ID
+        sections_config: Dict of section definitions (from st.session_state.sections)
+        normalizer: SectionNormalizer for mapping labels
+        rr_intervals: Optional list of RR intervals for beat counting
+
+    Returns:
+        Dict mapping section_name to SectionValidationResult
+    """
+    # Get saved events for this participant
+    saved_events_key = f"events_{participant_id}"
+    saved_events = st.session_state.get(saved_events_key, [])
+
+    if not saved_events:
+        # No saved events - return empty results
+        return {
+            name: SectionValidationResult(
+                section_name=name,
+                is_valid=False,
+                error_message="No events available for participant",
+            )
+            for name in sections_config.keys()
+        }
+
+    # Get any user selections for disambiguation
+    user_selections_key = f"section_selections_{participant_id}"
+    user_selections = st.session_state.get(user_selections_key, {})
+
+    results = {}
+    for section_name, section_def in sections_config.items():
+        # Add name to def for convenience
+        section_def_with_name = {**section_def, "name": section_name}
+
+        # Get user selection for this section if exists
+        user_selection = user_selections.get(section_name)
+
+        result = validate_section_for_participant(
+            section_def=section_def_with_name,
+            events=saved_events,
+            normalizer=normalizer,
+            rr_intervals=rr_intervals,
+            user_selection=user_selection,
+        )
+        results[section_name] = result
+
+    return results
+
+
+def save_section_selection(
+    participant_id: str,
+    section_name: str,
+    start_index: int,
+    end_index: int,
+):
+    """Save user's disambiguation choice for a section.
+
+    Args:
+        participant_id: The participant ID
+        section_name: Name of the section (e.g., "rest_pre")
+        start_index: Index of selected start candidate
+        end_index: Index of selected end candidate
+    """
+    key = f"section_selections_{participant_id}"
+    if key not in st.session_state:
+        st.session_state[key] = {}
+
+    st.session_state[key][section_name] = {
+        "start_index": start_index,
+        "end_index": end_index,
+    }
+
+
+def get_section_time_range(
+    participant_id: str,
+    section_name: str,
+    sections_config: dict,
+    normalizer,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Convenience function to get start/end timestamps for a section.
+
+    This is the ONLY function that should be used to get section boundaries.
+    Replaces all ad-hoc implementations throughout the codebase.
+
+    Args:
+        participant_id: The participant ID
+        section_name: Name of the section
+        sections_config: Dict of section definitions
+        normalizer: SectionNormalizer
+
+    Returns:
+        Tuple of (start_timestamp, end_timestamp), or (None, None) if invalid
+    """
+    if section_name not in sections_config:
+        return None, None
+
+    results = get_validated_sections_for_participant(
+        participant_id=participant_id,
+        sections_config=sections_config,
+        normalizer=normalizer,
+    )
+
+    result = results.get(section_name)
+    if not result or not result.is_valid or not result.validated_section:
+        return None, None
+
+    section = result.validated_section
+    return section.start_event.timestamp, section.end_event.timestamp
+
 
 # Lazy import for neurokit2 and matplotlib (saves ~0.9s on startup)
 NEUROKIT_AVAILABLE = True
@@ -211,6 +558,11 @@ def init_session_state():
                 pid: data.get("manual_events", [])
                 for pid, data in loaded_participants.items()
             }
+            # Load section selections (user disambiguation choices for section boundaries)
+            for pid, data in loaded_participants.items():
+                section_selections = data.get("section_selections", {})
+                if section_selections:
+                    st.session_state[f"section_selections_{pid}"] = section_selections
         else:
             st.session_state.participant_groups = {}
             st.session_state.event_order = {}
@@ -228,9 +580,11 @@ def save_all_config():
 
 
 def save_participant_data():
-    """Save participant-specific data (groups, playlists, labels, event orders, manual events)."""
+    """Save participant-specific data (groups, playlists, labels, event orders, manual events, section selections)."""
     project_path = st.session_state.get("current_project")
     participants_data = {}
+
+    # Collect all participant IDs that have any data
     all_participant_ids = set(
         list(st.session_state.participant_groups.keys()) +
         list(st.session_state.get("participant_playlists", {}).keys()) +
@@ -239,13 +593,24 @@ def save_participant_data():
         list(st.session_state.manual_events.keys())
     )
 
+    # Also include any participants with section selections
+    for key in st.session_state.keys():
+        if key.startswith("section_selections_"):
+            pid = key[len("section_selections_"):]
+            all_participant_ids.add(pid)
+
     for pid in all_participant_ids:
+        # Get section selections for this participant
+        section_selections_key = f"section_selections_{pid}"
+        section_selections = st.session_state.get(section_selections_key, {})
+
         participants_data[pid] = {
             "group": st.session_state.participant_groups.get(pid, "Default"),
             "playlist": st.session_state.get("participant_playlists", {}).get(pid, ""),
             "label": st.session_state.get("participant_labels", {}).get(pid, ""),
             "event_order": st.session_state.event_order.get(pid, []),
             "manual_events": st.session_state.manual_events.get(pid, []),
+            "section_selections": section_selections,  # User-selected section boundaries
         }
 
     save_participants(participants_data, project_path)
@@ -287,18 +652,41 @@ def validate_regex_pattern(pattern):
         return str(e)
 
 
-def extract_section_rr_intervals(recording, section_def, normalizer, saved_events=None):
+def extract_section_rr_intervals(recording, section_def, normalizer, saved_events=None, participant_id=None):
     """Extract RR intervals for a specific section based on start/end events.
 
     Args:
         recording: Recording object with rr_intervals and events
         section_def: Section definition dict with start_events/end_events (lists) or
-                     start_event/end_event (legacy single values)
+                     start_event/end_event (legacy single values). Must include "name" key
+                     for centralized validation.
         normalizer: SectionNormalizer for mapping labels to canonical names
         saved_events: Optional list of saved/edited events (EventStatus objects or dicts).
                      If provided, uses these instead of recording.events.
                      This allows using user-edited events from session state.
+        participant_id: Optional participant ID. If provided, uses centralized validation
+                        which respects user disambiguation selections.
     """
+    section_name = section_def.get("name")
+
+    # If we have participant_id and section_name, use centralized validation for consistency
+    if participant_id and section_name:
+        sections_config = st.session_state.get("sections", {})
+        if section_name in sections_config:
+            start_ts, end_ts = get_section_time_range(
+                participant_id=participant_id,
+                section_name=section_name,
+                sections_config=sections_config,
+                normalizer=normalizer,
+            )
+            if start_ts and end_ts:
+                section_rr = []
+                for rr in recording.rr_intervals:
+                    if rr.timestamp and start_ts <= rr.timestamp <= end_ts:
+                        section_rr.append(rr)
+                return section_rr if section_rr else None
+
+    # Fallback: use legacy logic (for backwards compatibility)
     # Support both old (start_event/end_event) and new (start_events/end_events) format
     start_event_names = section_def.get("start_events", [])
     if not start_event_names and "start_event" in section_def:
