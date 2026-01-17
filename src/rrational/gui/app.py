@@ -2090,10 +2090,109 @@ def cached_quality_analysis(rr_values_tuple, timestamps_tuple):
     return result
 
 
+def generate_artifact_diagnostic_plots(rr_values: list[float]) -> bytes | None:
+    """Generate NeuroKit2 diagnostic plots for artifact detection.
+
+    This creates the same visualization as signal_fixpeaks(show=True):
+    - Artifact types plot (heart period with marked artifacts by type)
+    - Consecutive-difference criterion
+    - Difference-from-median criterion
+    - Subspace classification plots
+
+    Args:
+        rr_values: List of RR intervals in milliseconds
+
+    Returns:
+        PNG image bytes, or None if generation fails
+
+    Raises:
+        Exception: Re-raises any exception with detailed message for debugging
+    """
+    if not NEUROKIT_AVAILABLE:
+        raise ValueError("NeuroKit2 not available for diagnostic plots")
+    if len(rr_values) < 10:
+        raise ValueError(f"Not enough RR values for diagnostic plots: {len(rr_values)}")
+
+    import io
+    import numpy as np
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    # Force Agg backend for figure generation (Streamlit may use different backend)
+    original_backend = matplotlib.get_backend()
+    matplotlib.use('Agg', force=True)
+
+    # Store the current figure list
+    existing_figs = set(plt.get_fignums())
+
+    nk = get_neurokit()
+    rr_array = np.array(rr_values, dtype=float)
+
+    # Create peak indices from RR intervals
+    peak_indices = np.cumsum(rr_array).astype(int)
+    peak_indices = np.insert(peak_indices, 0, 0)
+
+    # Temporarily disable interactive mode and plt.show()
+    was_interactive = plt.isinteractive()
+    plt.ioff()
+
+    # Monkey-patch plt.show to prevent it from doing anything
+    original_show = plt.show
+    plt.show = lambda *args, **kwargs: None
+
+    try:
+        # Run signal_fixpeaks with show=True to generate the diagnostic figure
+        info, corrected_peaks = nk.signal_fixpeaks(
+            peak_indices,
+            sampling_rate=1000,
+            iterative=True,
+            method="Kubios",
+            show=True,
+        )
+
+        # Find the new figure(s) created by signal_fixpeaks
+        new_figs = set(plt.get_fignums()) - existing_figs
+
+        fig = None
+        if new_figs:
+            # Get the first new figure (should be the diagnostic plot)
+            fig_num = min(new_figs)
+            fig = plt.figure(fig_num)
+        else:
+            # Fallback: try to get current figure
+            fig = plt.gcf()
+            if not fig.get_axes():
+                raise RuntimeError("NeuroKit2 signal_fixpeaks did not create any figures")
+
+        # Convert figure to PNG bytes
+        fig.set_size_inches(14, 10)
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
+        buf.seek(0)
+        img_bytes = buf.getvalue()
+
+        # Clean up the figure
+        plt.close(fig)
+
+        return img_bytes
+
+    finally:
+        # Restore plt.show and interactive mode
+        plt.show = original_show
+        if was_interactive:
+            plt.ion()
+        # Restore original backend
+        try:
+            matplotlib.use(original_backend, force=True)
+        except Exception:
+            pass
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "threshold",
                                threshold_pct: float = 0.20, segment_beats: int = 300):
-    """Cache artifact detection results with indices.
+    """Cache artifact detection results with indices AND corrected RR from NeuroKit2.
 
     Args:
         rr_values_tuple: Tuple of RR interval values in ms
@@ -2106,6 +2205,9 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
     Returns dict with artifact indices mapped to timestamps for plotting.
     Note: "lipponen2019" uses NeuroKit2's Kubios method which implements
           Lipponen & Tarvainen (2019) artifact detection algorithm.
+
+    The corrected_rr field contains RR intervals corrected by NeuroKit2's signal_fixpeaks
+    (Kubios algorithm), NOT custom interpolation.
     """
     rr_list = list(rr_values_tuple)
     timestamps_list = list(timestamps_tuple)
@@ -2113,7 +2215,9 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
     if len(rr_list) < 10:
         return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                 "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                "method": method, "segment_stats": []}
+                "indices_by_type": {},
+                "method": method, "segment_stats": [], "corrected_rr": rr_list,
+                "corrected_timestamps": timestamps_list}
 
     try:
         import numpy as np
@@ -2131,7 +2235,22 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                     artifact_indices.append(i)
 
             by_type = {"threshold": len(artifact_indices)}
+            indices_by_type = {}  # Threshold method doesn't categorize artifacts
             segment_stats = []  # No segments for threshold method
+
+            # Use NeuroKit2's signal_fixpeaks for correction (even with threshold detection)
+            corrected_rr = rr_list  # Default to original
+            if NEUROKIT_AVAILABLE and artifact_indices:
+                try:
+                    nk = get_neurokit()
+                    peak_indices = np.cumsum(rr_array).astype(int)
+                    peak_indices = np.insert(peak_indices, 0, 0)
+                    _, corrected_peaks = nk.signal_fixpeaks(
+                        peak_indices, sampling_rate=1000, iterative=True, method="Kubios", show=False
+                    )
+                    corrected_rr = np.diff(corrected_peaks).tolist()
+                except Exception:
+                    pass  # Keep original if correction fails
 
         elif method in ("kubios_segmented", "lipponen2019_segmented"):
             # Segmented Lipponen/Kubios - process long recordings in chunks for better sensitivity
@@ -2139,7 +2258,9 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             if not NEUROKIT_AVAILABLE:
                 return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                         "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                        "method": method, "segment_stats": []}
+                        "indices_by_type": {},
+                        "method": method, "segment_stats": [], "corrected_rr": rr_list,
+                        "corrected_timestamps": timestamps_list}
 
             nk = get_neurokit()
             rr_array = np.array(rr_list, dtype=float)
@@ -2148,6 +2269,7 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             # Initialize combined results
             artifact_indices_set = set()
             by_type = {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0}
+            indices_by_type = {"ectopic": set(), "missed": set(), "extra": set(), "longshort": set()}
             segment_stats = []  # Track per-segment artifact percentages
 
             # Process in overlapping segments for continuity
@@ -2188,6 +2310,7 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                         # Adjust indices to global position
                         global_indices = [i + start_idx for i in indices if 0 <= i < len(segment_rr)]
                         by_type[artifact_type] += len(global_indices)
+                        indices_by_type[artifact_type].update(global_indices)
                         artifact_indices_set.update(global_indices)
                         segment_artifact_indices.update(range(len(indices)))
 
@@ -2212,20 +2335,38 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 start_idx = end_idx - overlap if end_idx < n_beats else n_beats
 
             artifact_indices = sorted(artifact_indices_set)
+            # Convert indices_by_type sets to sorted lists
+            indices_by_type = {k: sorted(v) for k, v in indices_by_type.items()}
+
+            # Get corrected RR from NeuroKit2 for the full recording
+            corrected_rr = rr_list  # Default to original
+            if artifact_indices:
+                try:
+                    peak_indices_full = np.cumsum(rr_array).astype(int)
+                    peak_indices_full = np.insert(peak_indices_full, 0, 0)
+                    _, corrected_peaks = nk.signal_fixpeaks(
+                        peak_indices_full, sampling_rate=1000, iterative=True, method="Kubios", show=False
+                    )
+                    corrected_rr = np.diff(corrected_peaks).tolist()
+                except Exception:
+                    pass  # Keep original if correction fails
 
         elif method in ("kubios", "lipponen2019"):
             # Single-pass Lipponen/Kubios method (Lipponen & Tarvainen, 2019)
             if not NEUROKIT_AVAILABLE:
                 return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                         "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                        "method": method, "segment_stats": []}
+                        "indices_by_type": {},
+                        "method": method, "segment_stats": [], "corrected_rr": rr_list,
+                        "corrected_timestamps": timestamps_list}
 
             nk = get_neurokit()
             rr_array = np.array(rr_list, dtype=float)
             peak_indices = np.cumsum(rr_array).astype(int)
             peak_indices = np.insert(peak_indices, 0, 0)
 
-            info, _ = nk.signal_fixpeaks(
+            # Use BOTH outputs: info for detection, corrected_peaks for correction
+            info, corrected_peaks = nk.signal_fixpeaks(
                 peak_indices,
                 sampling_rate=1000,
                 iterative=True,
@@ -2233,9 +2374,10 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 show=False,
             )
 
-            # Collect all artifact indices
+            # Collect all artifact indices by type
             artifact_indices_set = set()
             by_type = {}
+            indices_by_type = {}
 
             for artifact_type in ["ectopic", "missed", "extra", "longshort"]:
                 indices = info.get(artifact_type, [])
@@ -2244,16 +2386,22 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 elif not isinstance(indices, list):
                     indices = []
                 by_type[artifact_type] = len(indices)
+                indices_by_type[artifact_type] = sorted(indices)
                 artifact_indices_set.update(indices)
 
             artifact_indices = sorted(artifact_indices_set)
             segment_stats = []  # No segments for single-pass methods
 
+            # Get corrected RR from NeuroKit2's corrected peaks
+            corrected_rr = np.diff(corrected_peaks).tolist()
+
         else:
             # Unknown method, fall back to threshold
             artifact_indices = []
             by_type = {}
+            indices_by_type = {}
             segment_stats = []
+            corrected_rr = rr_list  # No correction for unknown method
 
         # Filter to valid range and get timestamps/values
         valid_indices = [i for i in artifact_indices if 0 <= i < len(timestamps_list)]
@@ -2267,17 +2415,22 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
             "total_artifacts": len(valid_indices),
             "artifact_ratio": len(valid_indices) / len(rr_list) if rr_list else 0.0,
             "by_type": by_type,
+            "indices_by_type": indices_by_type,
             "method": method,
             "segment_stats": segment_stats,
+            "corrected_rr": corrected_rr,
+            "corrected_timestamps": timestamps_list,
         }
     except Exception:
         return {"artifact_indices": [], "artifact_timestamps": [], "artifact_rr": [],
                 "total_artifacts": 0, "artifact_ratio": 0.0, "by_type": {},
-                "method": method, "segment_stats": []}
+                "indices_by_type": {},
+                "method": method, "segment_stats": [], "corrected_rr": rr_list,
+                "corrected_timestamps": timestamps_list}
 
 
 @st.cache_data(show_spinner=False, ttl=300)
-def cached_artifact_correction(rr_values_tuple, timestamps_tuple, artifact_indices_tuple):
+def _deprecated_cached_artifact_correction(rr_values_tuple, timestamps_tuple, artifact_indices_tuple):
     """Generate corrected NN intervals by interpolating artifacts.
 
     Uses cubic interpolation to replace artifact values with estimated values
@@ -3684,11 +3837,26 @@ def render_rr_plot_fragment(participant_id: str):
                     parts.append(f"{n_excluded_save} excluded")
                 st.write(" + ".join(parts))
 
+                # Get section_key for display
+                section_key_save = artifact_data_save.get('section_key', '_full')
+                section_display = "Full recording" if section_key_save == "_full" else section_key_save
+                if section_key_save.startswith("custom_"):
+                    section_display = "Custom range"
+
+                if section_key_save != "_full":
+                    st.caption(f"Scope: {section_display}")
+
                 if st.button("Save Artifact Corrections", key=f"sidebar_save_artifacts_{participant_id}",
                             type="primary", width="stretch"):
                     # Get algorithm method and threshold info
                     algo_method = artifact_data_save.get('method', None)
                     algo_threshold = artifact_data_save.get('threshold', None)
+                    # Get scope (v1.2+ feature)
+                    scope_save = artifact_data_save.get('scope', None)
+                    # Get segment_beats for segmented methods
+                    segment_beats_save = artifact_data_save.get('segment_beats', None)
+                    # Get indices_by_type for artifact type categorization
+                    indices_by_type_save = artifact_data_save.get('indices_by_type', None)
 
                     save_path = save_artifact_corrections(
                         participant_id,
@@ -3699,6 +3867,10 @@ def render_rr_plot_fragment(participant_id: str):
                         algorithm_artifacts=algo_indices_save if algo_indices_save else None,
                         algorithm_method=algo_method,
                         algorithm_threshold=algo_threshold,
+                        scope=scope_save,
+                        section_key=section_key_save,
+                        segment_beats=segment_beats_save,
+                        indices_by_type=indices_by_type_save,
                     )
 
                     # Update loaded_info to reflect current saved state
@@ -3743,14 +3915,9 @@ def render_rr_plot_fragment(participant_id: str):
 
                 if st.button("Export NN as CSV", key=f"sidebar_export_nn_{participant_id}",
                             width="stretch"):
-                    # Generate corrected RR values
-                    if all_artifact_idx_nn:
-                        correction_nn = cached_artifact_correction(
-                            tuple(rr_nn), tuple(ts_nn),
-                            tuple(sorted(all_artifact_idx_nn))
-                        )
-                        corrected_rr_nn = correction_nn.get('corrected_rr', rr_nn)
-                    else:
+                    # Use corrected RR from NeuroKit2's signal_fixpeaks (stored in artifact_data)
+                    corrected_rr_nn = artifact_data_nn.get('corrected_rr', rr_nn)
+                    if corrected_rr_nn is None or len(corrected_rr_nn) != len(rr_nn):
                         corrected_rr_nn = rr_nn
 
                     # Create DataFrame for export
@@ -4000,6 +4167,21 @@ def render_rr_plot_fragment(participant_id: str):
             detect_new_key = f"detect_new_artifacts_{participant_id}"
             run_new_detection = st.session_state.get(detect_new_key, False)
 
+            # Track expander state separately - keep open while configuring
+            expander_open_key = f"artifact_expander_open_{participant_id}"
+            # Keep expander open if: explicitly set to open, detection requested, scope is not 'full', or method is segmented
+            current_scope = st.session_state.get(f"frag_artifact_scope_{participant_id}", "full")
+            current_method = st.session_state.get(f"frag_artifact_method_{participant_id}", "threshold")
+            is_configuring = (
+                current_scope != "full" or
+                current_method in ("kubios_segmented", "lipponen2019_segmented")
+            )
+            expander_should_open = (
+                st.session_state.get(expander_open_key, False) or
+                run_new_detection or
+                is_configuring
+            )
+
             # Show saved artifact info if available (Clear button moved to results section)
             if has_saved_artifacts:
                 n_saved = len(saved_artifact_data.get("artifact_indices", []))
@@ -4007,7 +4189,7 @@ def render_rr_plot_fragment(participant_id: str):
                 st.caption(f"Loaded: {n_saved} artifacts ({saved_method})")
 
             # New detection settings (in expander to avoid clutter)
-            with st.expander("Detect New Artifacts", expanded=run_new_detection):
+            with st.expander("Detect New Artifacts", expanded=expander_should_open):
                 # Method display names for dropdown
                 method_options = {
                     "threshold": "Threshold (Malik)",
@@ -4044,18 +4226,18 @@ def render_rr_plot_fragment(participant_id: str):
                         help="Max allowed RR change between beats (20% = Malik method)"
                     ) / 100.0
                     segment_beats = 300  # Default, not used for threshold
+                    is_segmented_method = False
                 elif artifact_method in ("kubios_segmented", "lipponen2019_segmented"):
-                    segment_beats = st.slider(
-                        "Segment size (beats)",
-                        min_value=100, max_value=600, value=300, step=50,
-                        key=f"frag_segment_beats_{participant_id}",
-                        help="Number of beats per segment (~300 = 5 min at 60 BPM)"
-                    )
+                    # For segmented methods, we need segment_beats - will be set after scope selection
                     artifact_threshold = 0.20  # Not used
+                    # Placeholder - will be set after scope selection below
+                    segment_beats = 300
+                    is_segmented_method = True
                 else:
                     # kubios or lipponen2019 single-pass methods
                     artifact_threshold = 0.20  # Not used
                     segment_beats = 300  # Not used
+                    is_segmented_method = False
 
                 # Gap-adjacent beat handling (only for HRV Logger data with gaps)
                 gap_handling_options = {
@@ -4073,6 +4255,238 @@ def render_rr_plot_fragment(participant_id: str):
                     disabled=is_vns_data,
                 )
 
+                # Section-scoped detection
+                st.markdown("---")
+                st.markdown("**Detection Scope**")
+                scope_options = ["full", "section", "custom"]
+                scope_labels = {
+                    "full": "Full recording",
+                    "section": "Selected section",
+                    "custom": "Custom time range",
+                }
+
+                # Check if sections are available for THIS participant
+                # Filter to only sections where this participant has the required start/end events
+                all_sections = st.session_state.get("sections", {})
+                participant_events = st.session_state.participant_events.get(participant_id, {})
+                event_list = participant_events.get("events", [])
+
+                # Get canonical event names for this participant
+                participant_event_names = set()
+                for event in event_list:
+                    if isinstance(event, dict):
+                        if event.get("canonical"):
+                            participant_event_names.add(event["canonical"])
+                        if event.get("raw_label"):
+                            participant_event_names.add(event["raw_label"])
+                    else:
+                        if getattr(event, "canonical", None):
+                            participant_event_names.add(event.canonical)
+                        if getattr(event, "raw_label", None):
+                            participant_event_names.add(event.raw_label)
+
+                # Filter sections to only those where participant has both start and end events
+                available_sections = []
+                for section_name, section_def in all_sections.items():
+                    start_events = section_def.get("start_events", [])
+                    if not start_events and "start_event" in section_def:
+                        start_events = [section_def["start_event"]]
+                    end_events = section_def.get("end_events", [])
+                    if not end_events and "end_event" in section_def:
+                        end_events = [section_def["end_event"]]
+
+                    # Check if participant has at least one start and one end event
+                    has_start = any(e in participant_event_names for e in start_events)
+                    has_end = any(e in participant_event_names for e in end_events)
+                    if has_start and has_end:
+                        available_sections.append(section_name)
+
+                has_sections = len(available_sections) > 0
+
+                artifact_scope = st.radio(
+                    "Scope",
+                    options=scope_options,
+                    format_func=lambda x: scope_labels[x],
+                    horizontal=True,
+                    key=f"frag_artifact_scope_{participant_id}",
+                    help="Run detection on full recording, a specific section, or custom time range.",
+                )
+
+                # Section selector (only shown when scope is "section")
+                selected_section = None
+                custom_start_time = None
+                custom_end_time = None
+
+                if artifact_scope == "section":
+                    if has_sections:
+                        selected_section = st.selectbox(
+                            "Section",
+                            options=available_sections,
+                            key=f"frag_artifact_section_{participant_id}",
+                            help="Select a section for artifact detection.",
+                        )
+                    else:
+                        st.warning("No sections defined. Go to Setup tab to define sections.")
+                        artifact_scope = "full"  # Fall back to full recording
+                elif artifact_scope == "custom":
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        custom_start_time = st.text_input(
+                            "Start (HH:MM:SS)",
+                            value="00:00:00",
+                            key=f"frag_custom_start_{participant_id}",
+                            help="Start time relative to recording start",
+                        )
+                    with col_end:
+                        custom_end_time = st.text_input(
+                            "End (HH:MM:SS)",
+                            value="00:10:00",
+                            key=f"frag_custom_end_{participant_id}",
+                            help="End time relative to recording start",
+                        )
+
+                # Store scope settings in session state for use later
+                st.session_state[f"artifact_scope_settings_{participant_id}"] = {
+                    "scope": artifact_scope,
+                    "selected_section": selected_section,
+                    "custom_start": custom_start_time,
+                    "custom_end": custom_end_time,
+                }
+
+                # Calculate estimated beats for the selected scope (for adaptive sizing)
+                plot_data_for_len = st.session_state.get(f"plot_data_{participant_id}", {})
+                full_rr_values = plot_data_for_len.get('rr_values', [])
+                full_timestamps = plot_data_for_len.get('timestamps', [])
+                n_beats_full = len(full_rr_values)
+
+                # Estimate scoped beats
+                n_beats_scoped = n_beats_full
+                scope_label = "full recording"
+
+                if artifact_scope == "section" and selected_section:
+                    # Estimate section beats from events
+                    sections = st.session_state.get("sections", {})
+                    section_def = sections.get(selected_section, {})
+                    start_event_names = section_def.get("start_events", [])
+                    if not start_event_names and "start_event" in section_def:
+                        start_event_names = [section_def["start_event"]]
+                    end_event_names = section_def.get("end_events", [])
+                    if not end_event_names and "end_event" in section_def:
+                        end_event_names = [section_def["end_event"]]
+
+                    stored_data = st.session_state.participant_events.get(participant_id, {})
+                    all_events = stored_data.get('events', []) + stored_data.get('manual', [])
+                    start_ts = None
+                    end_ts = None
+                    for event in all_events:
+                        canonical = getattr(event, "canonical", None)
+                        timestamp = getattr(event, "first_timestamp", None)
+                        if not timestamp:
+                            continue
+                        if canonical in start_event_names and start_ts is None:
+                            start_ts = timestamp
+                        elif canonical in end_event_names and end_ts is None:
+                            end_ts = timestamp
+
+                    if start_ts and end_ts and full_timestamps:
+                        # Count beats in section
+                        section_beats = sum(1 for ts in full_timestamps if start_ts <= ts <= end_ts)
+                        if section_beats > 0:
+                            n_beats_scoped = section_beats
+                            scope_label = f"section '{selected_section}'"
+
+                elif artifact_scope == "custom" and custom_start_time and custom_end_time:
+                    # Estimate custom range beats
+                    try:
+                        from datetime import timedelta
+                        def parse_time_offset(time_str):
+                            parts = time_str.split(":")
+                            if len(parts) == 3:
+                                h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                                return timedelta(hours=h, minutes=m, seconds=s)
+                            return timedelta(0)
+
+                        start_offset = parse_time_offset(custom_start_time)
+                        end_offset = parse_time_offset(custom_end_time)
+                        if full_timestamps:
+                            recording_start = full_timestamps[0]
+                            start_dt = recording_start + start_offset
+                            end_dt = recording_start + end_offset
+                            custom_beats = sum(1 for ts in full_timestamps if start_dt <= ts <= end_dt)
+                            if custom_beats > 0:
+                                n_beats_scoped = custom_beats
+                                scope_label = f"range {custom_start_time}-{custom_end_time}"
+                    except Exception:
+                        pass  # Keep full recording estimate
+
+                # Segment sizing (only for segmented methods, now with scope-aware adaptive)
+                if is_segmented_method:
+                    st.markdown("---")
+                    st.markdown("**Segment Sizing**")
+
+                    segment_mode = st.radio(
+                        "Mode",
+                        options=["adaptive", "preset", "manual"],
+                        format_func=lambda x: {"adaptive": "Adaptive (recommended)", "preset": "Preset", "manual": "Manual"}[x],
+                        horizontal=True,
+                        key=f"frag_segment_mode_{participant_id}",
+                        help="Adaptive adjusts based on data length. Presets offer quick selection. Manual gives full control."
+                    )
+
+                    scoped_minutes = n_beats_scoped / 60  # Approximate at 60 BPM
+
+                    if segment_mode == "adaptive":
+                        # Adaptive segment size based on scoped data length
+                        if scoped_minutes < 15:
+                            segment_beats = 150
+                            adaptive_label = "Fine"
+                        elif scoped_minutes < 60:
+                            segment_beats = 250
+                            adaptive_label = "Standard"
+                        else:
+                            segment_beats = 350
+                            adaptive_label = "Robust"
+
+                        st.info(f"**{adaptive_label}**: {segment_beats} beats/segment (~{segment_beats/60:.1f} min) for {n_beats_scoped} beats ({scoped_minutes:.0f} min {scope_label})")
+
+                    elif segment_mode == "preset":
+                        preset_options = {
+                            "fine": ("Fine (150 beats)", 150, "More sensitive, for noisy data or short sections"),
+                            "standard": ("Standard (300 beats)", 300, "Balanced sensitivity, recommended for most data"),
+                            "robust": ("Robust (500 beats)", 500, "Less sensitive, for clean data with stable baseline"),
+                        }
+                        preset_choice = st.selectbox(
+                            "Preset",
+                            options=list(preset_options.keys()),
+                            format_func=lambda x: preset_options[x][0],
+                            index=1,
+                            key=f"frag_segment_preset_{participant_id}",
+                            help="\n".join([f"**{v[0]}**: {v[2]}" for v in preset_options.values()])
+                        )
+                        segment_beats = preset_options[preset_choice][1]
+                        st.caption(f"{preset_options[preset_choice][2]} | {n_beats_scoped} beats in {scope_label}")
+
+                    else:  # manual
+                        segment_beats = st.slider(
+                            "Segment size (beats)",
+                            min_value=100, max_value=600, value=300, step=25,
+                            key=f"frag_segment_beats_{participant_id}",
+                            help="Number of beats per segment. Lower = more sensitive, Higher = more robust."
+                        )
+                        st.caption(f"~{segment_beats/60:.1f} min per segment | {n_beats_scoped} beats in {scope_label}")
+
+                # Option to show diagnostic plots (like NeuroKit2's signal_fixpeaks visualization)
+                # Use session state to persist checkbox value across reruns
+                diag_plots_key = f"show_diagnostic_plots_{participant_id}"
+                show_diagnostic_plots = st.checkbox(
+                    "Show diagnostic plots",
+                    value=st.session_state.get(diag_plots_key, False),
+                    key=f"show_artifact_diagnostic_{participant_id}",
+                    help="Show NeuroKit2 diagnostic plots: artifact types, criteria thresholds, and subspace classification"
+                )
+                # Store the checkbox value in session state for detection code to use
+                st.session_state[diag_plots_key] = show_diagnostic_plots
+
                 # Check if there are saved artifact corrections
                 loaded_info_key = f"artifacts_loaded_info_{participant_id}"
                 has_saved_corrections = loaded_info_key in st.session_state
@@ -4087,6 +4501,8 @@ def render_rr_plot_fragment(participant_id: str):
                         if st.button("Replace & Detect", key=f"confirm_detection_{participant_id}", type="primary"):
                             st.session_state[confirm_key] = True
                             st.session_state[detect_new_key] = True
+                            # Store diagnostic plot preference for detection code
+                            st.session_state[f"show_diagnostic_plots_{participant_id}"] = show_diagnostic_plots
                             if f"artifacts_{participant_id}" in st.session_state:
                                 st.session_state[f"artifacts_{participant_id}"]["force_redetect"] = True
                             # Clear saved info since we're replacing
@@ -4100,6 +4516,8 @@ def render_rr_plot_fragment(participant_id: str):
                     if st.button("Run Detection", key=f"run_artifact_detection_{participant_id}", type="primary",
                                 width="stretch"):
                         st.session_state[detect_new_key] = True
+                        # Store diagnostic plot preference for detection code
+                        st.session_state[f"show_diagnostic_plots_{participant_id}"] = show_diagnostic_plots
                         # Clear saved artifacts to force new detection
                         if f"artifacts_{participant_id}" in st.session_state:
                             st.session_state[f"artifacts_{participant_id}"]["force_redetect"] = True
@@ -4430,11 +4848,164 @@ def render_rr_plot_fragment(participant_id: str):
             artifact_result = saved_artifact_data
         elif run_new_detection or force_redetect:
             # User explicitly requested new detection - run it
+            # Get scope settings
+            scope_settings = st.session_state.get(f"artifact_scope_settings_{participant_id}", {"scope": "full"})
+            detection_scope = scope_settings.get("scope", "full")
+
+            # Prepare RR data based on scope
+            rr_for_detection = rr_list
+            timestamps_for_detection = timestamps_list
+            scope_offset = 0  # Index offset for mapping back to full recording
+            scope_info = {"type": "full"}
+
+            if detection_scope == "section" and scope_settings.get("selected_section"):
+                # Get section time range from saved events
+                section_name = scope_settings["selected_section"]
+                sections = st.session_state.get("sections", {})
+                section_def = sections.get(section_name)
+
+                if section_def:
+                    # Get start/end event names from section definition
+                    start_event_names = section_def.get("start_events", [])
+                    if not start_event_names and "start_event" in section_def:
+                        start_event_names = [section_def["start_event"]]
+                    end_event_names = section_def.get("end_events", [])
+                    if not end_event_names and "end_event" in section_def:
+                        end_event_names = [section_def["end_event"]]
+
+                    # Find timestamps from participant events (same location as section validation)
+                    stored_data = st.session_state.participant_events.get(participant_id, {})
+                    all_events = stored_data.get('events', []) + stored_data.get('manual', [])
+                    start_ts = None
+                    end_ts = None
+
+                    for event in all_events:
+                        canonical = getattr(event, "canonical", None)
+                        timestamp = getattr(event, "first_timestamp", None)
+                        if not timestamp:
+                            continue
+                        if canonical in start_event_names and start_ts is None:
+                            start_ts = timestamp
+                        elif canonical in end_event_names and end_ts is None:
+                            end_ts = timestamp
+
+                    if start_ts and end_ts:
+                        # Filter timestamps and RR values to section range
+                        filtered_data = []
+                        for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
+                            if start_ts <= ts <= end_ts:
+                                if not filtered_data:
+                                    scope_offset = idx
+                                filtered_data.append((ts, rr))
+
+                        if filtered_data:
+                            timestamps_for_detection = [d[0] for d in filtered_data]
+                            rr_for_detection = [d[1] for d in filtered_data]
+                            scope_info = {"type": "section", "name": section_name, "offset": scope_offset}
+                        else:
+                            st.warning(f"No data found in section '{section_name}'. Using full recording.")
+                    else:
+                        st.warning(f"Could not find start/end events for section '{section_name}'. Using full recording.")
+
+            elif detection_scope == "custom":
+                # Parse custom time range
+                custom_start = scope_settings.get("custom_start", "00:00:00")
+                custom_end = scope_settings.get("custom_end", "00:10:00")
+
+                try:
+                    from datetime import timedelta
+
+                    def parse_time_offset(time_str):
+                        """Parse HH:MM:SS to timedelta."""
+                        parts = time_str.split(":")
+                        if len(parts) == 3:
+                            h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                            return timedelta(hours=h, minutes=m, seconds=s)
+                        return timedelta(0)
+
+                    start_offset = parse_time_offset(custom_start)
+                    end_offset = parse_time_offset(custom_end)
+
+                    if timestamps_list:
+                        recording_start = timestamps_list[0]
+                        start_dt = recording_start + start_offset
+                        end_dt = recording_start + end_offset
+
+                        # Filter timestamps and RR values
+                        filtered_data = []
+                        for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
+                            if start_dt <= ts <= end_dt:
+                                if not filtered_data:
+                                    scope_offset = idx  # First match is the offset
+                                filtered_data.append((ts, rr))
+
+                        if filtered_data:
+                            timestamps_for_detection = [d[0] for d in filtered_data]
+                            rr_for_detection = [d[1] for d in filtered_data]
+                            scope_info = {"type": "custom", "start": custom_start, "end": custom_end, "offset": scope_offset}
+                        else:
+                            st.warning(f"No data in time range {custom_start} - {custom_end}. Using full recording.")
+                except Exception as e:
+                    st.warning(f"Could not parse time range: {e}. Using full recording.")
+
+            # Run artifact detection
             artifact_result = cached_artifact_detection(
-                tuple(rr_list), tuple(timestamps_list),
+                tuple(rr_for_detection), tuple(timestamps_for_detection),
                 method=artifact_method, threshold_pct=artifact_threshold,
                 segment_beats=segment_beats
             )
+
+            # Always make a copy before modifying (cached result may be immutable)
+            artifact_result = dict(artifact_result)
+
+            # Map artifact indices back to full recording if scope was not full
+            if scope_info["type"] != "full" and scope_info.get("offset", 0) > 0:
+                offset = scope_info["offset"]
+                artifact_result["artifact_indices"] = [i + offset for i in artifact_result.get("artifact_indices", [])]
+                # Also map indices_by_type to global indices
+                if "indices_by_type" in artifact_result:
+                    artifact_result["indices_by_type"] = {
+                        k: [i + offset for i in v]
+                        for k, v in artifact_result["indices_by_type"].items()
+                    }
+                # Rebuild timestamps and RR from full recording indices
+                artifact_result["artifact_timestamps"] = [timestamps_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(timestamps_list)]
+                artifact_result["artifact_rr"] = [rr_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(rr_list)]
+                # Note: corrected_rr is for the scope only, not full recording
+
+            # Store scope info and detection parameters in result
+            artifact_result["scope"] = scope_info
+            artifact_result["segment_beats"] = segment_beats  # Store for segmented methods
+
+            # Derive section_key from scope for section-scoped storage
+            if scope_info["type"] == "section":
+                section_key = scope_info.get("name", "_full")
+            elif scope_info["type"] == "custom":
+                # Use a unique key for custom time ranges
+                section_key = f"custom_{scope_info.get('start', '0')}-{scope_info.get('end', '0')}".replace(":", "")
+            else:
+                section_key = "_full"
+            artifact_result["section_key"] = section_key
+
+            # Generate diagnostic plots if requested
+            if st.session_state.get(f"show_diagnostic_plots_{participant_id}", False):
+                # Use Lipponen methods for diagnostic plots (threshold method doesn't have NK2 diagnostics)
+                if artifact_method in ("kubios", "lipponen2019", "kubios_segmented", "lipponen2019_segmented"):
+                    with st.spinner("Generating diagnostic plots..."):
+                        try:
+                            diag_result = generate_artifact_diagnostic_plots(rr_for_detection)
+                            if diag_result is not None:
+                                st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_result
+                                st.success(f"Diagnostic plots generated: {len(diag_result)} bytes")
+                            else:
+                                st.warning("Diagnostic plots could not be generated (function returned None)")
+                        except Exception as e:
+                            st.error(f"Error generating diagnostic plots: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                else:
+                    st.info(f"Diagnostic plots not available for method '{artifact_method}' (only Lipponen/Kubios methods)")
+
             # Clear the force_redetect flag
             if force_redetect and f"artifacts_{participant_id}" in st.session_state:
                 st.session_state[f"artifacts_{participant_id}"].pop("force_redetect", None)
@@ -4450,6 +5021,11 @@ def render_rr_plot_fragment(participant_id: str):
                 "artifact_ratio": len(saved_artifact_data.get("artifact_indices", [])) / len(rr_list) if rr_list else 0.0,
                 "method": saved_artifact_data.get("method", "loaded"),
                 "by_type": saved_artifact_data.get("by_type", {}),
+                "indices_by_type": saved_artifact_data.get("indices_by_type", {}),
+                "scope": saved_artifact_data.get("scope"),
+                "section_key": saved_artifact_data.get("section_key", "_full"),
+                "segment_beats": saved_artifact_data.get("segment_beats"),
+                "corrected_rr": saved_artifact_data.get("corrected_rr"),
                 "restored_from_save": True,
             }
         else:
@@ -4545,6 +5121,14 @@ def render_rr_plot_fragment(participant_id: str):
             if boundary_count > 0:
                 gap_suffix += f" | {boundary_count} segment boundaries"
 
+            # Show scope info if not full recording
+            scope_info = artifact_result.get("scope") or {"type": "full"}
+            scope_prefix = ""
+            if scope_info.get("type") == "section":
+                scope_prefix = f"[Section: {scope_info.get('name', 'unknown')}] "
+            elif scope_info.get("type") == "custom":
+                scope_prefix = f"[Range: {scope_info.get('start', '?')}-{scope_info.get('end', '?')}] "
+
             # Format method display name
             method_display_names = {
                 "threshold": f"Threshold ({artifact_threshold*100:.0f}%)",
@@ -4559,11 +5143,11 @@ def render_rr_plot_fragment(participant_id: str):
             col_summary, col_clear_btn = st.columns([5, 1])
             with col_summary:
                 if method_used == "threshold":
-                    st.info(f"**{artifact_result['total_artifacts']} artifacts detected** "
+                    st.info(f"{scope_prefix}**{artifact_result['total_artifacts']} artifacts detected** "
                            f"({artifact_result['artifact_ratio']*100:.1f}%) - "
                            f"Method: {method_display}{gap_suffix}")
                 else:
-                    st.info(f"**{artifact_result['total_artifacts']} artifacts detected** "
+                    st.info(f"{scope_prefix}**{artifact_result['total_artifacts']} artifacts detected** "
                            f"({artifact_result['artifact_ratio']*100:.1f}%) - "
                            f"Ectopic: {by_type.get('ectopic', 0)}, "
                            f"Missed: {by_type.get('missed', 0)}, "
@@ -4606,8 +5190,52 @@ def render_rr_plot_fragment(participant_id: str):
                     high_segments = len(df[df["Artifact %"] > 10])
                     st.caption(f"Avg: {avg_pct:.1f}% | Max: {max_pct:.1f}% | Segments >10%: {high_segments}")
 
-            # Add artifact markers to plot (orange X markers)
-            if artifact_result["artifact_timestamps"]:
+            # Display NeuroKit2 diagnostic plots if generated
+            diag_fig_key = f"artifact_diagnostic_fig_{participant_id}"
+            if diag_fig_key in st.session_state and st.session_state[diag_fig_key] is not None:
+                with st.expander("NeuroKit2 Diagnostic Plots", expanded=True):
+                    # diag_fig is PNG image bytes
+                    st.image(st.session_state[diag_fig_key], use_container_width=True)
+                    st.caption(
+                        "**Left column:** Artifact types (top), consecutive-difference criterion (middle), "
+                        "difference-from-median criterion (bottom). "
+                        "**Right column:** Subspace classification showing ectopic (red) and long/short (yellow/green) regions."
+                    )
+                    # Add button to close/clear the diagnostic plots
+                    if st.button("Close diagnostic plots", key=f"close_diag_plots_{participant_id}"):
+                        del st.session_state[diag_fig_key]
+                        st.rerun()
+
+            # Add artifact markers to plot - show by type if available (like NeuroKit2)
+            indices_by_type = artifact_result.get("indices_by_type", {})
+
+            if indices_by_type and any(indices_by_type.values()):
+                # Show artifacts by type with different colors (matching NeuroKit2 visualization)
+                artifact_type_styles = {
+                    "ectopic": {"color": "#FFD700", "symbol": "x", "name": "Ectopic"},  # Gold
+                    "missed": {"color": "#FF4444", "symbol": "x", "name": "Missed (false neg)"},  # Red
+                    "extra": {"color": "#FFEB3B", "symbol": "x", "name": "Extra (false pos)"},  # Light yellow
+                    "longshort": {"color": "#FF00FF", "symbol": "x", "name": "Long/Short"},  # Magenta
+                }
+
+                for artifact_type, indices in indices_by_type.items():
+                    if not indices:
+                        continue
+                    style = artifact_type_styles.get(artifact_type, {"color": "orange", "symbol": "x", "name": artifact_type})
+                    # Get timestamps and RR values for these indices
+                    type_ts = [timestamps_list[i] for i in indices if 0 <= i < len(timestamps_list)]
+                    type_rr = [rr_list[i] for i in indices if 0 <= i < len(rr_list)]
+                    if type_ts:
+                        fig.add_trace(ScatterType(
+                            x=type_ts,
+                            y=type_rr,
+                            mode='markers',
+                            name=f'{style["name"]} ({len(type_ts)})',
+                            marker=dict(size=10, color=style["color"], symbol=style["symbol"], line=dict(width=2)),
+                            hovertemplate=f'Time: %{{x}}<br>RR: %{{y}} ms ({artifact_type.upper()})<extra></extra>'
+                        ))
+            elif artifact_result["artifact_timestamps"]:
+                # Fallback: show all artifacts with single color (threshold method or no type info)
                 fig.add_trace(ScatterType(
                     x=artifact_result["artifact_timestamps"],
                     y=artifact_result["artifact_rr"],
@@ -4652,34 +5280,27 @@ def render_rr_plot_fragment(participant_id: str):
                 plot_idx = art.get('plot_idx', -1)
                 if 0 <= plot_idx < len(rr_list):
                     manual_artifact_indices.append(plot_idx)
-            
-            # Merge algorithm and manual artifact indices (remove duplicates)
-            all_artifact_indices = sorted(set(artifact_result["artifact_indices"] + manual_artifact_indices))
-            
-            # Show corrected preview (interpolated NN intervals) - includes both algorithm and manual artifacts
-            if show_corrected and all_artifact_indices:
-                correction_result = cached_artifact_correction(
-                    tuple(rr_list), tuple(timestamps_list),
-                    tuple(all_artifact_indices)
-                )
-                if correction_result["n_corrected"] > 0:
+
+            # Show corrected preview using NeuroKit2's signal_fixpeaks correction
+            # Note: Manual artifacts are not included in the NeuroKit2 correction
+            algo_count = len(artifact_result["artifact_indices"])
+            if show_corrected and algo_count > 0:
+                corrected_rr = artifact_result.get("corrected_rr", rr_list)
+                if corrected_rr and len(corrected_rr) == len(timestamps_list):
                     fig.add_trace(ScatterType(
                         x=timestamps_list,
-                        y=correction_result["corrected_rr"],
+                        y=corrected_rr,
                         mode='lines',
                         name='Corrected (NN)',
                         line=dict(width=2, color='green', dash='dot'),
                         opacity=0.7,
                         hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
                     ))
-                    algo_count = len(artifact_result["artifact_indices"])
                     manual_count = len(manual_artifact_indices)
-                    if manual_count > 0 and algo_count > 0:
-                        st.success(f"Correction preview: {correction_result['n_corrected']} beats interpolated ({algo_count} algorithm + {manual_count} manual)")
-                    elif manual_count > 0:
-                        st.success(f"Correction preview: {correction_result['n_corrected']} beats interpolated ({manual_count} manual)")
+                    if manual_count > 0:
+                        st.success(f"Correction preview: {algo_count} algorithm artifacts corrected (NeuroKit2 Kubios). {manual_count} manual artifacts marked but not in correction.")
                     else:
-                        st.success(f"Correction preview: {correction_result['n_corrected']} beats interpolated")
+                        st.success(f"Correction preview: {algo_count} artifacts corrected (NeuroKit2 Kubios algorithm)")
         elif artifact_result.get("no_detection_yet"):
             # No detection has been run yet - show instructions
             st.info("No artifact detection yet. Use **Detect New Artifacts** to run detection.")
@@ -5877,25 +6498,45 @@ def main():
                 project_path = st.session_state.get("current_project")
 
                 ready_files = find_rrational_files(selected_participant, data_dir, project_path)
-                saved_artifacts = load_artifact_corrections(selected_participant, data_dir, project_path)
+                saved_artifacts = load_artifact_corrections(selected_participant, data_dir, project_path, section_key=None)
 
                 # Show status badges
                 status_parts = []
                 if ready_files:
                     status_parts.append(f"**{len(ready_files)}** .rrational file(s)")
                 if saved_artifacts:
-                    n_algo = len(saved_artifacts.get("algorithm_artifact_indices", []))
-                    n_manual = len(saved_artifacts.get("manual_artifacts", []))
-                    n_excluded = len(saved_artifacts.get("excluded_artifact_indices", []))
-                    if n_algo or n_manual or n_excluded:
-                        art_parts = []
-                        if n_algo:
-                            art_parts.append(f"**{n_algo}** algorithm")
-                        if n_manual:
-                            art_parts.append(f"**{n_manual}** manual")
-                        if n_excluded:
-                            art_parts.append(f"**{n_excluded}** excluded")
-                        status_parts.append(" + ".join(art_parts) + " artifacts saved")
+                    # Handle v1.3+ format with sections
+                    if "sections" in saved_artifacts:
+                        sections = saved_artifacts.get("sections", {})
+                        n_sections = len(sections)
+                        total_algo = sum(len(s.get("algorithm_artifact_indices", [])) for s in sections.values())
+                        total_manual = sum(len(s.get("manual_artifacts", [])) for s in sections.values())
+                        total_excluded = sum(len(s.get("excluded_artifact_indices", [])) for s in sections.values())
+
+                        if total_algo or total_manual or total_excluded:
+                            art_parts = []
+                            if total_algo:
+                                art_parts.append(f"**{total_algo}** algorithm")
+                            if total_manual:
+                                art_parts.append(f"**{total_manual}** manual")
+                            if total_excluded:
+                                art_parts.append(f"**{total_excluded}** excluded")
+                            section_info = f" ({n_sections} section{'s' if n_sections > 1 else ''})" if n_sections > 1 else ""
+                            status_parts.append(" + ".join(art_parts) + f" artifacts saved{section_info}")
+                    else:
+                        # Legacy format (v1.2 and earlier)
+                        n_algo = len(saved_artifacts.get("algorithm_artifact_indices", []))
+                        n_manual = len(saved_artifacts.get("manual_artifacts", []))
+                        n_excluded = len(saved_artifacts.get("excluded_artifact_indices", []))
+                        if n_algo or n_manual or n_excluded:
+                            art_parts = []
+                            if n_algo:
+                                art_parts.append(f"**{n_algo}** algorithm")
+                            if n_manual:
+                                art_parts.append(f"**{n_manual}** manual")
+                            if n_excluded:
+                                art_parts.append(f"**{n_excluded}** excluded")
+                            status_parts.append(" + ".join(art_parts) + " artifacts saved")
 
                 if status_parts:
                     st.success(f"Saved data: {' | '.join(status_parts)}")
@@ -5906,50 +6547,97 @@ def main():
                 if artifacts_loaded_key not in st.session_state:
                     st.session_state[artifacts_loaded_key] = True  # Mark as loaded
 
-                    from rrational.gui.persistence import load_artifact_corrections, load_artifact_corrections_from_rrational
+                    from rrational.gui.persistence import load_artifact_corrections, load_artifact_corrections_from_rrational, get_merged_artifacts_for_display
                     from rrational.gui.rrational_export import find_rrational_files
 
                     data_dir_load = str(st.session_state.get("data_dir", ""))
                     project_path_load = st.session_state.get("current_project")
 
-                    # Try _artifacts.yml first
+                    # Try _artifacts.yml first - load all sections data
                     saved = load_artifact_corrections(
                         selected_participant,
                         data_dir=data_dir_load,
                         project_path=project_path_load,
+                        section_key=None,  # Get all sections
                     )
 
                     if saved:
                         manual_artifact_key_load = f"manual_artifacts_{selected_participant}"
                         artifact_exclusions_key_load = f"artifact_exclusions_{selected_participant}"
+                        artifacts_key_load = f"artifacts_{selected_participant}"
 
-                        st.session_state[manual_artifact_key_load] = saved.get("manual_artifacts", [])
-                        st.session_state[artifact_exclusions_key_load] = set(saved.get("excluded_artifact_indices", []))
+                        # Handle v1.3+ format with sections
+                        if "sections" in saved:
+                            # Get merged artifacts from all sections for display
+                            merged = get_merged_artifacts_for_display(
+                                selected_participant, data_dir_load, project_path_load
+                            )
+                            st.session_state[manual_artifact_key_load] = merged.get("manual_artifacts", [])
+                            st.session_state[artifact_exclusions_key_load] = set(merged.get("excluded_artifact_indices", []))
 
-                        # Restore algorithm artifacts if present
-                        if "algorithm_artifact_indices" in saved:
-                            artifacts_key_load = f"artifacts_{selected_participant}"
-                            st.session_state[artifacts_key_load] = {
-                                "artifact_indices": saved.get("algorithm_artifact_indices", []),
-                                "method": saved.get("algorithm_method"),
-                                "threshold": saved.get("algorithm_threshold"),
-                                "restored_from_save": True,
-                            }
+                            # For algorithm artifacts, merge and track sections
+                            if merged.get("algorithm_artifact_indices"):
+                                sections_info = merged.get("sections_info", {})
+                                # Get method from first section (they might differ)
+                                first_section = list(sections_info.values())[0] if sections_info else {}
+                                loaded_artifact_data = {
+                                    "artifact_indices": merged.get("algorithm_artifact_indices", []),
+                                    "method": first_section.get("method"),
+                                    "restored_from_save": True,
+                                    "sections_info": sections_info,  # Track per-section info
+                                }
+                                st.session_state[artifacts_key_load] = loaded_artifact_data
 
-                        # Store info for persistent notification
-                        has_any = (saved.get("manual_artifacts") or
-                                  saved.get("excluded_artifact_indices") or
-                                  saved.get("algorithm_artifact_indices"))
-                        if has_any:
-                            st.session_state[f"artifacts_loaded_info_{selected_participant}"] = {
-                                "saved_at": saved.get("saved_at"),
-                                "algorithm_method": saved.get("algorithm_method"),
-                                "algorithm_threshold": saved.get("algorithm_threshold"),
-                                "n_algorithm": len(saved.get("algorithm_artifact_indices", [])),
-                                "n_manual": len(saved.get("manual_artifacts", [])),
-                                "n_excluded": len(saved.get("excluded_artifact_indices", [])),
-                            }
-                            st.toast("Loaded artifact corrections from saved session")
+                            # Store info for persistent notification
+                            total_algo = len(merged.get("algorithm_artifact_indices", []))
+                            total_manual = len(merged.get("manual_artifacts", []))
+                            total_excluded = len(merged.get("excluded_artifact_indices", []))
+                            if total_algo or total_manual or total_excluded:
+                                n_sections = len(saved.get("sections", {}))
+                                st.session_state[f"artifacts_loaded_info_{selected_participant}"] = {
+                                    "saved_at": saved.get("last_modified"),
+                                    "n_algorithm": total_algo,
+                                    "n_manual": total_manual,
+                                    "n_excluded": total_excluded,
+                                    "n_sections": n_sections,
+                                }
+                                section_label = f" from {n_sections} section{'s' if n_sections > 1 else ''}" if n_sections > 1 else ""
+                                st.toast(f"Loaded artifact corrections{section_label}")
+                        else:
+                            # Legacy format (v1.2 and earlier)
+                            st.session_state[manual_artifact_key_load] = saved.get("manual_artifacts", [])
+                            st.session_state[artifact_exclusions_key_load] = set(saved.get("excluded_artifact_indices", []))
+
+                            # Restore algorithm artifacts if present
+                            if "algorithm_artifact_indices" in saved:
+                                loaded_artifact_data = {
+                                    "artifact_indices": saved.get("algorithm_artifact_indices", []),
+                                    "method": saved.get("algorithm_method"),
+                                    "threshold": saved.get("algorithm_threshold"),
+                                    "restored_from_save": True,
+                                    "section_key": saved.get("section_key", "_full"),
+                                }
+                                # Include scope and corrected_rr if present (v1.2+)
+                                if "scope" in saved:
+                                    loaded_artifact_data["scope"] = saved["scope"]
+                                if "corrected_rr" in saved:
+                                    loaded_artifact_data["corrected_rr"] = saved["corrected_rr"]
+                                st.session_state[artifacts_key_load] = loaded_artifact_data
+
+                            # Store info for persistent notification
+                            has_any = (saved.get("manual_artifacts") or
+                                      saved.get("excluded_artifact_indices") or
+                                      saved.get("algorithm_artifact_indices"))
+                            if has_any:
+                                st.session_state[f"artifacts_loaded_info_{selected_participant}"] = {
+                                    "saved_at": saved.get("saved_at"),
+                                    "algorithm_method": saved.get("algorithm_method"),
+                                    "algorithm_threshold": saved.get("algorithm_threshold"),
+                                    "n_algorithm": len(saved.get("algorithm_artifact_indices", [])),
+                                    "n_manual": len(saved.get("manual_artifacts", [])),
+                                    "n_excluded": len(saved.get("excluded_artifact_indices", [])),
+                                }
+                                st.toast("Loaded artifact corrections from saved session")
                     else:
                         # Fallback: try .rrational file
                         ready_files = find_rrational_files(selected_participant, data_dir_load, project_path_load)
@@ -6689,15 +7377,10 @@ def main():
                             algo_indices = set(artifact_result_export.get('artifact_indices', []))
                             manual_indices = set(art.get('plot_idx', -1) for art in manual_artifacts)
                             all_artifact_idx = algo_indices | manual_indices
-                            
-                            # Generate corrected RR values if there are artifacts
-                            if all_artifact_idx:
-                                correction_export = cached_artifact_correction(
-                                    tuple(rr_export), tuple(ts_export),
-                                    tuple(sorted(all_artifact_idx))
-                                )
-                                corrected_rr = correction_export.get('corrected_rr', rr_export)
-                            else:
+
+                            # Use corrected RR from NeuroKit2's signal_fixpeaks (stored in artifact_result)
+                            corrected_rr = artifact_result_export.get('corrected_rr', rr_export)
+                            if corrected_rr is None or len(corrected_rr) != len(rr_export):
                                 corrected_rr = rr_export
                             
                             # Create DataFrame for export
@@ -7612,8 +8295,10 @@ def main():
                             issue_count = 0
 
                             for section_code, section_data in sections_to_validate.items():
-                                start_evt = section_data.get("start_event", "")
-                                # Support both old (end_event) and new (end_events) format
+                                # Support both old (start_event/end_event) and new (start_events/end_events) format
+                                start_evts = section_data.get("start_events", [])
+                                if not start_evts and "start_event" in section_data:
+                                    start_evts = [section_data["start_event"]]
                                 end_evts = section_data.get("end_events", [])
                                 if not end_evts and "end_event" in section_data:
                                     end_evts = [section_data["end_event"]]
@@ -7621,7 +8306,14 @@ def main():
                                 expected_dur = section_data.get("expected_duration_min", 0)
                                 tolerance = section_data.get("tolerance_min", 1)
 
-                                start_ts = event_timestamps.get(start_evt)
+                                # Find the first matching start event
+                                start_ts = None
+                                matched_start_evt = None
+                                for start_evt in start_evts:
+                                    if start_evt in event_timestamps:
+                                        start_ts = event_timestamps[start_evt]
+                                        matched_start_evt = start_evt
+                                        break
 
                                 # Find the first matching end event
                                 end_ts = None
@@ -7633,15 +8325,16 @@ def main():
                                         break
 
                                 # Check event presence
+                                start_evts_str = " | ".join(start_evts) if len(start_evts) > 1 else (start_evts[0] if start_evts else "none")
                                 end_evts_str = " | ".join(end_evts) if len(end_evts) > 1 else (end_evts[0] if end_evts else "none")
                                 if not start_ts and not end_ts:
-                                    st.write(f"**{label}**: missing `{start_evt}` and `{end_evts_str}`")
+                                    st.write(f"**{label}**: missing `{start_evts_str}` and `{end_evts_str}`")
                                     issue_count += 1
                                 elif not start_ts:
-                                    st.write(f"**{label}**: missing `{start_evt}`")
+                                    st.write(f"**{label}**: missing `{start_evts_str}`")
                                     issue_count += 1
                                 elif not end_ts:
-                                    st.write(f"**{label}**: missing any of `{end_evts_str}`")
+                                    st.write(f"**{label}**: missing `{end_evts_str}`")
                                     issue_count += 1
                                 else:
                                     # Calculate event-based duration
@@ -7653,6 +8346,7 @@ def main():
                                     rr_dur = calc_rr_duration(start_ts, end_ts) if is_hrv_logger else None
 
                                     excl_note = f" (excl: {excluded/60:.1f}m)" if excluded > 0 else ""
+                                    start_evt_note = f"{matched_start_evt} → " if len(start_evts) > 1 else ""
                                     end_evt_note = f" → {matched_end_evt}" if len(end_evts) > 1 else ""
 
                                     # Build display string with both durations
@@ -7664,11 +8358,12 @@ def main():
                                         dur_display = f"{event_dur:.1f}m"
 
                                     # Check if within tolerance (use event-based duration)
+                                    evt_notes = f" ({start_evt_note}{end_evt_note.strip(' → ')})" if start_evt_note or end_evt_note else ""
                                     if expected_dur > 0 and abs(event_dur - expected_dur) > tolerance:
-                                        st.write(f"**{label}**: {dur_display}{excl_note}{end_evt_note} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
+                                        st.write(f"**{label}**: {dur_display}{excl_note}{evt_notes} (expected {expected_dur:.0f}±{tolerance:.0f}m)")
                                         issue_count += 1
                                     else:
-                                        st.write(f"**{label}**: {dur_display}{excl_note}{end_evt_note}")
+                                        st.write(f"**{label}**: {dur_display}{excl_note}{evt_notes}")
                                         valid_count += 1
 
                             # Summary

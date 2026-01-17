@@ -786,8 +786,15 @@ def save_artifact_corrections(
     algorithm_artifacts: list[int] | None = None,
     algorithm_method: str | None = None,
     algorithm_threshold: float | None = None,
+    scope: dict | None = None,
+    section_key: str = "_full",
+    segment_beats: int | None = None,
+    indices_by_type: dict[str, list[int]] | None = None,
 ) -> Path:
     """Save artifact corrections (algorithm-detected, manual markings, and exclusions) to YAML.
+
+    Artifacts are stored per-section, allowing independent detection for different parts
+    of the recording. The section_key identifies which section these artifacts belong to.
 
     Storage priority:
     1. If project_path provided: saves to project/data/processed/{participant_id}_artifacts.yml
@@ -803,36 +810,90 @@ def save_artifact_corrections(
         algorithm_artifacts: List of indices detected by algorithm (optional)
         algorithm_method: Detection method used (e.g., "threshold", "malik")
         algorithm_threshold: Threshold value used for detection
+        scope: Detection scope info (type, name/range, offset) (optional)
+        section_key: Section identifier ("_full" for full recording, or section name like "rest_pre")
+        segment_beats: Segment size used for segmented methods (optional)
+        indices_by_type: Dict mapping artifact type to list of indices (ectopic, missed, extra, longshort)
 
     Returns:
         Path to the saved file
     """
     from datetime import datetime
 
-    # Serialize data
-    output_data = {
-        "participant_id": participant_id,
-        "format_version": "1.1",
-        "source_type": "rrational_toolkit",
-        "saved_at": datetime.now().isoformat(),
-        "manual_artifacts": manual_artifacts,
-        "excluded_artifact_indices": list(artifact_exclusions) if artifact_exclusions else [],
-    }
-
-    # Add algorithm-detected artifacts if provided
-    if algorithm_artifacts is not None:
-        output_data["algorithm_artifact_indices"] = list(algorithm_artifacts)
-        if algorithm_method:
-            output_data["algorithm_method"] = algorithm_method
-        if algorithm_threshold is not None:
-            output_data["algorithm_threshold"] = algorithm_threshold
-
     # Use the same processed directory as .rrational files
     processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
     artifact_file = processed_dir / f"{participant_id}_artifacts.yml"
 
+    # Load existing data if file exists (to preserve other sections)
+    existing_data = {}
+    if artifact_file.exists():
+        try:
+            with open(artifact_file, "r", encoding="utf-8") as f:
+                existing_data = yaml.safe_load(f) or {}
+        except Exception:
+            existing_data = {}
+
+    # Migrate old format (v1.2 and earlier) to new section-based format (v1.3)
+    if existing_data.get("format_version", "1.0") < "1.3" and "sections" not in existing_data:
+        # Old format had artifacts at root level - migrate to "_full" section
+        if "algorithm_artifact_indices" in existing_data or "manual_artifacts" in existing_data:
+            old_section_data = {
+                "algorithm_artifact_indices": existing_data.get("algorithm_artifact_indices", []),
+                "algorithm_method": existing_data.get("algorithm_method"),
+                "algorithm_threshold": existing_data.get("algorithm_threshold"),
+                "manual_artifacts": existing_data.get("manual_artifacts", []),
+                "excluded_artifact_indices": existing_data.get("excluded_artifact_indices", []),
+                "scope": existing_data.get("scope"),
+                "saved_at": existing_data.get("saved_at"),
+            }
+            existing_data = {
+                "participant_id": participant_id,
+                "format_version": "1.3",
+                "source_type": "rrational_toolkit",
+                "sections": {"_full": old_section_data},
+            }
+
+    # Ensure sections dict exists
+    if "sections" not in existing_data:
+        existing_data["sections"] = {}
+
+    # Build section data
+    section_data = {
+        "algorithm_artifact_indices": list(algorithm_artifacts) if algorithm_artifacts is not None else [],
+        "algorithm_method": algorithm_method,
+        "algorithm_threshold": algorithm_threshold,
+        "manual_artifacts": manual_artifacts,
+        "excluded_artifact_indices": list(artifact_exclusions) if artifact_exclusions else [],
+        "scope": scope,
+        "saved_at": datetime.now().isoformat(),
+    }
+
+    # Add optional fields
+    if segment_beats is not None:
+        section_data["segment_beats"] = segment_beats
+    if indices_by_type is not None:
+        section_data["indices_by_type"] = indices_by_type
+
+    # Handle overlapping sections: newer detection replaces overlapping older ones
+    # Rule 1: Saving "_full" clears all section-specific artifacts (full replaces everything)
+    # Rule 2: Saving a specific section clears "_full" (section-specific invalidates full)
+    if section_key == "_full":
+        # Clear all other sections - full recording detection replaces everything
+        existing_data["sections"] = {}
+    else:
+        # Clear "_full" if it exists - we're now doing section-specific detection
+        if "_full" in existing_data["sections"]:
+            del existing_data["sections"]["_full"]
+
+    # Update section in existing data
+    existing_data["sections"][section_key] = section_data
+    existing_data["participant_id"] = participant_id
+    existing_data["format_version"] = "1.3"
+    existing_data["source_type"] = "rrational_toolkit"
+    existing_data["last_modified"] = datetime.now().isoformat()
+
     with open(artifact_file, "w", encoding="utf-8") as f:
-        yaml.safe_dump(output_data, f, default_flow_style=False, allow_unicode=True)
+        yaml.safe_dump(existing_data, f, default_flow_style=False, allow_unicode=True)
 
     return artifact_file
 
@@ -841,16 +902,28 @@ def load_artifact_corrections(
     participant_id: str,
     data_dir: str | None = None,
     project_path: Path | None = None,
+    section_key: str | None = None,
 ) -> dict[str, Any] | None:
     """Load saved artifact corrections from YAML.
 
     Uses the same processed directory as .rrational files (via get_processed_dir).
     Also checks ~/.rrational/ as fallback for legacy files.
 
+    Args:
+        participant_id: The participant ID
+        data_dir: Optional data directory
+        project_path: Project path (takes priority if provided)
+        section_key: If provided, loads only this section. If None, returns all sections data.
+
     Returns:
-        Dict with 'manual_artifacts' (list), 'excluded_artifact_indices' (list),
-        and optionally 'algorithm_artifact_indices' (list), 'algorithm_method' (str),
-        'algorithm_threshold' (float), 'saved_at' (str), or None if no saved corrections exist.
+        For v1.3+ files with section_key specified:
+            Dict with section's artifact data (algorithm_artifact_indices, manual_artifacts, etc.)
+        For v1.3+ files without section_key:
+            Dict with 'sections' containing all sections, plus 'format_version' and metadata
+        For legacy files (v1.2 and earlier):
+            Dict with 'manual_artifacts' (list), 'excluded_artifact_indices' (list),
+            and optionally other fields
+        Returns None if no saved corrections exist.
     """
     # Primary location: same as .rrational files
     processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
@@ -864,10 +937,40 @@ def load_artifact_corrections(
             with open(artifact_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
 
+            # Handle v1.3+ format with sections
+            if data.get("format_version", "1.0") >= "1.3" and "sections" in data:
+                if section_key is not None:
+                    # Return specific section data
+                    section_data = data.get("sections", {}).get(section_key)
+                    if section_data:
+                        return {
+                            "manual_artifacts": section_data.get("manual_artifacts", []),
+                            "excluded_artifact_indices": section_data.get("excluded_artifact_indices", []),
+                            "algorithm_artifact_indices": section_data.get("algorithm_artifact_indices", []),
+                            "algorithm_method": section_data.get("algorithm_method"),
+                            "algorithm_threshold": section_data.get("algorithm_threshold"),
+                            "scope": section_data.get("scope"),
+                            "corrected_rr": section_data.get("corrected_rr"),
+                            "segment_beats": section_data.get("segment_beats"),
+                            "indices_by_type": section_data.get("indices_by_type", {}),
+                            "saved_at": section_data.get("saved_at"),
+                            "section_key": section_key,
+                        }
+                    return None
+                else:
+                    # Return full data with sections
+                    return {
+                        "format_version": data.get("format_version", "1.3"),
+                        "sections": data.get("sections", {}),
+                        "last_modified": data.get("last_modified"),
+                    }
+
+            # Legacy format (v1.2 and earlier) - no sections
             result = {
                 "manual_artifacts": data.get("manual_artifacts", []),
                 "excluded_artifact_indices": data.get("excluded_artifact_indices", []),
                 "saved_at": data.get("saved_at"),
+                "section_key": "_full",  # Legacy data is always full recording
             }
 
             # Include algorithm artifacts if present (format version 1.1+)
@@ -876,9 +979,110 @@ def load_artifact_corrections(
                 result["algorithm_method"] = data.get("algorithm_method")
                 result["algorithm_threshold"] = data.get("algorithm_threshold")
 
+            # Include scope and corrected_rr if present (format version 1.2+)
+            if "scope" in data:
+                result["scope"] = data.get("scope")
+            if "corrected_rr" in data:
+                result["corrected_rr"] = data.get("corrected_rr")
+
             return result
 
     return None
+
+
+def list_artifact_sections(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> list[str]:
+    """List all sections that have saved artifact data for a participant.
+
+    Returns:
+        List of section keys (e.g., ["_full", "rest_pre", "music_1"])
+        Returns empty list if no artifact data exists.
+    """
+    data = load_artifact_corrections(participant_id, data_dir, project_path, section_key=None)
+    if data is None:
+        return []
+
+    # v1.3+ format with sections
+    if "sections" in data:
+        return list(data["sections"].keys())
+
+    # Legacy format - only has full recording
+    return ["_full"]
+
+
+def get_merged_artifacts_for_display(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> dict[str, Any]:
+    """Get merged artifact data from all sections for display on plot.
+
+    This combines artifacts from all sections into a single dict for plotting,
+    while tracking which section each artifact belongs to.
+
+    Returns:
+        Dict with:
+        - 'algorithm_artifact_indices': list of all algorithm-detected artifact indices
+        - 'manual_artifacts': list of all manual artifacts
+        - 'excluded_artifact_indices': list of all excluded indices
+        - 'sections_info': dict mapping section_key to summary info
+    """
+    data = load_artifact_corrections(participant_id, data_dir, project_path, section_key=None)
+    if data is None:
+        return {
+            "algorithm_artifact_indices": [],
+            "manual_artifacts": [],
+            "excluded_artifact_indices": [],
+            "sections_info": {},
+        }
+
+    all_algo = []
+    all_manual = []
+    all_excluded = []
+    sections_info = {}
+
+    # v1.3+ format with sections
+    if "sections" in data:
+        for section_key, section_data in data["sections"].items():
+            algo_indices = section_data.get("algorithm_artifact_indices", [])
+            manual = section_data.get("manual_artifacts", [])
+            excluded = section_data.get("excluded_artifact_indices", [])
+
+            all_algo.extend(algo_indices)
+            all_manual.extend(manual)
+            all_excluded.extend(excluded)
+
+            sections_info[section_key] = {
+                "algorithm_count": len(algo_indices),
+                "manual_count": len(manual),
+                "excluded_count": len(excluded),
+                "method": section_data.get("algorithm_method"),
+                "scope": section_data.get("scope"),
+                "saved_at": section_data.get("saved_at"),
+            }
+    else:
+        # Legacy format
+        all_algo = data.get("algorithm_artifact_indices", [])
+        all_manual = data.get("manual_artifacts", [])
+        all_excluded = data.get("excluded_artifact_indices", [])
+        sections_info["_full"] = {
+            "algorithm_count": len(all_algo),
+            "manual_count": len(all_manual),
+            "excluded_count": len(all_excluded),
+            "method": data.get("algorithm_method"),
+            "scope": data.get("scope"),
+            "saved_at": data.get("saved_at"),
+        }
+
+    return {
+        "algorithm_artifact_indices": all_algo,
+        "manual_artifacts": all_manual,
+        "excluded_artifact_indices": all_excluded,
+        "sections_info": sections_info,
+    }
 
 
 def delete_artifact_corrections(

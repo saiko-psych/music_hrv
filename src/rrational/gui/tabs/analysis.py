@@ -1617,15 +1617,22 @@ def _render_music_section_analysis():
                     # Apply artifact correction if requested
                     if apply_correction:
                         try:
-                            peaks_corrected, info = nk.signal_fixpeaks(
-                                {"ECG_R_Peaks": list(range(len(rr_values)))},
+                            import numpy as np
+                            # Convert RR intervals to peak indices for signal_fixpeaks
+                            rr_array = np.array(rr_values, dtype=float)
+                            peak_indices = np.cumsum(rr_array).astype(int)
+                            peak_indices = np.insert(peak_indices, 0, 0)
+
+                            # Call signal_fixpeaks with correct format
+                            info, corrected_peaks = nk.signal_fixpeaks(
+                                peak_indices,
                                 sampling_rate=1000,
                                 iterative=True,
-                                method="kubios"
+                                method="Kubios",
+                                show=False,
                             )
-                            # Reconstruct RR from corrected peaks
-                            rr_values = [rr_values[i] for i in range(len(rr_values))
-                                        if i not in info.get("artifacts", [])]
+                            # Use corrected RR intervals from NeuroKit2
+                            rr_values = list(np.diff(corrected_peaks))
                         except Exception:
                             pass  # Use original if correction fails
 
