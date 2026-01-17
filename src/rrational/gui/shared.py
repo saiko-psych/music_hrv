@@ -323,8 +323,10 @@ def get_validated_sections_for_participant(
         Dict mapping section_name to SectionValidationResult
     """
     # Get saved events for this participant
-    saved_events_key = f"events_{participant_id}"
-    saved_events = st.session_state.get(saved_events_key, [])
+    # Events are stored in participant_events[participant_id] dict with 'events' and 'manual' keys
+    participant_events = st.session_state.get("participant_events", {})
+    participant_data = participant_events.get(participant_id, {})
+    saved_events = participant_data.get("events", []) + participant_data.get("manual", [])
 
     if not saved_events:
         # No saved events - return empty results

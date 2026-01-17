@@ -8822,6 +8822,20 @@ def main():
                             gap_duration_min = total_gap_ms / 1000 / 60
                             total_rr_gap_min = rr_duration_min + gap_duration_min
 
+                            # Build event timestamp lookup for Data Integrity Check
+                            integrity_stored_data = st.session_state.participant_events.get(selected_participant, {})
+                            integrity_all_evts = integrity_stored_data.get('events', []) + integrity_stored_data.get('manual', [])
+                            event_timestamps = {}
+                            for evt in integrity_all_evts:
+                                if hasattr(evt, 'canonical') and hasattr(evt, 'first_timestamp'):
+                                    if evt.canonical and evt.first_timestamp:
+                                        event_timestamps[evt.canonical] = evt.first_timestamp
+                                elif isinstance(evt, dict):
+                                    canonical = evt.get("canonical")
+                                    timestamp = evt.get("first_timestamp")
+                                    if canonical and timestamp:
+                                        event_timestamps[canonical] = timestamp
+
                             # Get event-based duration (first to last event)
                             if event_timestamps:
                                 all_ts = [ts for ts in event_timestamps.values() if ts]
