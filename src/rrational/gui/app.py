@@ -4548,6 +4548,9 @@ def render_rr_plot_fragment(participant_id: str):
                 n_beats_scoped = n_beats_full
                 scope_label = "full recording"
 
+                # Track actual duration for accurate display (not just beats/60)
+                scoped_duration_min = None
+
                 if artifact_scope == "section" and selected_section:
                     # Use centralized validation to get section boundaries
                     from rrational.gui.shared import get_section_time_range
@@ -4566,6 +4569,8 @@ def render_rr_plot_fragment(participant_id: str):
                         section_beats = sum(1 for ts in full_timestamps if start_ts <= ts <= end_ts)
                         if section_beats > 0:
                             n_beats_scoped = section_beats
+                            # Calculate actual duration from timestamps
+                            scoped_duration_min = (end_ts - start_ts).total_seconds() / 60
                             # Show the actual time range being used
                             start_str = start_ts.strftime("%H:%M:%S") if start_ts else "?"
                             end_str = end_ts.strftime("%H:%M:%S") if end_ts else "?"
@@ -4612,7 +4617,8 @@ def render_rr_plot_fragment(participant_id: str):
                         help="Adaptive adjusts based on data length. Presets offer quick selection. Manual gives full control."
                     )
 
-                    scoped_minutes = n_beats_scoped / 60  # Approximate at 60 BPM
+                    # Use actual duration if available, otherwise estimate from beats
+                    scoped_minutes = scoped_duration_min if scoped_duration_min else (n_beats_scoped / 60)
 
                     if segment_mode == "adaptive":
                         # Adaptive segment size based on scoped data length
