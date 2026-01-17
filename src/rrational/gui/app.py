@@ -2506,10 +2506,11 @@ def run_segmented_artifact_detection_at_gaps(
     all_artifact_indices = []
     all_indices_by_type = {"ectopic": [], "missed": [], "extra": [], "longshort": []}
     all_by_type = {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0}
-    all_segment_stats = []
+    all_segment_stats = []  # Lipponen method's internal segment stats
+    gap_segment_stats = []  # Per-gap-segment summary stats
     all_corrected_rr = list(rr_values)  # Start with original values
 
-    for seg_start, seg_end in segments:
+    for seg_idx, (seg_start, seg_end) in enumerate(segments):
         # Extract segment data
         seg_rr = rr_values[seg_start:seg_end]
         seg_ts = timestamps[seg_start:seg_end]
@@ -2546,6 +2547,20 @@ def run_segmented_artifact_detection_at_gaps(
         if seg_corrected and len(seg_corrected) == (seg_end - seg_start):
             all_corrected_rr[seg_start:seg_end] = seg_corrected
 
+        # Track per-gap-segment summary stats
+        seg_n_artifacts = len(seg_artifact_indices)
+        seg_n_beats = seg_end - seg_start
+        seg_artifact_pct = (seg_n_artifacts / seg_n_beats * 100) if seg_n_beats > 0 else 0.0
+        gap_segment_stats.append({
+            "gap_segment": seg_idx + 1,
+            "start_beat": seg_start,
+            "end_beat": seg_end,
+            "n_beats": seg_n_beats,
+            "n_artifacts": seg_n_artifacts,
+            "artifact_pct": round(seg_artifact_pct, 2),
+            "by_type": dict(seg_result.get("by_type", {})),
+        })
+
     # Build merged result
     total_artifacts = len(all_artifact_indices)
     artifact_ratio = total_artifacts / len(rr_values) if rr_values else 0.0
@@ -2559,7 +2574,8 @@ def run_segmented_artifact_detection_at_gaps(
         "by_type": all_by_type,
         "indices_by_type": all_indices_by_type,
         "method": method,
-        "segment_stats": all_segment_stats,
+        "segment_stats": all_segment_stats,  # Lipponen method's internal segments
+        "gap_segment_stats": gap_segment_stats,  # Per-gap-segment summary
         "corrected_rr": all_corrected_rr,
         "corrected_timestamps": timestamps,
         "gap_segments": segments,
@@ -5171,12 +5187,35 @@ def render_rr_plot_fragment(participant_id: str):
                 if artifact_method in ("kubios", "lipponen2019", "kubios_segmented", "lipponen2019_segmented"):
                     with st.spinner("Generating diagnostic plots..."):
                         try:
-                            diag_result = generate_artifact_diagnostic_plots(rr_for_detection)
-                            if diag_result is not None:
-                                st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_result
-                                st.success(f"Diagnostic plots generated: {len(diag_result)} bytes")
+                            # Check if we have gap-separated segments
+                            gap_segments = artifact_result.get("gap_segments", [])
+                            if gap_segments and len(gap_segments) > 1:
+                                # Generate one diagnostic plot per gap-segment
+                                diag_plots = []
+                                for seg_idx, (seg_start, seg_end) in enumerate(gap_segments):
+                                    seg_rr = rr_for_detection[seg_start:seg_end]
+                                    if len(seg_rr) >= 10:
+                                        seg_diag = generate_artifact_diagnostic_plots(seg_rr)
+                                        if seg_diag:
+                                            diag_plots.append({
+                                                "segment": seg_idx + 1,
+                                                "start": seg_start,
+                                                "end": seg_end,
+                                                "image": seg_diag,
+                                            })
+                                if diag_plots:
+                                    st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_plots
+                                    st.success(f"Diagnostic plots generated for {len(diag_plots)} gap-segments")
+                                else:
+                                    st.warning("No diagnostic plots could be generated (segments too small)")
                             else:
-                                st.warning("Diagnostic plots could not be generated (function returned None)")
+                                # Single diagnostic plot for entire scope
+                                diag_result = generate_artifact_diagnostic_plots(rr_for_detection)
+                                if diag_result is not None:
+                                    st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_result
+                                    st.success(f"Diagnostic plots generated: {len(diag_result)} bytes")
+                                else:
+                                    st.warning("Diagnostic plots could not be generated (function returned None)")
                         except Exception as e:
                             st.error(f"Error generating diagnostic plots: {e}")
                             import traceback
@@ -5344,10 +5383,45 @@ def render_rr_plot_fragment(participant_id: str):
                         del st.session_state[loaded_info_key]
                     st.rerun()  # Full rerun to update Signal Inspection section
 
-            # Display per-segment artifact percentages for segmented methods
+            # Display per-gap-segment stats (from independent segment analysis)
+            gap_segment_stats = artifact_result.get("gap_segment_stats", [])
+            if gap_segment_stats and len(gap_segment_stats) > 1:
+                with st.expander(f"Gap-Separated Segments ({len(gap_segment_stats)} segments)", expanded=True):
+                    st.caption("Each segment between gaps was analyzed independently:")
+                    # Create display DataFrame
+                    gap_df_data = []
+                    for gs in gap_segment_stats:
+                        by_type = gs.get("by_type", {})
+                        gap_df_data.append({
+                            "Segment": gs["gap_segment"],
+                            "Beats": f"{gs['start_beat']}-{gs['end_beat']}",
+                            "N Beats": gs["n_beats"],
+                            "Artifacts": gs["n_artifacts"],
+                            "Rate %": gs["artifact_pct"],
+                            "Ectopic": by_type.get("ectopic", 0),
+                            "Missed": by_type.get("missed", 0),
+                            "Extra": by_type.get("extra", 0),
+                            "Long/Short": by_type.get("longshort", 0),
+                        })
+                    gap_df = get_pandas().DataFrame(gap_df_data)
+
+                    def highlight_high_artifacts_gap(row):
+                        if row["Rate %"] > 10:
+                            return ["background-color: #ffcccc"] * len(row)
+                        elif row["Rate %"] > 5:
+                            return ["background-color: #fff3cd"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        gap_df.style.apply(highlight_high_artifacts_gap, axis=1).format({"Rate %": "{:.1f}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            # Display per-segment artifact percentages for segmented methods (Lipponen internal segments)
             segment_stats = artifact_result.get("segment_stats", [])
             if segment_stats:
-                with st.expander(f"Segment Artifact Details ({len(segment_stats)} segments)"):
+                with st.expander(f"Lipponen Method Segment Details ({len(segment_stats)} segments)"):
                     # Filter to only the expected columns (remove extra fields like global_offset)
                     expected_keys = ["segment", "start_beat", "end_beat", "n_beats", "n_artifacts", "artifact_pct"]
                     filtered_stats = [{k: s.get(k) for k in expected_keys if k in s} for s in segment_stats]
@@ -5377,18 +5451,39 @@ def render_rr_plot_fragment(participant_id: str):
             # Display NeuroKit2 diagnostic plots if generated
             diag_fig_key = f"artifact_diagnostic_fig_{participant_id}"
             if diag_fig_key in st.session_state and st.session_state[diag_fig_key] is not None:
-                with st.expander("NeuroKit2 Diagnostic Plots", expanded=True):
-                    # diag_fig is PNG image bytes
-                    st.image(st.session_state[diag_fig_key], use_container_width=True)
-                    st.caption(
-                        "**Left column:** Artifact types (top), consecutive-difference criterion (middle), "
-                        "difference-from-median criterion (bottom). "
-                        "**Right column:** Subspace classification showing ectopic (red) and long/short (yellow/green) regions."
-                    )
-                    # Add button to close/clear the diagnostic plots
-                    if st.button("Close diagnostic plots", key=f"close_diag_plots_{participant_id}"):
-                        del st.session_state[diag_fig_key]
-                        st.rerun()
+                diag_data = st.session_state[diag_fig_key]
+
+                # Check if it's a list of segment plots or a single image
+                if isinstance(diag_data, list):
+                    # Multiple gap-segment plots
+                    with st.expander(f"NeuroKit2 Diagnostic Plots ({len(diag_data)} gap-segments)", expanded=True):
+                        st.caption(
+                            "Each gap-separated segment was analyzed independently. "
+                            "**Left column:** Artifact types (top), consecutive-difference criterion (middle), "
+                            "difference-from-median criterion (bottom). "
+                            "**Right column:** Subspace classification showing ectopic (red) and long/short (yellow/green) regions."
+                        )
+                        for plot_info in diag_data:
+                            st.markdown(f"**Gap Segment {plot_info['segment']}** (beats {plot_info['start']}-{plot_info['end']})")
+                            st.image(plot_info["image"], use_container_width=True)
+                            st.markdown("---")
+                        # Add button to close/clear the diagnostic plots
+                        if st.button("Close diagnostic plots", key=f"close_diag_plots_{participant_id}"):
+                            del st.session_state[diag_fig_key]
+                            st.rerun()
+                else:
+                    # Single diagnostic plot (bytes)
+                    with st.expander("NeuroKit2 Diagnostic Plots", expanded=True):
+                        st.image(diag_data, use_container_width=True)
+                        st.caption(
+                            "**Left column:** Artifact types (top), consecutive-difference criterion (middle), "
+                            "difference-from-median criterion (bottom). "
+                            "**Right column:** Subspace classification showing ectopic (red) and long/short (yellow/green) regions."
+                        )
+                        # Add button to close/clear the diagnostic plots
+                        if st.button("Close diagnostic plots", key=f"close_diag_plots_{participant_id}"):
+                            del st.session_state[diag_fig_key]
+                            st.rerun()
 
             # Add artifact markers to plot - show by type if available (like NeuroKit2)
             indices_by_type = artifact_result.get("indices_by_type", {})
