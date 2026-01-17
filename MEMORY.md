@@ -333,6 +333,51 @@ Check background task output for actual port: `Local URL: http://localhost:850X`
 
 ---
 
+## Session 2026-01-17: Fix Project Config Persistence (Issue #23)
+
+### Version Tag: `v0.7.4`
+
+### Bug Fix: Groups/Events Not Saving to Project Folder
+
+**Problem:** User reported that groups and events created in a new project were lost on page reload.
+
+**Root Cause:** Save functions in `shared.py`, `data.py`, and `app.py` were not passing `project_path` when saving. This caused config to be saved to `~/.rrational/` (global) instead of `project/config/` (project folder).
+
+**Files Fixed:**
+- `src/rrational/gui/shared.py`:
+  - `save_all_config()` - now uses `project_path = st.session_state.get("current_project")`
+  - `save_participant_data()` - now uses `project_path`
+  - `init_session_state()` - now uses `project_path` when loading (consistency fix)
+- `src/rrational/gui/tabs/data.py`:
+  - CSV import save calls now pass `project_path`
+- `src/rrational/gui/app.py`:
+  - Synonym tagging `save_events()` call now passes `project_path`
+- `src/rrational/gui/persistence.py`:
+  - Updated `_get_config_path()` type hint to `Path | str | None` for cross-platform compatibility
+
+### Additional Improvements:
+
+1. **Project name in header**: Added prominent "Project: {name}" heading below main title
+2. **Documentation updates**:
+   - Fixed VNS Analyse description: "iOS app" (not "Windows software")
+   - Added app links to README.md and help_text.py:
+     - HRV Logger: https://www.hrv.tools/hrv-logger-faq.html
+     - VNS Analyse: https://apps.apple.com/de/app/vns-analyse/id990667927
+3. **GitHub workflow**: Added automatic priority labeling for issues
+
+### Testing Results:
+- ✅ All 18 tests passing
+- ✅ Cross-platform path handling verified (uses pathlib.Path)
+
+### Commits:
+- `660f1f0` - fix: save groups/events to project folder instead of global config
+- `eb2b4a4` - chore: bump version to 0.7.4
+
+### GitHub Issue:
+- #23 "Events and Groups are not saved in config" - Fixed and closed
+
+---
+
 ## Session 2026-01-16 (continued): Artifact Workflow Simplification
 
 ### Version Tag: `v0.7.3` (continued)
