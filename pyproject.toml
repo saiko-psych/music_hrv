@@ -1,6 +1,6 @@
 [project]
 name = "rrational"
-version = "0.7.1"
+version = "0.7.4"
 description = "Free, open-source HRV analysis toolkit - a rational approach to heart rate variability"
 requires-python = ">=3.11,<3.14"
 dependencies = [

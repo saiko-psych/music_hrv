@@ -107,8 +107,8 @@ body:
       label: RRational Version
       description: |
         You can find this in the app title bar or README.
-        Current version is v0.7.3
-      placeholder: "v0.7.3"
+        Current version is v0.7.4
+      placeholder: "v0.7.4"
     validations:
       required: false
 

@@ -52,7 +52,7 @@ uv run ruff check src/ tests/ --fix            # Lint
 
 ## Current Status
 
-**Version**: `v0.7.3` (RRational) | **Tests**: 18/18 passing
+**Version**: `v0.7.4` (RRational) | **Tests**: 18/18 passing
 
 **GUI**: 5-tab Streamlit app
 - Tab 1: Data & Groups (import, plot, quality detection, CSV import)
@@ -121,6 +121,9 @@ uv run ruff check src/ tests/ --fix            # Lint
   - Workaround: Resolution slider (1k-20k points), auto-shows all for <10k datasets
 
 **Done:**
+- [x] ~~Fix groups/events saving to project folder (Issue #23)~~ (v0.7.4)
+- [x] ~~Show current project name in main header~~ (v0.7.4)
+- [x] ~~Add HRV Logger and VNS Analyse app links to docs~~ (v0.7.4)
 - [x] ~~Manual artifact demarking + improved detection workflow~~ (v0.7.3)
 - [x] ~~Project management system (welcome screen, project creation, auto-load last project)~~ (v0.7.2)
 - [x] ~~Ready for Analysis export (.rrational files with audit trail)~~ (v0.7.1)

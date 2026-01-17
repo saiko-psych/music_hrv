@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.7.2-green.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.7.4-green.svg)](pyproject.toml)
 [![Tests](https://img.shields.io/badge/tests-18%20passing-brightgreen.svg)](tests/)
 [![NeuroKit2](https://img.shields.io/badge/powered%20by-NeuroKit2-orange.svg)](https://neuropsychology.github.io/NeuroKit/)
 
