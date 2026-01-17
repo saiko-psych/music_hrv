@@ -2429,6 +2429,145 @@ def cached_artifact_detection(rr_values_tuple, timestamps_tuple, method: str = "
                 "corrected_timestamps": timestamps_list}
 
 
+def run_segmented_artifact_detection_at_gaps(
+    rr_values: list,
+    timestamps: list,
+    gap_adjacent_indices: set,
+    method: str = "lipponen2019_segmented",
+    threshold_pct: float = 0.20,
+    segment_beats: int = 300,
+) -> dict:
+    """Run artifact detection independently on each gap-separated segment.
+
+    When gaps are treated as segment boundaries, this function:
+    1. Splits the RR data at gap positions (gap_adjacent_indices mark the first beat after each gap)
+    2. Runs artifact detection on each segment independently
+    3. Merges results with correct index mapping back to the original data
+
+    This is more scientifically rigorous than post-filtering because:
+    - Each segment's median/statistics are computed independently
+    - Artifacts near segment start/end don't influence other segments
+    - The Lipponen algorithm uses local patterns which should be segment-specific
+
+    Args:
+        rr_values: List of RR intervals in ms
+        timestamps: List of corresponding timestamps
+        gap_adjacent_indices: Set of indices marking first beat after each gap
+        method: Detection method (passed to cached_artifact_detection)
+        threshold_pct: Threshold for threshold method
+        segment_beats: Segment size for segmented methods
+
+    Returns:
+        Merged artifact result dict with all indices in original coordinate system
+    """
+    if not gap_adjacent_indices or len(rr_values) < 10:
+        # No gaps - run normal detection
+        return cached_artifact_detection(
+            tuple(rr_values), tuple(timestamps),
+            method=method, threshold_pct=threshold_pct, segment_beats=segment_beats
+        )
+
+    # Sort gap boundary indices
+    sorted_boundaries = sorted(gap_adjacent_indices)
+
+    # Build segments: each segment is (start_idx, end_idx) in original coordinates
+    segments = []
+    prev_end = 0
+    for boundary_idx in sorted_boundaries:
+        if boundary_idx > prev_end:
+            segments.append((prev_end, boundary_idx))
+        prev_end = boundary_idx
+    # Add final segment
+    if prev_end < len(rr_values):
+        segments.append((prev_end, len(rr_values)))
+
+    # Filter out segments that are too small (< 10 beats)
+    segments = [(start, end) for start, end in segments if (end - start) >= 10]
+
+    if not segments:
+        # All segments too small - return empty result
+        return {
+            "artifact_indices": [],
+            "artifact_timestamps": [],
+            "artifact_rr": [],
+            "total_artifacts": 0,
+            "artifact_ratio": 0.0,
+            "by_type": {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0},
+            "indices_by_type": {"ectopic": [], "missed": [], "extra": [], "longshort": []},
+            "method": method,
+            "segment_stats": [],
+            "corrected_rr": rr_values,
+            "corrected_timestamps": timestamps,
+            "gap_segments": segments,
+            "segment_boundaries": sorted(gap_adjacent_indices),
+        }
+
+    # Run detection on each segment independently
+    all_artifact_indices = []
+    all_indices_by_type = {"ectopic": [], "missed": [], "extra": [], "longshort": []}
+    all_by_type = {"ectopic": 0, "missed": 0, "extra": 0, "longshort": 0}
+    all_segment_stats = []
+    all_corrected_rr = list(rr_values)  # Start with original values
+
+    for seg_start, seg_end in segments:
+        # Extract segment data
+        seg_rr = rr_values[seg_start:seg_end]
+        seg_ts = timestamps[seg_start:seg_end]
+
+        # Run detection on this segment
+        seg_result = cached_artifact_detection(
+            tuple(seg_rr), tuple(seg_ts),
+            method=method, threshold_pct=threshold_pct, segment_beats=segment_beats
+        )
+
+        # Map indices back to original coordinates
+        seg_artifact_indices = [i + seg_start for i in seg_result.get("artifact_indices", [])]
+        all_artifact_indices.extend(seg_artifact_indices)
+
+        # Map indices_by_type back to original coordinates
+        for artifact_type, indices in seg_result.get("indices_by_type", {}).items():
+            if artifact_type in all_indices_by_type:
+                mapped_indices = [i + seg_start for i in indices]
+                all_indices_by_type[artifact_type].extend(mapped_indices)
+
+        # Accumulate counts by type
+        for artifact_type, count in seg_result.get("by_type", {}).items():
+            if artifact_type in all_by_type:
+                all_by_type[artifact_type] += count
+
+        # Collect segment stats with offset info
+        for stat in seg_result.get("segment_stats", []):
+            stat_copy = dict(stat)
+            stat_copy["global_offset"] = seg_start
+            all_segment_stats.append(stat_copy)
+
+        # Copy corrected RR values for this segment
+        seg_corrected = seg_result.get("corrected_rr", seg_rr)
+        if seg_corrected and len(seg_corrected) == (seg_end - seg_start):
+            all_corrected_rr[seg_start:seg_end] = seg_corrected
+
+    # Build merged result
+    total_artifacts = len(all_artifact_indices)
+    artifact_ratio = total_artifacts / len(rr_values) if rr_values else 0.0
+
+    return {
+        "artifact_indices": sorted(all_artifact_indices),
+        "artifact_timestamps": [timestamps[i] for i in sorted(all_artifact_indices) if 0 <= i < len(timestamps)],
+        "artifact_rr": [rr_values[i] for i in sorted(all_artifact_indices) if 0 <= i < len(rr_values)],
+        "total_artifacts": total_artifacts,
+        "artifact_ratio": artifact_ratio,
+        "by_type": all_by_type,
+        "indices_by_type": all_indices_by_type,
+        "method": method,
+        "segment_stats": all_segment_stats,
+        "corrected_rr": all_corrected_rr,
+        "corrected_timestamps": timestamps,
+        "gap_segments": segments,
+        "segment_boundaries": sorted(gap_adjacent_indices),
+        "independent_segment_analysis": True,  # Flag that this used true segment analysis
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def _deprecated_cached_artifact_correction(rr_values_tuple, timestamps_tuple, artifact_indices_tuple):
     """Generate corrected NN intervals by interpolating artifacts.
@@ -4199,7 +4338,7 @@ def render_rr_plot_fragment(participant_id: str):
 
                 # Determine default method index based on loaded settings
                 method_keys = list(method_options.keys())
-                default_method_idx = 0  # Default to threshold
+                default_method_idx = 2  # Default to lipponen2019_segmented
                 if loaded_method and loaded_method in method_keys:
                     default_method_idx = method_keys.index(loaded_method)
 
@@ -4241,15 +4380,15 @@ def render_rr_plot_fragment(participant_id: str):
 
                 # Gap-adjacent beat handling (only for HRV Logger data with gaps)
                 gap_handling_options = {
-                    "include": "Include in artifacts (default)",
+                    "include": "Include in artifacts",
                     "exclude": "Exclude gap-adjacent beats",
-                    "boundary": "Treat as segment boundaries",
+                    "boundary": "Treat as segment boundaries (recommended)",
                 }
                 gap_handling = st.selectbox(
                     "Gap-adjacent beats",
                     options=list(gap_handling_options.keys()),
                     format_func=lambda x: gap_handling_options[x],
-                    index=0,
+                    index=2,  # Default to boundary
                     key=f"frag_gap_handling_{participant_id}",
                     help="Beats immediately after signal gaps may show large RR changes.",
                     disabled=is_vns_data,
@@ -4303,11 +4442,15 @@ def render_rr_plot_fragment(participant_id: str):
 
                 has_sections = len(available_sections) > 0
 
+                # Default to "section" if sections are available, otherwise "full"
+                default_scope_idx = 1 if has_sections else 0  # 1 = section, 0 = full
+
                 artifact_scope = st.radio(
                     "Scope",
                     options=scope_options,
                     format_func=lambda x: scope_labels[x],
                     horizontal=True,
+                    index=default_scope_idx,
                     key=f"frag_artifact_scope_{participant_id}",
                     help="Run detection on full recording, a specific section, or custom time range.",
                 )
@@ -4480,7 +4623,7 @@ def render_rr_plot_fragment(participant_id: str):
                 diag_plots_key = f"show_diagnostic_plots_{participant_id}"
                 show_diagnostic_plots = st.checkbox(
                     "Show diagnostic plots",
-                    value=st.session_state.get(diag_plots_key, False),
+                    value=st.session_state.get(diag_plots_key, True),  # Default to True
                     key=f"show_artifact_diagnostic_{participant_id}",
                     help="Show NeuroKit2 diagnostic plots: artifact types, criteria thresholds, and subspace classification"
                 )
@@ -4949,11 +5092,38 @@ def render_rr_plot_fragment(participant_id: str):
                     st.warning(f"Could not parse time range: {e}. Using full recording.")
 
             # Run artifact detection
-            artifact_result = cached_artifact_detection(
-                tuple(rr_for_detection), tuple(timestamps_for_detection),
-                method=artifact_method, threshold_pct=artifact_threshold,
-                segment_beats=segment_beats
-            )
+            # Get gap handling setting from session state
+            gap_handling_for_detection = st.session_state.get(f"frag_gap_handling_{participant_id}", "include")
+
+            # Get gap_adjacent_indices for the detection scope
+            gap_adjacent_for_scope = set()
+            if gap_handling_for_detection == "boundary":
+                # Get gap adjacent indices from plot_data
+                all_gap_adjacent = plot_data.get('gap_adjacent_indices', set())
+                if all_gap_adjacent:
+                    # Filter to only indices within the detection scope
+                    scope_offset = scope_info.get("offset", 0)
+                    scope_length = len(rr_for_detection)
+                    # Map global indices to scope-local indices
+                    for global_idx in all_gap_adjacent:
+                        local_idx = global_idx - scope_offset
+                        if 0 <= local_idx < scope_length:
+                            gap_adjacent_for_scope.add(local_idx)
+
+            # Use segmented detection at gaps if boundary mode is selected
+            if gap_handling_for_detection == "boundary" and gap_adjacent_for_scope:
+                artifact_result = run_segmented_artifact_detection_at_gaps(
+                    rr_for_detection, timestamps_for_detection,
+                    gap_adjacent_for_scope,
+                    method=artifact_method, threshold_pct=artifact_threshold,
+                    segment_beats=segment_beats
+                )
+            else:
+                artifact_result = cached_artifact_detection(
+                    tuple(rr_for_detection), tuple(timestamps_for_detection),
+                    method=artifact_method, threshold_pct=artifact_threshold,
+                    segment_beats=segment_beats
+                )
 
             # Always make a copy before modifying (cached result may be immutable)
             artifact_result = dict(artifact_result)
@@ -5045,11 +5215,13 @@ def render_rr_plot_fragment(participant_id: str):
         gap_adjacent_indices = plot_data.get('gap_adjacent_indices', set())
 
         # Filter out gap-adjacent beats based on gap_handling setting
+        # Skip if we already did independent segment analysis (boundary mode with new detection)
+        already_segmented = artifact_result.get("independent_segment_analysis", False)
         original_artifact_indices = artifact_result.get("artifact_indices", [])
         gap_adjacent_excluded = []  # Track how many were excluded
-        segment_boundaries = []  # Track segment boundaries
+        segment_boundaries = artifact_result.get("segment_boundaries", [])  # May already be set
 
-        if gap_handling == "exclude" and gap_adjacent_indices:
+        if gap_handling == "exclude" and gap_adjacent_indices and not already_segmented:
             # Remove gap-adjacent beats from artifact detection
             filtered_indices = [i for i in original_artifact_indices if i not in gap_adjacent_indices]
             gap_adjacent_excluded = [i for i in original_artifact_indices if i in gap_adjacent_indices]
@@ -5063,8 +5235,9 @@ def render_rr_plot_fragment(participant_id: str):
             artifact_result["artifact_ratio"] = len(filtered_indices) / len(rr_list) if rr_list else 0.0
             artifact_result["gap_adjacent_excluded"] = len(gap_adjacent_excluded)
 
-        elif gap_handling == "boundary" and gap_adjacent_indices:
-            # Remove gap-adjacent beats from artifact detection AND mark as segment boundaries
+        elif gap_handling == "boundary" and gap_adjacent_indices and not already_segmented:
+            # Legacy fallback: Remove gap-adjacent beats AND mark as segment boundaries
+            # (only used for saved/loaded artifacts that weren't analyzed with independent segments)
             filtered_indices = [i for i in original_artifact_indices if i not in gap_adjacent_indices]
             gap_adjacent_excluded = [i for i in original_artifact_indices if i in gap_adjacent_indices]
             segment_boundaries = sorted(gap_adjacent_indices)
