@@ -4230,6 +4230,126 @@ def render_rr_plot_fragment(participant_id: str):
             else:
                 st.caption("No artifact markings yet")
 
+            # "Apply to All Validated Sections" button
+            # This creates separate NN files for each validated section from a broader detection scope
+            artifact_data_apply = st.session_state.get(f"artifacts_{participant_id}", {})
+            corrected_rr_apply = artifact_data_apply.get('corrected_rr')
+            timestamps_apply = artifact_data_apply.get('corrected_timestamps', [])
+            scope_apply = artifact_data_apply.get('scope', {})
+
+            if corrected_rr_apply and len(corrected_rr_apply) == len(timestamps_apply):
+                # Load validated sections
+                from rrational.gui.persistence import load_section_validations as load_vals_apply
+                vals_apply = load_vals_apply(
+                    participant_id,
+                    st.session_state.get("data_dir"),
+                    st.session_state.get("current_project")
+                )
+                valid_sections_apply = []
+                if vals_apply and vals_apply.get("sections"):
+                    for sec_name, sec_data in vals_apply["sections"].items():
+                        if sec_data.get("is_valid"):
+                            valid_sections_apply.append((sec_name, sec_data))
+
+                if len(valid_sections_apply) > 1:
+                    st.markdown("---")
+                    scope_name = scope_apply.get('name', 'detection scope')
+                    st.caption(f"Create NN files for each validated section from '{scope_name}'")
+
+                    if st.button("Apply to All Sections", key=f"apply_all_sections_{participant_id}",
+                                help="Split corrected NN intervals into separate files per validated section"):
+                        from datetime import datetime
+                        from rrational.gui.persistence import save_nn_intervals
+
+                        scope_offset_apply = scope_apply.get('offset', 0)
+                        scope_start_beat = scope_offset_apply
+                        scope_end_beat = scope_offset_apply + len(corrected_rr_apply)
+
+                        # Get artifact indices (local to scope)
+                        algo_idx_apply = artifact_data_apply.get('artifact_indices', [])
+                        manual_arts_apply = st.session_state.get(f"manual_artifacts_{participant_id}", [])
+                        excl_apply = st.session_state.get(f"artifact_exclusions_{participant_id}", set())
+
+                        global_artifacts_apply = (set(algo_idx_apply) |
+                                                 set(a.get('plot_idx', -1) for a in manual_arts_apply)) - excl_apply
+
+                        original_rr_apply = artifact_data_apply.get('original_rr', corrected_rr_apply)
+                        algo_method_apply = artifact_data_apply.get('method', 'unknown')
+
+                        sections_saved = 0
+                        sections_skipped = []
+
+                        for sec_name, sec_data in valid_sections_apply:
+                            # Get section boundaries (beat indices)
+                            sec_start_beat = sec_data.get('start_event', {}).get('beat_idx', 0)
+                            sec_end_beat = sec_data.get('end_event', {}).get('beat_idx', 0)
+
+                            # Check if section is within scope
+                            if sec_start_beat < scope_start_beat or sec_end_beat > scope_end_beat:
+                                sections_skipped.append(f"{sec_name} (outside scope)")
+                                continue
+
+                            # Calculate local indices within scope
+                            local_start = sec_start_beat - scope_offset_apply
+                            local_end = sec_end_beat - scope_offset_apply
+
+                            if local_start < 0 or local_end > len(corrected_rr_apply):
+                                sections_skipped.append(f"{sec_name} (boundary error)")
+                                continue
+
+                            # Slice the data for this section
+                            sec_corrected = corrected_rr_apply[local_start:local_end]
+                            sec_timestamps = timestamps_apply[local_start:local_end]
+                            sec_original = original_rr_apply[local_start:local_end] if original_rr_apply else sec_corrected
+
+                            # Find artifacts within this section (convert to section-local indices)
+                            sec_artifacts_local = set()
+                            for global_idx in global_artifacts_apply:
+                                local_in_scope = global_idx - scope_offset_apply
+                                if local_start <= local_in_scope < local_end:
+                                    sec_artifacts_local.add(local_in_scope - local_start)
+
+                            # Build NN intervals for this section
+                            nn_intervals = []
+                            corrections = []
+                            for i, (ts, rr_orig, rr_corr) in enumerate(zip(sec_timestamps, sec_original, sec_corrected)):
+                                was_corrected = i in sec_artifacts_local and abs(rr_orig - rr_corr) > 1
+                                ts_ms = 0
+                                if hasattr(ts, 'timestamp') and sec_timestamps and hasattr(sec_timestamps[0], 'timestamp'):
+                                    ts_ms = int((ts.timestamp() - sec_timestamps[0].timestamp()) * 1000)
+                                nn_intervals.append([ts_ms, round(rr_corr, 1), was_corrected])
+                                if was_corrected:
+                                    corrections.append({
+                                        'nn_idx': i,
+                                        'original_rr_ms': round(rr_orig, 1),
+                                        'corrected_nn_ms': round(rr_corr, 1),
+                                    })
+
+                            nn_data = {
+                                'correction_method': 'kubios' if algo_method_apply else 'manual',
+                                'corrected_at': datetime.now().isoformat(),
+                                'source_scope': scope_name,
+                                'original_beat_count': len(sec_corrected),
+                                'artifacts_removed': len(sec_artifacts_local),
+                                'intervals_corrected': len(corrections),
+                                'final_nn_count': len(nn_intervals),
+                                'intervals': nn_intervals,
+                                'corrections': corrections,
+                            }
+
+                            save_nn_intervals(
+                                participant_id, sec_name, nn_data,
+                                data_dir=st.session_state.get("data_dir"),
+                                project_path=st.session_state.get("current_project"),
+                            )
+                            sections_saved += 1
+
+                        if sections_saved > 0:
+                            st.success(f"Created NN files for {sections_saved} sections")
+                        if sections_skipped:
+                            st.warning(f"Skipped: {', '.join(sections_skipped)}")
+                        st.rerun()
+
             # Export NN as CSV button (easily accessible)
             st.markdown("---")
             st.markdown("**Export Corrected NN Intervals**")

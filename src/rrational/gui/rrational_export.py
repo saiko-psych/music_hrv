@@ -1285,11 +1285,14 @@ def build_rrational_v2(
             )
 
         # Get NN intervals for this section
+        # Priority: 1) exact section match, 2) slice from broader scope (measurement, _full)
         section_nn = nn_sections.get(section_name, {})
         nn_correction = NNCorrectionV2()
         nn_intervals = NNIntervalsDataV2()
+        nn_source = None
 
-        if section_nn:
+        if section_nn and section_nn.get("intervals"):
+            # Direct match - section has its own NN data
             nn_correction = NNCorrectionV2(
                 method=section_nn.get("correction_method", "none"),
                 corrected_at=section_nn.get("corrected_at"),
@@ -1299,8 +1302,67 @@ def build_rrational_v2(
                 data=section_nn.get("intervals", []),
                 corrections=section_nn.get("corrections", []),
             )
+            nn_source = section_name
         else:
-            warnings.append(f"Section '{section_name}' has no NN intervals - analysis may use raw data")
+            # Try to slice from broader scope
+            # Check for parent scopes: measurement variants, then _full
+            parent_scopes = ["measurement", "first_measurement", "second_measurement", "_full"]
+            section_start_beat = section_validation.get("start_event", {}).get("beat_idx", 0)
+            section_end_beat = section_validation.get("end_event", {}).get("beat_idx", 0)
+
+            for parent_name in parent_scopes:
+                parent_nn = nn_sections.get(parent_name, {})
+                if not parent_nn or not parent_nn.get("intervals"):
+                    continue
+
+                # Check if parent scope contains this section
+                # We need the parent's scope offset to calculate slice positions
+                parent_source_scope = parent_nn.get("source_scope")
+                parent_intervals = parent_nn.get("intervals", [])
+
+                # The parent's intervals are indexed from 0, but we need to know
+                # what beat index the parent starts at. This info should be in metadata.
+                # For now, assume parent starts at beat 0 if it's _full or measurement
+                # TODO: Store and use actual scope offset in NN metadata
+
+                # Simple heuristic: if parent has enough intervals and section is reasonable
+                if len(parent_intervals) >= section_end_beat:
+                    # Slice the parent's data
+                    sliced_intervals = parent_intervals[section_start_beat:section_end_beat]
+
+                    if sliced_intervals:
+                        # Adjust timestamps to be relative to section start
+                        first_ts = sliced_intervals[0][0] if sliced_intervals else 0
+                        adjusted_intervals = [
+                            [iv[0] - first_ts, iv[1], iv[2]] for iv in sliced_intervals
+                        ]
+
+                        # Count corrections in the slice
+                        corrections_in_slice = [
+                            c for c in parent_nn.get("corrections", [])
+                            if section_start_beat <= c.get("nn_idx", -1) < section_end_beat
+                        ]
+                        # Adjust correction indices to be section-relative
+                        adjusted_corrections = [
+                            {**c, "nn_idx": c["nn_idx"] - section_start_beat}
+                            for c in corrections_in_slice
+                        ]
+
+                        nn_correction = NNCorrectionV2(
+                            method=parent_nn.get("correction_method", "none"),
+                            corrected_at=parent_nn.get("corrected_at"),
+                            intervals_corrected=len(adjusted_corrections),
+                        )
+                        nn_intervals = NNIntervalsDataV2(
+                            data=adjusted_intervals,
+                            corrections=adjusted_corrections,
+                        )
+                        nn_source = f"{parent_name} (sliced)"
+                        warnings.append(f"Section '{section_name}' using NN intervals sliced from '{parent_name}'")
+                        break
+
+            if not nn_source:
+                warnings.append(f"Section '{section_name}' has no NN intervals - analysis may use raw data")
 
         # Calculate quality
         usable_beats = len(nn_intervals.data) if nn_intervals.data else validation.total_beat_count
