@@ -1159,3 +1159,178 @@ def load_artifact_corrections_from_rrational(
 
     except Exception:
         return None
+
+
+# --- Section Validations (explicit per-participant storage) ---
+
+def save_section_validations(
+    participant_id: str,
+    group: str,
+    section_validations: dict[str, Any],
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> Path:
+    """Save explicit section validation state for a participant.
+
+    This provides robust storage of section validation choices, independent of
+    session state. Each participant's validations are stored in a dedicated file.
+
+    Storage location:
+    1. If project_path: project/data/processed/{participant_id}_section_validations.yml
+    2. If data_dir: {data_dir}/../processed/{participant_id}_section_validations.yml
+    3. Otherwise: ~/.rrational/{participant_id}_section_validations.yml
+
+    Args:
+        participant_id: The participant ID
+        group: The group this participant belongs to
+        section_validations: Dict mapping section_name to validation state:
+            {
+                "rest_pre": {
+                    "is_valid": True,
+                    "start_event": {
+                        "canonical": "rest_pre_start",
+                        "raw_label": "Ruhe Anfang",
+                        "timestamp": "2024-01-01T10:00:00",
+                        "index": 0  # Which candidate was selected
+                    },
+                    "end_event": {
+                        "canonical": "rest_pre_end",
+                        "raw_label": "Ruhe Ende",
+                        "timestamp": "2024-01-01T10:05:00",
+                        "index": 0
+                    },
+                    "manually_selected": False,
+                    "missing_start": False,
+                    "missing_end": False,
+                    "needs_disambiguation": False,
+                    "start_candidates_count": 1,
+                    "end_candidates_count": 1,
+                    "duration_s": 300.0,
+                    "beat_count": 350
+                },
+                ...
+            }
+        data_dir: Optional data directory
+        project_path: Project path (takes priority if provided)
+
+    Returns:
+        Path to the saved file
+    """
+    from datetime import datetime as dt
+
+    # Determine save location
+    processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
+    validation_file = processed_dir / f"{participant_id}_section_validations.yml"
+
+    # Build output data structure
+    output_data = {
+        "participant_id": participant_id,
+        "group": group,
+        "format_version": "1.0",
+        "saved_at": dt.now().isoformat(),
+        "sections": section_validations,
+    }
+
+    with open(validation_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(output_data, f, default_flow_style=False, allow_unicode=True)
+
+    return validation_file
+
+
+def load_section_validations(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Load saved section validation state for a participant.
+
+    Returns:
+        Dict with:
+        - 'group': str - The group the participant belongs to
+        - 'sections': dict - Section validation states (see save_section_validations)
+        - 'saved_at': str - ISO timestamp of when validations were saved
+
+        Returns None if no saved validations exist.
+    """
+    # Primary location: processed directory
+    processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
+    validation_file = processed_dir / f"{participant_id}_section_validations.yml"
+
+    # Also check legacy/fallback locations
+    search_paths = [
+        validation_file,
+        CONFIG_DIR / f"{participant_id}_section_validations.yml",
+    ]
+
+    for file_path in search_paths:
+        if file_path.exists():
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+
+                return {
+                    "group": data.get("group", ""),
+                    "sections": data.get("sections", {}),
+                    "saved_at": data.get("saved_at"),
+                    "format_version": data.get("format_version", "1.0"),
+                }
+            except Exception:
+                continue
+
+    return None
+
+
+def delete_section_validations(
+    participant_id: str,
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> bool:
+    """Delete saved section validations for a participant.
+
+    Returns True if validations were deleted, False if none existed.
+    """
+    deleted_any = False
+
+    # Check all possible locations
+    processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
+    delete_paths = [
+        processed_dir / f"{participant_id}_section_validations.yml",
+        CONFIG_DIR / f"{participant_id}_section_validations.yml",
+    ]
+
+    for file_path in delete_paths:
+        if file_path.exists():
+            file_path.unlink()
+            deleted_any = True
+
+    return deleted_any
+
+
+def list_participants_with_section_validations(
+    data_dir: str | None = None,
+    project_path: Path | None = None,
+) -> list[str]:
+    """List all participant IDs that have saved section validations.
+
+    Returns:
+        List of participant IDs
+    """
+    participants = []
+
+    # Check processed directory
+    processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
+    if processed_dir.exists():
+        for file_path in processed_dir.glob("*_section_validations.yml"):
+            # Extract participant ID from filename
+            pid = file_path.stem.replace("_section_validations", "")
+            if pid:
+                participants.append(pid)
+
+    # Also check legacy location
+    if CONFIG_DIR.exists():
+        for file_path in CONFIG_DIR.glob("*_section_validations.yml"):
+            pid = file_path.stem.replace("_section_validations", "")
+            if pid and pid not in participants:
+                participants.append(pid)
+
+    return sorted(participants)

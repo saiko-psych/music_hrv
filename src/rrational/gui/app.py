@@ -7279,6 +7279,10 @@ def main():
                                 'exclusion_zones': [],
                             }
 
+                        # Also load saved section validations (disambiguation choices)
+                        from rrational.gui.shared import load_and_restore_section_validations
+                        load_and_restore_section_validations(selected_participant)
+
                     # Get cleaned RR intervals using CACHED function
                     config_dict = {
                         "rr_min_ms": st.session_state.cleaning_config.rr_min_ms,
@@ -8856,6 +8860,7 @@ def main():
                             from rrational.gui.shared import (
                                 get_validated_sections_for_participant,
                                 save_section_selection,
+                                save_full_section_validations,
                             )
 
                             validation_results = get_validated_sections_for_participant(
@@ -8998,14 +9003,27 @@ def main():
 
                             # Auto-save if selections changed
                             if needs_save:
+                                # Save explicit section validations to dedicated file
+                                save_full_section_validations(selected_participant)
                                 auto_save_config()
                                 st.rerun()
 
-                            # Summary
-                            if issue_count == 0 and valid_count > 0:
-                                st.success(f"All {valid_count} section(s) valid")
-                            elif valid_count == 0 and issue_count > 0:
-                                st.error(f"All {issue_count} section(s) have issues")
+                            # Summary and manual save button
+                            col_summary, col_save = st.columns([3, 1])
+                            with col_summary:
+                                if issue_count == 0 and valid_count > 0:
+                                    st.success(f"All {valid_count} section(s) valid")
+                                elif valid_count == 0 and issue_count > 0:
+                                    st.error(f"All {issue_count} section(s) have issues")
+                                else:
+                                    st.info(f"{valid_count} valid, {issue_count} with issues")
+
+                            with col_save:
+                                if st.button("💾 Save", key=f"save_section_validations_{selected_participant}",
+                                           help="Save section validations to disk"):
+                                    save_full_section_validations(selected_participant)
+                                    auto_save_config()
+                                    st.toast("Section validations saved!", icon="✅")
 
                         # RR+Gap Duration Validation (HRV Logger only)
                         # Compare event-based duration vs sum of RR intervals + gaps

@@ -41,6 +41,8 @@ __all__ = [
     "validate_section_for_participant",
     "get_validated_sections_for_participant",
     "save_section_selection",
+    "save_full_section_validations",
+    "load_and_restore_section_validations",
     "get_section_time_range",
     # Functions
     "get_neurokit",
@@ -385,6 +387,139 @@ def save_section_selection(
         "start_index": start_index,
         "end_index": end_index,
     }
+
+
+def save_full_section_validations(participant_id: str):
+    """Save the full section validation state for a participant to disk.
+
+    This persists all section validation data explicitly, including:
+    - Group membership
+    - For each section: validity, events, disambiguation choices, etc.
+
+    Call this whenever section validations change to ensure data is persisted.
+    """
+    from rrational.gui.persistence import save_section_validations
+
+    # Get participant's group
+    group = st.session_state.participant_groups.get(participant_id, "Default")
+
+    # Get the group's sections config
+    group_data = st.session_state.groups.get(group, {})
+    if isinstance(group_data, dict):
+        selected_sections = group_data.get("selected_sections", [])
+    else:
+        selected_sections = []
+
+    # Get sections config
+    sections_config = st.session_state.get("sections", {})
+    normalizer = st.session_state.get("normalizer")
+
+    if not normalizer or not sections_config:
+        return
+
+    # Get validation results for this participant
+    validation_results = get_validated_sections_for_participant(
+        participant_id,
+        sections_config,
+        normalizer,
+        selected_sections=selected_sections if selected_sections else None,
+    )
+
+    # Build explicit section validation state
+    section_validations = {}
+
+    for section_name, result in validation_results.items():
+        section_data = {
+            "is_valid": result.is_valid,
+            "needs_disambiguation": result.needs_disambiguation,
+            "error_message": result.error_message,
+            "start_candidates_count": len(result.start_candidates),
+            "end_candidates_count": len(result.end_candidates),
+            "missing_start": len(result.start_candidates) == 0,
+            "missing_end": len(result.end_candidates) == 0,
+        }
+
+        # Add validated section details if valid
+        if result.validated_section:
+            vs = result.validated_section
+            section_data["start_event"] = {
+                "canonical": vs.start_event.canonical_name,
+                "raw_label": vs.start_event.raw_label,
+                "timestamp": vs.start_event.timestamp.isoformat() if vs.start_event.timestamp else None,
+                "index": vs.start_event.index,
+            }
+            section_data["end_event"] = {
+                "canonical": vs.end_event.canonical_name,
+                "raw_label": vs.end_event.raw_label,
+                "timestamp": vs.end_event.timestamp.isoformat() if vs.end_event.timestamp else None,
+                "index": vs.end_event.index,
+            }
+            section_data["manually_selected"] = vs.is_user_selected
+            section_data["duration_s"] = vs.duration_s
+            section_data["beat_count"] = vs.beat_count
+
+        # Store user's selection indices
+        selections_key = f"section_selections_{participant_id}"
+        user_selections = st.session_state.get(selections_key, {})
+        if section_name in user_selections:
+            section_data["selected_start_index"] = user_selections[section_name].get("start_index", 0)
+            section_data["selected_end_index"] = user_selections[section_name].get("end_index", 0)
+
+        section_validations[section_name] = section_data
+
+    # Save to disk
+    project_path = st.session_state.get("current_project")
+    data_dir = st.session_state.get("data_dir")
+
+    save_section_validations(
+        participant_id=participant_id,
+        group=group,
+        section_validations=section_validations,
+        data_dir=data_dir,
+        project_path=project_path,
+    )
+
+
+def load_and_restore_section_validations(participant_id: str) -> bool:
+    """Load saved section validations and restore to session state.
+
+    This restores the user's section selection indices from the explicit
+    validation file, ensuring disambiguation choices are preserved.
+
+    Returns:
+        True if validations were loaded, False if none existed.
+    """
+    from rrational.gui.persistence import load_section_validations
+
+    project_path = st.session_state.get("current_project")
+    data_dir = st.session_state.get("data_dir")
+
+    saved = load_section_validations(
+        participant_id=participant_id,
+        data_dir=data_dir,
+        project_path=project_path,
+    )
+
+    if not saved:
+        return False
+
+    # Restore section selections to session state
+    selections_key = f"section_selections_{participant_id}"
+    if selections_key not in st.session_state:
+        st.session_state[selections_key] = {}
+
+    sections = saved.get("sections", {})
+    for section_name, section_data in sections.items():
+        start_idx = section_data.get("selected_start_index")
+        end_idx = section_data.get("selected_end_index")
+
+        if start_idx is not None or end_idx is not None:
+            st.session_state[selections_key][section_name] = {
+                "start_index": start_idx if start_idx is not None else 0,
+                "end_index": end_idx if end_idx is not None else 0,
+            }
+
+    return True
 
 
 def get_section_time_range(
