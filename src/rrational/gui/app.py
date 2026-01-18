@@ -4089,12 +4089,87 @@ def render_rr_plot_fragment(participant_id: str):
                 section_display = "Full recording" if section_key_save == "_full" else section_key_save
                 if section_key_save.startswith("custom_"):
                     section_display = "Custom range"
+                elif section_key_save == "_all_validated":
+                    sections_list = artifact_data_save.get('scope', {}).get('sections', [])
+                    section_display = f"All validated ({len(sections_list)} sections)"
 
                 if section_key_save != "_full":
                     st.caption(f"Scope: {section_display}")
 
                 if st.button("Save Artifact Corrections", key=f"sidebar_save_artifacts_{participant_id}",
                             type="primary", width="stretch"):
+                    # Check if we have per-section results from "all_validated" detection
+                    sections_results = artifact_data_save.get('sections_results')
+
+                    if sections_results:
+                        # Save each section's artifacts and NN separately
+                        from rrational.gui.persistence import save_nn_intervals
+                        from datetime import datetime
+
+                        sections_saved = 0
+                        for sec_name, sec_result in sections_results.items():
+                            # Save artifacts for this section
+                            sec_indices = sec_result.get('artifact_indices', [])  # Local indices
+                            sec_offset = sec_result.get('offset', 0)
+                            sec_scope = {"type": "section", "name": sec_name, "offset": sec_offset}
+
+                            save_artifact_corrections(
+                                participant_id,
+                                manual_artifacts=[],  # Manual artifacts not supported per-section yet
+                                artifact_exclusions=set(),
+                                data_dir=data_dir_save,
+                                project_path=project_path_save,
+                                algorithm_artifacts=sec_indices,
+                                algorithm_method=artifact_data_save.get('method'),
+                                algorithm_threshold=artifact_data_save.get('threshold'),
+                                scope=sec_scope,
+                                section_key=sec_name,
+                                segment_beats=artifact_data_save.get('segment_beats'),
+                                indices_by_type=sec_result.get('indices_by_type'),
+                            )
+
+                            # Save NN intervals for this section
+                            sec_corrected = sec_result.get('corrected_rr', [])
+                            sec_timestamps = sec_result.get('corrected_timestamps', [])
+                            sec_original = sec_result.get('original_rr', sec_corrected)
+
+                            if sec_corrected and sec_timestamps and len(sec_corrected) == len(sec_timestamps):
+                                # Build NN data for this section
+                                sec_artifact_set = set(sec_indices)
+                                nn_intervals = []
+                                corrections = []
+
+                                for i, (ts, rr_orig, rr_corr) in enumerate(zip(sec_timestamps, sec_original, sec_corrected)):
+                                    was_corrected = i in sec_artifact_set and abs(rr_orig - rr_corr) > 1
+                                    ts_ms = 0
+                                    if hasattr(ts, 'timestamp') and sec_timestamps and hasattr(sec_timestamps[0], 'timestamp'):
+                                        ts_ms = int((ts.timestamp() - sec_timestamps[0].timestamp()) * 1000)
+                                    nn_intervals.append([ts_ms, round(rr_corr, 1), was_corrected])
+                                    if was_corrected:
+                                        corrections.append({
+                                            'nn_idx': i,
+                                            'original_rr_ms': round(rr_orig, 1),
+                                            'corrected_nn_ms': round(rr_corr, 1),
+                                        })
+
+                                nn_data = {
+                                    'correction_method': 'kubios' if artifact_data_save.get('method') else 'manual',
+                                    'corrected_at': datetime.now().isoformat(),
+                                    'original_beat_count': len(sec_corrected),
+                                    'artifacts_removed': len(sec_artifact_set),
+                                    'intervals_corrected': len(corrections),
+                                    'final_nn_count': len(nn_intervals),
+                                    'intervals': nn_intervals,
+                                    'corrections': corrections,
+                                }
+                                save_nn_intervals(participant_id, sec_name, nn_data,
+                                                 data_dir=data_dir_save, project_path=project_path_save)
+                            sections_saved += 1
+
+                        st.success(f"Saved artifacts and NN for {sections_saved} sections!")
+                        st.rerun()
+
+                    # Standard single-scope save (not all_validated)
                     # Get algorithm method and threshold info
                     algo_method = artifact_data_save.get('method', None)
                     algo_threshold = artifact_data_save.get('threshold', None)
@@ -5585,88 +5660,216 @@ def render_rr_plot_fragment(participant_id: str):
                 except Exception as e:
                     st.warning(f"Could not parse time range: {e}. Using full recording.")
             elif detection_scope == "all_validated":
-                # For "all_validated", run detection on full recording
-                # The auto-split to validated sections happens at save time
-                scope_info = {"type": "all_validated", "offset": 0}
-                # Keep rr_for_detection as full recording (already set above)
+                # Run SEPARATE artifact detection for each validated section
+                from rrational.gui.persistence import load_section_validations as load_vals_detect
+                from rrational.gui.shared import get_section_time_range
 
-            # Run artifact detection
-            # Get gap handling setting from session state
-            gap_handling_for_detection = st.session_state.get(f"frag_gap_handling_{participant_id}", "include")
-
-            # Get gap_adjacent_indices for the detection scope
-            gap_adjacent_for_scope = set()
-            if gap_handling_for_detection == "boundary":
-                # Get gap adjacent indices from plot_data
-                all_gap_adjacent = plot_data.get('gap_adjacent_indices', set())
-                if all_gap_adjacent:
-                    # Filter to only indices within the detection scope
-                    scope_offset = scope_info.get("offset", 0)
-                    scope_length = len(rr_for_detection)
-                    # Map global indices to scope-local indices
-                    for global_idx in all_gap_adjacent:
-                        local_idx = global_idx - scope_offset
-                        if 0 <= local_idx < scope_length:
-                            gap_adjacent_for_scope.add(local_idx)
-
-            # Use segmented detection at gaps if boundary mode is selected AND there are gaps in scope
-            if gap_handling_for_detection == "boundary" and gap_adjacent_for_scope:
-                artifact_result = run_segmented_artifact_detection_at_gaps(
-                    rr_for_detection, timestamps_for_detection,
-                    gap_adjacent_for_scope,
-                    method=artifact_method, threshold_pct=artifact_threshold,
-                    segment_beats=segment_beats
+                vals_detect = load_vals_detect(
+                    participant_id,
+                    st.session_state.get("data_dir"),
+                    st.session_state.get("current_project")
                 )
-            else:
-                artifact_result = cached_artifact_detection(
-                    tuple(rr_for_detection), tuple(timestamps_for_detection),
-                    method=artifact_method, threshold_pct=artifact_threshold,
-                    segment_beats=segment_beats
-                )
-                # If boundary mode but no gaps in scope, mark as handled to skip legacy fallback
-                if gap_handling_for_detection == "boundary":
-                    artifact_result = dict(artifact_result)
-                    artifact_result["independent_segment_analysis"] = True
-                    artifact_result["segment_boundaries"] = []  # No gaps in this scope
 
-            # Always make a copy before modifying (cached result may be immutable)
-            artifact_result = dict(artifact_result)
+                validated_sections_to_detect = []
+                if vals_detect and vals_detect.get("sections"):
+                    for sec_name, sec_data in vals_detect["sections"].items():
+                        if sec_data.get("is_valid"):
+                            validated_sections_to_detect.append((sec_name, sec_data))
 
-            # Map artifact indices back to full recording if scope was not full
-            if scope_info["type"] != "full" and scope_info.get("offset", 0) > 0:
-                offset = scope_info["offset"]
-                artifact_result["artifact_indices"] = [i + offset for i in artifact_result.get("artifact_indices", [])]
-                # Also map indices_by_type to global indices
-                if "indices_by_type" in artifact_result:
-                    artifact_result["indices_by_type"] = {
-                        k: [i + offset for i in v]
-                        for k, v in artifact_result["indices_by_type"].items()
+                if validated_sections_to_detect:
+                    # Run detection for each section and collect results
+                    all_sections_results = {}
+                    all_artifact_indices = []  # Merged for display
+                    all_artifact_timestamps = []
+                    all_artifact_rr = []
+                    total_artifacts_all = 0
+                    total_beats_all = 0
+
+                    sections_config = st.session_state.get("sections", {})
+                    normalizer = st.session_state.get("normalizer")
+                    gap_handling_for_detection = st.session_state.get(f"frag_gap_handling_{participant_id}", "include")
+                    all_gap_adjacent = plot_data.get('gap_adjacent_indices', set())
+
+                    with st.spinner(f"Running artifact detection on {len(validated_sections_to_detect)} sections..."):
+                        for sec_name, sec_data in sorted(validated_sections_to_detect, key=lambda x: x[0]):
+                            # Get section time range
+                            start_ts, end_ts = get_section_time_range(
+                                participant_id=participant_id,
+                                section_name=sec_name,
+                                sections_config=sections_config,
+                                normalizer=normalizer,
+                            )
+
+                            if not start_ts or not end_ts:
+                                st.warning(f"Could not find boundaries for section '{sec_name}', skipping.")
+                                continue
+
+                            # Filter data for this section
+                            sec_filtered = []
+                            sec_offset = 0
+                            for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
+                                if start_ts <= ts <= end_ts:
+                                    if not sec_filtered:
+                                        sec_offset = idx
+                                    sec_filtered.append((ts, rr))
+
+                            if not sec_filtered:
+                                st.warning(f"No data in section '{sec_name}', skipping.")
+                                continue
+
+                            sec_timestamps = [d[0] for d in sec_filtered]
+                            sec_rr = [d[1] for d in sec_filtered]
+
+                            # Get gap-adjacent indices for this section
+                            gap_adjacent_for_sec = set()
+                            if gap_handling_for_detection == "boundary" and all_gap_adjacent:
+                                for global_idx in all_gap_adjacent:
+                                    local_idx = global_idx - sec_offset
+                                    if 0 <= local_idx < len(sec_rr):
+                                        gap_adjacent_for_sec.add(local_idx)
+
+                            # Run detection for this section
+                            if gap_handling_for_detection == "boundary" and gap_adjacent_for_sec:
+                                sec_result = run_segmented_artifact_detection_at_gaps(
+                                    sec_rr, sec_timestamps,
+                                    gap_adjacent_for_sec,
+                                    method=artifact_method, threshold_pct=artifact_threshold,
+                                    segment_beats=segment_beats
+                                )
+                            else:
+                                sec_result = cached_artifact_detection(
+                                    tuple(sec_rr), tuple(sec_timestamps),
+                                    method=artifact_method, threshold_pct=artifact_threshold,
+                                    segment_beats=segment_beats
+                                )
+                                if gap_handling_for_detection == "boundary":
+                                    sec_result = dict(sec_result)
+                                    sec_result["independent_segment_analysis"] = True
+                                    sec_result["segment_boundaries"] = []
+
+                            sec_result = dict(sec_result)
+
+                            # Map local indices to global indices
+                            sec_global_indices = [i + sec_offset for i in sec_result.get("artifact_indices", [])]
+                            sec_result["artifact_indices_global"] = sec_global_indices
+                            sec_result["offset"] = sec_offset
+                            sec_result["beat_count"] = len(sec_rr)
+
+                            # Store timestamps and original RR for NN saving
+                            sec_result["corrected_timestamps"] = sec_timestamps
+                            sec_result["original_rr"] = sec_rr
+
+                            # Store section result
+                            all_sections_results[sec_name] = sec_result
+
+                            # Merge for display
+                            all_artifact_indices.extend(sec_global_indices)
+                            all_artifact_timestamps.extend([timestamps_list[i] for i in sec_global_indices if 0 <= i < len(timestamps_list)])
+                            all_artifact_rr.extend([rr_list[i] for i in sec_global_indices if 0 <= i < len(rr_list)])
+                            total_artifacts_all += sec_result.get("total_artifacts", 0)
+                            total_beats_all += len(sec_rr)
+
+                    # Build merged artifact_result for display
+                    artifact_result = {
+                        "artifact_indices": sorted(set(all_artifact_indices)),
+                        "artifact_timestamps": all_artifact_timestamps,
+                        "artifact_rr": all_artifact_rr,
+                        "total_artifacts": total_artifacts_all,
+                        "artifact_ratio": total_artifacts_all / total_beats_all if total_beats_all > 0 else 0.0,
+                        "method": artifact_method,
+                        "threshold": artifact_threshold,
+                        "scope": {"type": "all_validated", "sections": list(all_sections_results.keys())},
+                        "section_key": "_all_validated",
+                        "sections_results": all_sections_results,  # Per-section results for saving
+                        "segment_beats": segment_beats,
+                        "by_type": {},  # Aggregated type info would be complex, skip for now
                     }
-                # Also map segment_boundaries to global indices
-                if "segment_boundaries" in artifact_result:
-                    artifact_result["segment_boundaries"] = [i + offset for i in artifact_result["segment_boundaries"]]
-                # Rebuild timestamps and RR from full recording indices
-                artifact_result["artifact_timestamps"] = [timestamps_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(timestamps_list)]
-                artifact_result["artifact_rr"] = [rr_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(rr_list)]
-                # Note: corrected_rr is for the scope only, not full recording
 
-            # Store scope info and detection parameters in result
-            artifact_result["scope"] = scope_info
-            artifact_result["segment_beats"] = segment_beats  # Store for segmented methods
+                    # Skip the normal detection flow below
+                    scope_info = {"type": "all_validated", "offset": 0}
+                    # Set flag to skip normal detection
+                    st.session_state[f"_all_validated_done_{participant_id}"] = True
+                else:
+                    st.warning("No validated sections found. Using full recording instead.")
+                    scope_info = {"type": "full"}
 
-            # Derive section_key from scope for section-scoped storage
-            if scope_info["type"] == "section":
-                section_key = scope_info.get("name", "_full")
-            elif scope_info["type"] == "custom":
-                # Use a unique key for custom time ranges
-                section_key = f"custom_{scope_info.get('start', '0')}-{scope_info.get('end', '0')}".replace(":", "")
-            elif scope_info["type"] == "all_validated":
-                # For all_validated, use _full as key but mark for auto-split
-                section_key = "_full"
-                artifact_result["auto_split_to_sections"] = True
-            else:
-                section_key = "_full"
-            artifact_result["section_key"] = section_key
+            # Run artifact detection (skip if all_validated already handled above)
+            all_validated_done = st.session_state.pop(f"_all_validated_done_{participant_id}", False)
+
+            if not all_validated_done:
+                # Normal single-scope detection
+                # Get gap handling setting from session state
+                gap_handling_for_detection = st.session_state.get(f"frag_gap_handling_{participant_id}", "include")
+
+                # Get gap_adjacent_indices for the detection scope
+                gap_adjacent_for_scope = set()
+                if gap_handling_for_detection == "boundary":
+                    # Get gap adjacent indices from plot_data
+                    all_gap_adjacent = plot_data.get('gap_adjacent_indices', set())
+                    if all_gap_adjacent:
+                        # Filter to only indices within the detection scope
+                        scope_offset = scope_info.get("offset", 0)
+                        scope_length = len(rr_for_detection)
+                        # Map global indices to scope-local indices
+                        for global_idx in all_gap_adjacent:
+                            local_idx = global_idx - scope_offset
+                            if 0 <= local_idx < scope_length:
+                                gap_adjacent_for_scope.add(local_idx)
+
+                # Use segmented detection at gaps if boundary mode is selected AND there are gaps in scope
+                if gap_handling_for_detection == "boundary" and gap_adjacent_for_scope:
+                    artifact_result = run_segmented_artifact_detection_at_gaps(
+                        rr_for_detection, timestamps_for_detection,
+                        gap_adjacent_for_scope,
+                        method=artifact_method, threshold_pct=artifact_threshold,
+                        segment_beats=segment_beats
+                    )
+                else:
+                    artifact_result = cached_artifact_detection(
+                        tuple(rr_for_detection), tuple(timestamps_for_detection),
+                        method=artifact_method, threshold_pct=artifact_threshold,
+                        segment_beats=segment_beats
+                    )
+                    # If boundary mode but no gaps in scope, mark as handled to skip legacy fallback
+                    if gap_handling_for_detection == "boundary":
+                        artifact_result = dict(artifact_result)
+                        artifact_result["independent_segment_analysis"] = True
+                        artifact_result["segment_boundaries"] = []  # No gaps in this scope
+
+                # Always make a copy before modifying (cached result may be immutable)
+                artifact_result = dict(artifact_result)
+
+                # Map artifact indices back to full recording if scope was not full
+                if scope_info["type"] != "full" and scope_info.get("offset", 0) > 0:
+                    offset = scope_info["offset"]
+                    artifact_result["artifact_indices"] = [i + offset for i in artifact_result.get("artifact_indices", [])]
+                    # Also map indices_by_type to global indices
+                    if "indices_by_type" in artifact_result:
+                        artifact_result["indices_by_type"] = {
+                            k: [i + offset for i in v]
+                            for k, v in artifact_result["indices_by_type"].items()
+                        }
+                    # Also map segment_boundaries to global indices
+                    if "segment_boundaries" in artifact_result:
+                        artifact_result["segment_boundaries"] = [i + offset for i in artifact_result["segment_boundaries"]]
+                    # Rebuild timestamps and RR from full recording indices
+                    artifact_result["artifact_timestamps"] = [timestamps_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(timestamps_list)]
+                    artifact_result["artifact_rr"] = [rr_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(rr_list)]
+                    # Note: corrected_rr is for the scope only, not full recording
+
+                # Store scope info and detection parameters in result
+                artifact_result["scope"] = scope_info
+                artifact_result["segment_beats"] = segment_beats  # Store for segmented methods
+
+                # Derive section_key from scope for section-scoped storage
+                if scope_info["type"] == "section":
+                    section_key = scope_info.get("name", "_full")
+                elif scope_info["type"] == "custom":
+                    # Use a unique key for custom time ranges
+                    section_key = f"custom_{scope_info.get('start', '0')}-{scope_info.get('end', '0')}".replace(":", "")
+                else:
+                    section_key = "_full"
+                artifact_result["section_key"] = section_key
 
             # Generate diagnostic plots if requested
             if st.session_state.get(f"show_diagnostic_plots_{participant_id}", False):
@@ -5751,6 +5954,7 @@ def render_rr_plot_fragment(participant_id: str):
                 "scope": saved_scope,
                 "section_key": saved_artifact_data.get("section_key", "_full"),
                 "auto_split_to_sections": saved_artifact_data.get("auto_split_to_sections", False),
+                "sections_results": saved_artifact_data.get("sections_results"),  # Per-section results for all_validated
                 "segment_beats": saved_artifact_data.get("segment_beats"),
                 "corrected_rr": saved_corrected_rr,
                 "corrected_timestamps": scoped_timestamps,
