@@ -274,17 +274,26 @@ def _load_single_vns_file(
                     elapsed_ms=cumulative_ms,
                 ))
 
-                # Check for note (Notiz:)
+                # Check for note (Notiz: or just Notiz)
                 if len(parts) > 1:
                     note_text = parts[1].strip()
                     if note_text.startswith("Notiz:"):
                         note_label = note_text[6:].strip()  # Remove "Notiz:" prefix
-                        if note_label:
-                            events.append(EventMarker(
-                                label=note_label,
-                                timestamp=timestamp,
-                                offset_s=cumulative_ms / 1000.0,
-                            ))
+                        # Use "marker" as default label if no text provided
+                        if not note_label:
+                            note_label = "marker"
+                        events.append(EventMarker(
+                            label=note_label,
+                            timestamp=timestamp,
+                            offset_s=cumulative_ms / 1000.0,
+                        ))
+                    elif note_text == "Notiz":
+                        # Handle case where user forgot to add text (just "Notiz")
+                        events.append(EventMarker(
+                            label="marker",
+                            timestamp=timestamp,
+                            offset_s=cumulative_ms / 1000.0,
+                        ))
 
                 cumulative_ms += rr_ms
 
