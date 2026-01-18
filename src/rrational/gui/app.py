@@ -6010,8 +6010,12 @@ def render_rr_plot_fragment(participant_id: str):
             corrected_rr_source = None
 
             # Try to load corrected values from saved NN intervals
+            # NOTE: This reconstruction is only needed for the "re-save" protection
+            # The visualization loads directly from NN files, so this doesn't affect display
             try:
                 from rrational.gui.persistence import load_nn_intervals, load_section_validations
+                import bisect
+
                 nn_data = load_nn_intervals(
                     participant_id,
                     section_name=None,
@@ -6025,8 +6029,21 @@ def render_rr_plot_fragment(participant_id: str):
                 )
 
                 if nn_data and nn_data.get("sections") and section_vals and section_vals.get("sections"):
+                    # Pre-compute timestamp ms list ONCE for fast lookup (O(n) instead of O(n*m))
+                    plot_ms_list = []
+                    for ts in timestamps_list:
+                        if hasattr(ts, 'timestamp'):
+                            plot_ms_list.append(ts.timestamp() * 1000)
+                        else:
+                            plot_ms_list.append(None)
+
+                    # Create sorted index for binary search
+                    valid_indices = [(ms, i) for i, ms in enumerate(plot_ms_list) if ms is not None]
+                    valid_indices.sort(key=lambda x: x[0])
+                    sorted_ms = [x[0] for x in valid_indices]
+                    sorted_idx = [x[1] for x in valid_indices]
+
                     # Reconstruct corrected_rr from saved NN intervals
-                    # Start with original RR values and replace with saved NN values
                     reconstructed_rr = list(rr_list)
 
                     for section_name, nn_section in nn_data["sections"].items():
@@ -6035,18 +6052,14 @@ def render_rr_plot_fragment(participant_id: str):
                             continue
 
                         start_event = val_section.get("start_event", {})
-                        end_event = val_section.get("end_event", {})
                         start_ts_str = start_event.get("timestamp")
-                        end_ts_str = end_event.get("timestamp")
-
-                        if not start_ts_str or not end_ts_str:
+                        if not start_ts_str:
                             continue
 
-                        # Parse timestamps
+                        # Parse section start timestamp
                         from datetime import datetime as dt_parse
                         try:
                             section_start = dt_parse.fromisoformat(start_ts_str.replace('Z', '+00:00'))
-                            section_end = dt_parse.fromisoformat(end_ts_str.replace('Z', '+00:00'))
                         except Exception:
                             continue
 
@@ -6057,7 +6070,7 @@ def render_rr_plot_fragment(participant_id: str):
                         if not nn_intervals:
                             continue
 
-                        # Match NN values to plot indices
+                        # Match NN values using binary search (O(m log n) instead of O(m*n))
                         for entry in nn_intervals:
                             if len(entry) < 2:
                                 continue
@@ -6065,13 +6078,22 @@ def render_rr_plot_fragment(participant_id: str):
                             nn_ms = entry[1]
                             abs_ts_ms = section_start_ms + rel_ts_ms
 
-                            # Find closest plot beat
-                            for i, ts in enumerate(timestamps_list):
-                                if hasattr(ts, 'timestamp'):
-                                    plot_ms = ts.timestamp() * 1000
-                                    if abs(plot_ms - abs_ts_ms) < 50:  # 50ms tolerance
-                                        reconstructed_rr[i] = nn_ms
-                                        break
+                            # Binary search for closest timestamp
+                            pos = bisect.bisect_left(sorted_ms, abs_ts_ms)
+
+                            # Check neighbors for closest match within tolerance
+                            best_idx = None
+                            best_diff = 50  # 50ms tolerance
+
+                            for check_pos in [pos - 1, pos, pos + 1]:
+                                if 0 <= check_pos < len(sorted_ms):
+                                    diff = abs(sorted_ms[check_pos] - abs_ts_ms)
+                                    if diff < best_diff:
+                                        best_diff = diff
+                                        best_idx = sorted_idx[check_pos]
+
+                            if best_idx is not None:
+                                reconstructed_rr[best_idx] = nn_ms
 
                     saved_corrected_rr = reconstructed_rr
                     corrected_rr_source = "nn_file"
