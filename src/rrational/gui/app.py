@@ -6411,6 +6411,8 @@ def render_rr_plot_fragment(participant_id: str):
                     )
 
                     if saved_nn and saved_nn.get("sections") and section_vals and section_vals.get("sections"):
+                        from datetime import timedelta
+
                         # Get original timestamps for matching
                         original_timestamps = plot_data.get('original_timestamps', timestamps_list)
 
@@ -6430,10 +6432,19 @@ def render_rr_plot_fragment(participant_id: str):
 
                         plot_datetimes = [parse_ts(ts) for ts in original_timestamps]
 
+                        # Convert plot timestamps to ms since epoch for fast lookup
+                        plot_ms_list = []
+                        for dt_obj in plot_datetimes:
+                            if dt_obj:
+                                plot_ms_list.append(dt_obj.timestamp() * 1000)
+                            else:
+                                plot_ms_list.append(None)
+
                         # Start with original RR values
                         nn_values = list(rr_list)
                         n_corrected_total = 0
                         n_matched_sections = 0
+                        n_matched_beats = 0
 
                         # Process each section that has both NN data and validation info
                         for section_name, nn_section_data in saved_nn["sections"].items():
@@ -6459,39 +6470,42 @@ def render_rr_plot_fragment(participant_id: str):
                             if not section_start or not section_end:
                                 continue
 
-                            # Make both naive for comparison if needed
-                            if section_start.tzinfo is not None and plot_datetimes[0] and plot_datetimes[0].tzinfo is None:
-                                section_start = section_start.replace(tzinfo=None)
-                                section_end = section_end.replace(tzinfo=None)
-                            elif section_start.tzinfo is None and plot_datetimes[0] and plot_datetimes[0].tzinfo is not None:
-                                section_start = section_start.replace(tzinfo=plot_datetimes[0].tzinfo)
-                                section_end = section_end.replace(tzinfo=plot_datetimes[0].tzinfo)
+                            # Get section start time in ms
+                            section_start_ms = section_start.timestamp() * 1000
 
-                            # Find plot indices that fall within this section
-                            section_plot_indices = []
-                            for i, dt_obj in enumerate(plot_datetimes):
-                                if dt_obj and section_start <= dt_obj <= section_end:
-                                    section_plot_indices.append(i)
-
-                            if not section_plot_indices:
-                                continue
-
-                            # Get NN intervals for this section (in order: beat 0, 1, 2...)
+                            # Get NN intervals for this section
+                            # Format: [rel_timestamp_ms, nn_ms, was_corrected]
                             nn_intervals = nn_section_data.get("intervals", [])
                             if not nn_intervals:
                                 continue
 
-                            # Map NN intervals to plot indices
-                            # NN[0] → first beat in section, NN[1] → second beat, etc.
-                            for nn_idx, entry in enumerate(nn_intervals):
-                                if nn_idx >= len(section_plot_indices):
-                                    break  # More NN intervals than plot points in section
+                            # For each NN entry, find the plot beat by matching timestamps
+                            for entry in nn_intervals:
+                                if len(entry) < 2:
+                                    continue
 
-                                plot_idx = section_plot_indices[nn_idx]
-                                if plot_idx < len(nn_values) and len(entry) >= 2:
-                                    nn_ms = entry[1]
-                                    was_corrected = entry[2] if len(entry) > 2 else False
-                                    nn_values[plot_idx] = nn_ms
+                                rel_ts_ms = entry[0]  # Relative ms from section start
+                                nn_ms = entry[1]
+                                was_corrected = entry[2] if len(entry) > 2 else False
+
+                                # Calculate absolute timestamp for this NN beat
+                                abs_ts_ms = section_start_ms + rel_ts_ms
+
+                                # Find the closest plot beat (within 50ms tolerance)
+                                best_idx = None
+                                best_diff = 50  # Max tolerance in ms
+
+                                for i, plot_ms in enumerate(plot_ms_list):
+                                    if plot_ms is None:
+                                        continue
+                                    diff = abs(plot_ms - abs_ts_ms)
+                                    if diff < best_diff:
+                                        best_diff = diff
+                                        best_idx = i
+
+                                if best_idx is not None and best_idx < len(nn_values):
+                                    nn_values[best_idx] = nn_ms
+                                    n_matched_beats += 1
                                     if was_corrected:
                                         n_corrected_total += 1
 
@@ -6509,7 +6523,7 @@ def render_rr_plot_fragment(participant_id: str):
                             ))
                             nn_displayed = True
                             nn_source = "saved"
-                            st.success(f"Showing **saved NN intervals**: {n_matched_sections} section(s), {n_corrected_total} beats corrected")
+                            st.success(f"Showing **saved NN intervals**: {n_matched_sections} section(s), {n_matched_beats} beats matched, {n_corrected_total} corrected")
                 except Exception as e:
                     # Log error but continue to fallback
                     import traceback
