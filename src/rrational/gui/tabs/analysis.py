@@ -73,9 +73,87 @@ class ParticipantSectionResult:
     duration_s: float
     quality_grade: str
     artifact_rate: float
-    hrv_metrics: dict  # All HRV metrics (RMSSD, SDNN, pNN50, MeanNN, MeanHR, LF, HF, LF/HF)
+    hrv_metrics: dict  # All HRV metrics
     hrv_std: dict | None  # SD if overlapping windows used
     n_windows: int  # Number of windows (1 if no overlapping)
+
+
+# =============================================================================
+# HRV METRIC DEFINITIONS AND PRESETS
+# =============================================================================
+
+# All available HRV metrics organized by category
+HRV_METRICS_CATALOG = {
+    "time_basic": {
+        "RMSSD": {"label": "RMSSD", "unit": "ms", "description": "Root mean square of successive differences"},
+        "SDNN": {"label": "SDNN", "unit": "ms", "description": "Standard deviation of NN intervals"},
+        "pNN50": {"label": "pNN50", "unit": "%", "description": "Percentage of successive intervals differing by >50ms"},
+        "MeanNN": {"label": "Mean NN", "unit": "ms", "description": "Mean of NN intervals"},
+        "MeanHR": {"label": "Mean HR", "unit": "bpm", "description": "Mean heart rate"},
+    },
+    "time_extended": {
+        "SDSD": {"label": "SDSD", "unit": "ms", "description": "SD of successive differences"},
+        "pNN20": {"label": "pNN20", "unit": "%", "description": "Percentage of successive intervals differing by >20ms"},
+        "MedianNN": {"label": "Median NN", "unit": "ms", "description": "Median of NN intervals"},
+        "CVNN": {"label": "CVNN", "unit": "", "description": "Coefficient of variation (SDNN/MeanNN)"},
+        "CVSD": {"label": "CVSD", "unit": "", "description": "Coefficient of variation of successive differences"},
+        "MadNN": {"label": "MadNN", "unit": "ms", "description": "Median absolute deviation of NN intervals"},
+        "MCVNN": {"label": "MCVNN", "unit": "", "description": "Median-based CV (MadNN/MedianNN)"},
+        "IQRNN": {"label": "IQRNN", "unit": "ms", "description": "Interquartile range of NN intervals"},
+        "HTI": {"label": "HTI", "unit": "", "description": "HRV Triangular Index"},
+        "TINN": {"label": "TINN", "unit": "ms", "description": "Triangular interpolation of NN histogram"},
+    },
+    "frequency": {
+        "VLF": {"label": "VLF", "unit": "ms²", "description": "Very low frequency power (0.0033-0.04 Hz)"},
+        "LF": {"label": "LF", "unit": "ms²", "description": "Low frequency power (0.04-0.15 Hz)"},
+        "HF": {"label": "HF", "unit": "ms²", "description": "High frequency power (0.15-0.4 Hz)"},
+        "LF_HF": {"label": "LF/HF", "unit": "", "description": "LF to HF ratio"},
+        "LFn": {"label": "LF norm", "unit": "n.u.", "description": "Normalized LF power"},
+        "HFn": {"label": "HF norm", "unit": "n.u.", "description": "Normalized HF power"},
+        "TP": {"label": "Total Power", "unit": "ms²", "description": "Total spectral power"},
+    },
+    "nonlinear": {
+        "SD1": {"label": "SD1", "unit": "ms", "description": "Poincaré plot SD perpendicular to identity line"},
+        "SD2": {"label": "SD2", "unit": "ms", "description": "Poincaré plot SD along identity line"},
+        "SD1SD2": {"label": "SD1/SD2", "unit": "", "description": "Ratio of SD1 to SD2"},
+        "ApEn": {"label": "ApEn", "unit": "", "description": "Approximate entropy"},
+        "SampEn": {"label": "SampEn", "unit": "", "description": "Sample entropy"},
+        "DFA_alpha1": {"label": "DFA α1", "unit": "", "description": "Detrended fluctuation analysis short-term"},
+        "DFA_alpha2": {"label": "DFA α2", "unit": "", "description": "Detrended fluctuation analysis long-term"},
+    },
+}
+
+# Metric presets
+HRV_METRIC_PRESETS = {
+    "Basic": {
+        "description": "Essential time-domain metrics for quick analysis",
+        "metrics": ["RMSSD", "SDNN", "pNN50", "MeanNN", "MeanHR"],
+    },
+    "Time + Frequency": {
+        "description": "Time-domain and frequency-domain metrics",
+        "metrics": ["RMSSD", "SDNN", "pNN50", "MeanNN", "MeanHR", "LF", "HF", "LF_HF", "VLF", "TP"],
+    },
+    "Full (with nonlinear)": {
+        "description": "All available metrics including nonlinear analysis",
+        "metrics": list({m for cat in HRV_METRICS_CATALOG.values() for m in cat.keys()}),
+    },
+    "Poincaré Focus": {
+        "description": "Metrics related to Poincaré plot analysis",
+        "metrics": ["RMSSD", "SDNN", "SD1", "SD2", "SD1SD2", "MeanNN", "MeanHR"],
+    },
+    "Custom": {
+        "description": "Select metrics manually",
+        "metrics": [],  # User selects
+    },
+}
+
+# Flatten all metrics for easy lookup
+ALL_HRV_METRICS = {m: info for cat in HRV_METRICS_CATALOG.values() for m, info in cat.items()}
+
+
+def get_metric_info(metric_name: str) -> dict:
+    """Get info for a metric by name."""
+    return ALL_HRV_METRICS.get(metric_name, {"label": metric_name, "unit": "", "description": ""})
 
 
 # =============================================================================
@@ -3392,6 +3470,7 @@ def _calculate_hrv_metrics(
     use_windows: bool = True,
     window_beats: int = 150,
     overlap_pct: float = 75.0,
+    selected_metrics: list[str] | None = None,
 ) -> tuple[dict, dict | None, int]:
     """Calculate HRV metrics from NN intervals.
 
@@ -3400,6 +3479,7 @@ def _calculate_hrv_metrics(
         use_windows: Whether to use overlapping windows
         window_beats: Number of beats per window
         overlap_pct: Overlap percentage (0-100)
+        selected_metrics: List of metric names to calculate (None = all basic metrics)
 
     Returns:
         Tuple of (metrics_dict, std_dict, n_windows)
@@ -3409,38 +3489,139 @@ def _calculate_hrv_metrics(
     """
     nk = get_neurokit()
 
+    # Default to basic metrics if not specified
+    if selected_metrics is None:
+        selected_metrics = HRV_METRIC_PRESETS["Basic"]["metrics"]
+
+    # Determine which analysis types we need
+    time_basic = set(HRV_METRICS_CATALOG["time_basic"].keys())
+    time_extended = set(HRV_METRICS_CATALOG["time_extended"].keys())
+    frequency = set(HRV_METRICS_CATALOG["frequency"].keys())
+    nonlinear = set(HRV_METRICS_CATALOG["nonlinear"].keys())
+
+    selected_set = set(selected_metrics)
+    need_time = bool(selected_set & (time_basic | time_extended))
+    need_freq = bool(selected_set & frequency)
+    need_nonlinear = bool(selected_set & nonlinear)
+
     def compute_hrv(rr_list: list[float]) -> dict:
         """Compute HRV for a single window."""
+        result = {}
         peaks = nk.intervals_to_peaks(rr_list, sampling_rate=1000)
-        hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
-        result = {
-            "RMSSD": hrv_time.get("HRV_RMSSD", [None])[0],
-            "SDNN": hrv_time.get("HRV_SDNN", [None])[0],
-            "pNN50": hrv_time.get("HRV_pNN50", [None])[0],
-            "MeanNN": hrv_time.get("HRV_MeanNN", [None])[0],
-        }
-        # Add MeanHR from MeanNN
-        if result["MeanNN"] and result["MeanNN"] > 0:
-            result["MeanHR"] = 60000 / result["MeanNN"]
-        else:
-            result["MeanHR"] = None
 
-        # Add frequency domain if enough beats
-        if len(rr_list) >= MIN_BEATS_FREQUENCY_DOMAIN:
+        # Time domain metrics
+        if need_time:
+            try:
+                hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
+
+                # Basic time metrics
+                if "RMSSD" in selected_set:
+                    result["RMSSD"] = hrv_time.get("HRV_RMSSD", [None])[0]
+                if "SDNN" in selected_set:
+                    result["SDNN"] = hrv_time.get("HRV_SDNN", [None])[0]
+                if "pNN50" in selected_set:
+                    result["pNN50"] = hrv_time.get("HRV_pNN50", [None])[0]
+                if "MeanNN" in selected_set:
+                    result["MeanNN"] = hrv_time.get("HRV_MeanNN", [None])[0]
+                if "MeanHR" in selected_set:
+                    mean_nn = hrv_time.get("HRV_MeanNN", [None])[0]
+                    result["MeanHR"] = 60000 / mean_nn if mean_nn and mean_nn > 0 else None
+
+                # Extended time metrics
+                if "SDSD" in selected_set:
+                    result["SDSD"] = hrv_time.get("HRV_SDSD", [None])[0]
+                if "pNN20" in selected_set:
+                    result["pNN20"] = hrv_time.get("HRV_pNN20", [None])[0]
+                if "MedianNN" in selected_set:
+                    result["MedianNN"] = hrv_time.get("HRV_MedianNN", [None])[0]
+                if "CVNN" in selected_set:
+                    result["CVNN"] = hrv_time.get("HRV_CVNN", [None])[0]
+                if "CVSD" in selected_set:
+                    result["CVSD"] = hrv_time.get("HRV_CVSD", [None])[0]
+                if "MadNN" in selected_set:
+                    result["MadNN"] = hrv_time.get("HRV_MadNN", [None])[0]
+                if "MCVNN" in selected_set:
+                    result["MCVNN"] = hrv_time.get("HRV_MCVNN", [None])[0]
+                if "IQRNN" in selected_set:
+                    result["IQRNN"] = hrv_time.get("HRV_IQRNN", [None])[0]
+                if "HTI" in selected_set:
+                    result["HTI"] = hrv_time.get("HRV_HTI", [None])[0]
+                if "TINN" in selected_set:
+                    result["TINN"] = hrv_time.get("HRV_TINN", [None])[0]
+            except Exception:
+                # Set all requested time metrics to None on error
+                for m in selected_set & (time_basic | time_extended):
+                    result[m] = None
+
+        # Frequency domain metrics
+        if need_freq and len(rr_list) >= MIN_BEATS_FREQUENCY_DOMAIN:
             try:
                 hrv_freq = nk.hrv_frequency(peaks, sampling_rate=1000, show=False)
-                result["LF"] = hrv_freq.get("HRV_LF", [None])[0]
-                result["HF"] = hrv_freq.get("HRV_HF", [None])[0]
-                lf_hf = hrv_freq.get("HRV_LFHF", [None])[0]
-                result["LF_HF"] = lf_hf
+
+                if "VLF" in selected_set:
+                    result["VLF"] = hrv_freq.get("HRV_VLF", [None])[0]
+                if "LF" in selected_set:
+                    result["LF"] = hrv_freq.get("HRV_LF", [None])[0]
+                if "HF" in selected_set:
+                    result["HF"] = hrv_freq.get("HRV_HF", [None])[0]
+                if "LF_HF" in selected_set:
+                    result["LF_HF"] = hrv_freq.get("HRV_LFHF", [None])[0]
+                if "LFn" in selected_set:
+                    result["LFn"] = hrv_freq.get("HRV_LFn", [None])[0]
+                if "HFn" in selected_set:
+                    result["HFn"] = hrv_freq.get("HRV_HFn", [None])[0]
+                if "TP" in selected_set:
+                    # Total power = VLF + LF + HF
+                    vlf = hrv_freq.get("HRV_VLF", [0])[0] or 0
+                    lf = hrv_freq.get("HRV_LF", [0])[0] or 0
+                    hf = hrv_freq.get("HRV_HF", [0])[0] or 0
+                    result["TP"] = vlf + lf + hf if any([vlf, lf, hf]) else None
             except Exception:
-                result["LF"] = None
-                result["HF"] = None
-                result["LF_HF"] = None
-        else:
-            result["LF"] = None
-            result["HF"] = None
-            result["LF_HF"] = None
+                for m in selected_set & frequency:
+                    result[m] = None
+        elif need_freq:
+            # Not enough beats for frequency analysis
+            for m in selected_set & frequency:
+                result[m] = None
+
+        # Nonlinear metrics
+        if need_nonlinear:
+            try:
+                # Poincaré metrics (SD1, SD2)
+                if selected_set & {"SD1", "SD2", "SD1SD2"}:
+                    hrv_nl = nk.hrv_nonlinear(peaks, sampling_rate=1000, show=False)
+                    if "SD1" in selected_set:
+                        result["SD1"] = hrv_nl.get("HRV_SD1", [None])[0]
+                    if "SD2" in selected_set:
+                        result["SD2"] = hrv_nl.get("HRV_SD2", [None])[0]
+                    if "SD1SD2" in selected_set:
+                        result["SD1SD2"] = hrv_nl.get("HRV_SD1SD2", [None])[0]
+
+                    # Entropy metrics
+                    if "ApEn" in selected_set:
+                        result["ApEn"] = hrv_nl.get("HRV_ApEn", [None])[0]
+                    if "SampEn" in selected_set:
+                        result["SampEn"] = hrv_nl.get("HRV_SampEn", [None])[0]
+
+                    # DFA metrics
+                    if "DFA_alpha1" in selected_set:
+                        result["DFA_alpha1"] = hrv_nl.get("HRV_DFA_alpha1", [None])[0]
+                    if "DFA_alpha2" in selected_set:
+                        result["DFA_alpha2"] = hrv_nl.get("HRV_DFA_alpha2", [None])[0]
+                else:
+                    # Only entropy or DFA requested
+                    hrv_nl = nk.hrv_nonlinear(peaks, sampling_rate=1000, show=False)
+                    if "ApEn" in selected_set:
+                        result["ApEn"] = hrv_nl.get("HRV_ApEn", [None])[0]
+                    if "SampEn" in selected_set:
+                        result["SampEn"] = hrv_nl.get("HRV_SampEn", [None])[0]
+                    if "DFA_alpha1" in selected_set:
+                        result["DFA_alpha1"] = hrv_nl.get("HRV_DFA_alpha1", [None])[0]
+                    if "DFA_alpha2" in selected_set:
+                        result["DFA_alpha2"] = hrv_nl.get("HRV_DFA_alpha2", [None])[0]
+            except Exception:
+                for m in selected_set & nonlinear:
+                    result[m] = None
 
         return result
 
@@ -3567,7 +3748,13 @@ def _calculate_group_stats(long_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with columns: group, section, metric, n, mean, sd, min, max
     """
-    metrics = ["rmssd", "sdnn", "pnn50", "meannn", "meanhr", "lf", "hf", "lf_hf"]
+    # Dynamically find all HRV metric columns (lowercase in dataframe)
+    exclude_cols = {"participant_id", "group", "section", "n_beats", "duration_s",
+                    "quality", "artifact_rate", "n_windows"}
+    # Also exclude _sd columns (standard deviation columns)
+    metrics = [col for col in long_df.columns
+               if col not in exclude_cols and not col.endswith("_sd")]
+
     rows = []
 
     for (group, section), group_df in long_df.groupby(["group", "section"]):
@@ -3689,6 +3876,343 @@ def _create_group_bar_chart(
     return fig
 
 
+def _create_box_violin_plot(
+    long_df: pd.DataFrame,
+    metric: str,
+    plot_type: str = "box",
+    group_by: str = "group",
+    color_by: str = "section",
+):
+    """Create a box plot or violin plot for HRV metrics.
+
+    Args:
+        long_df: Long-format DataFrame from _results_to_long_df
+        metric: Metric column name (lowercase)
+        plot_type: "box" or "violin"
+        group_by: Column to use for x-axis grouping
+        color_by: Column to use for color grouping
+
+    Returns:
+        Plotly Figure object
+    """
+    go, _ = get_plotly_analysis()
+    if go is None:
+        return None
+
+    metric_lower = metric.lower()
+    if metric_lower not in long_df.columns:
+        return None
+
+    # Filter out NaN values
+    df = long_df[long_df[metric_lower].notna()].copy()
+    if df.empty:
+        return None
+
+    theme = get_theme_colors()
+    colors = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#6C757D", "#28A745", "#17A2B8", "#FFC107"]
+
+    fig = go.Figure()
+
+    color_categories = df[color_by].unique().tolist()
+
+    for i, color_cat in enumerate(color_categories):
+        subset = df[df[color_by] == color_cat]
+
+        if plot_type == "violin":
+            fig.add_trace(
+                go.Violin(
+                    x=subset[group_by],
+                    y=subset[metric_lower],
+                    name=str(color_cat),
+                    legendgroup=str(color_cat),
+                    scalegroup=str(color_cat),
+                    line_color=colors[i % len(colors)],
+                    fillcolor=colors[i % len(colors)],
+                    opacity=0.6,
+                    box_visible=True,
+                    meanline_visible=True,
+                    points="all",
+                    pointpos=0,
+                    jitter=0.05,
+                )
+            )
+        else:  # box plot
+            fig.add_trace(
+                go.Box(
+                    x=subset[group_by],
+                    y=subset[metric_lower],
+                    name=str(color_cat),
+                    legendgroup=str(color_cat),
+                    marker_color=colors[i % len(colors)],
+                    line_color=colors[i % len(colors)],
+                    boxpoints="all",
+                    jitter=0.3,
+                    pointpos=-1.8,
+                )
+            )
+
+    # Get metric info for labels
+    metric_info = get_metric_info(metric.upper())
+    unit_str = f" ({metric_info['unit']})" if metric_info.get("unit") else ""
+
+    fig.update_layout(
+        title=dict(
+            text=f"{metric.upper()} Distribution by {group_by.title()}",
+            font=dict(size=16),
+        ),
+        xaxis_title=group_by.title(),
+        yaxis_title=f"{metric.upper()}{unit_str}",
+        boxmode="group" if plot_type == "box" else None,
+        violinmode="group" if plot_type == "violin" else None,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        plot_bgcolor=theme["bg"],
+        paper_bgcolor=theme["bg"],
+        font=dict(color=theme["text"]),
+        margin=dict(l=60, r=20, t=80, b=60),
+    )
+
+    fig.update_xaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"])
+    fig.update_yaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"])
+
+    return fig
+
+
+def _create_sd1_sd2_scatter(
+    long_df: pd.DataFrame,
+    color_by: str = "group",
+):
+    """Create SD1 vs SD2 scatter plot (Poincaré-derived measures).
+
+    Args:
+        long_df: Long-format DataFrame from _results_to_long_df
+        color_by: Column to use for color grouping ("group" or "section")
+
+    Returns:
+        Plotly Figure object
+    """
+    go, _ = get_plotly_analysis()
+    if go is None:
+        return None
+
+    # Check if SD1 and SD2 are available
+    if "sd1" not in long_df.columns or "sd2" not in long_df.columns:
+        return None
+
+    # Filter out NaN values
+    df = long_df[long_df["sd1"].notna() & long_df["sd2"].notna()].copy()
+    if df.empty:
+        return None
+
+    theme = get_theme_colors()
+    colors = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#6C757D", "#28A745", "#17A2B8", "#FFC107"]
+
+    fig = go.Figure()
+
+    categories = df[color_by].unique().tolist()
+
+    for i, cat in enumerate(categories):
+        subset = df[df[color_by] == cat]
+
+        fig.add_trace(
+            go.Scatter(
+                x=subset["sd2"],
+                y=subset["sd1"],
+                mode="markers",
+                name=str(cat),
+                marker=dict(
+                    size=10,
+                    color=colors[i % len(colors)],
+                    opacity=0.7,
+                    line=dict(width=1, color="white"),
+                ),
+                text=subset["participant_id"],
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "SD1: %{y:.2f} ms<br>"
+                    "SD2: %{x:.2f} ms<br>"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    # Add reference line (SD1 = SD2 means circular Poincaré)
+    max_val = max(df["sd1"].max(), df["sd2"].max()) * 1.1
+    fig.add_trace(
+        go.Scatter(
+            x=[0, max_val],
+            y=[0, max_val],
+            mode="lines",
+            name="SD1 = SD2",
+            line=dict(color="gray", dash="dash", width=1),
+            showlegend=True,
+        )
+    )
+
+    fig.update_layout(
+        title=dict(
+            text="Poincaré Plot Measures: SD1 vs SD2",
+            font=dict(size=16),
+        ),
+        xaxis_title="SD2 (ms) - Long-term variability",
+        yaxis_title="SD1 (ms) - Short-term variability",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        plot_bgcolor=theme["bg"],
+        paper_bgcolor=theme["bg"],
+        font=dict(color=theme["text"]),
+        margin=dict(l=60, r=20, t=80, b=60),
+    )
+
+    fig.update_xaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"])
+    fig.update_yaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"], scaleanchor="x")
+
+    return fig
+
+
+def _create_raincloud_plot(
+    long_df: pd.DataFrame,
+    metric: str,
+    group_by: str = "group",
+    color_by: str = "section",
+):
+    """Create a raincloud plot (half-violin + box + strip).
+
+    Raincloud plots combine:
+    - Half-violin showing distribution
+    - Box plot showing quartiles
+    - Individual points (strip/jitter)
+
+    Args:
+        long_df: Long-format DataFrame from _results_to_long_df
+        metric: Metric column name (lowercase)
+        group_by: Column for x-axis grouping
+        color_by: Column for color grouping
+
+    Returns:
+        Plotly Figure object
+    """
+    go, _ = get_plotly_analysis()
+    if go is None:
+        return None
+
+    metric_lower = metric.lower()
+    if metric_lower not in long_df.columns:
+        return None
+
+    # Filter out NaN values
+    df = long_df[long_df[metric_lower].notna()].copy()
+    if df.empty:
+        return None
+
+    theme = get_theme_colors()
+    colors = ["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#6C757D", "#28A745", "#17A2B8", "#FFC107"]
+
+    fig = go.Figure()
+
+    color_categories = df[color_by].unique().tolist()
+
+    for i, color_cat in enumerate(color_categories):
+        subset = df[df[color_by] == color_cat]
+        color = colors[i % len(colors)]
+
+        # Half violin (positive side only)
+        fig.add_trace(
+            go.Violin(
+                x=subset[group_by],
+                y=subset[metric_lower],
+                name=str(color_cat),
+                legendgroup=str(color_cat),
+                side="positive",
+                line_color=color,
+                fillcolor=color,
+                opacity=0.5,
+                meanline_visible=False,
+                points=False,
+                width=0.8,
+            )
+        )
+
+        # Box plot (narrow, on left side)
+        fig.add_trace(
+            go.Box(
+                x=subset[group_by],
+                y=subset[metric_lower],
+                name=str(color_cat),
+                legendgroup=str(color_cat),
+                marker_color=color,
+                line_color=color,
+                boxpoints=False,
+                width=0.15,
+                showlegend=False,
+            )
+        )
+
+        # Individual points (strip with jitter)
+        fig.add_trace(
+            go.Scatter(
+                x=[f"{g}" for g in subset[group_by]],
+                y=subset[metric_lower],
+                mode="markers",
+                name=str(color_cat),
+                legendgroup=str(color_cat),
+                marker=dict(
+                    size=5,
+                    color=color,
+                    opacity=0.6,
+                ),
+                showlegend=False,
+                # Add jitter
+                hovertemplate=(
+                    f"<b>{color_cat}</b><br>"
+                    f"{metric.upper()}: %{{y:.2f}}<br>"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    # Get metric info for labels
+    metric_info = get_metric_info(metric.upper())
+    unit_str = f" ({metric_info['unit']})" if metric_info.get("unit") else ""
+
+    fig.update_layout(
+        title=dict(
+            text=f"{metric.upper()} Raincloud Plot by {group_by.title()}",
+            font=dict(size=16),
+        ),
+        xaxis_title=group_by.title(),
+        yaxis_title=f"{metric.upper()}{unit_str}",
+        violinmode="group",
+        boxmode="group",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        plot_bgcolor=theme["bg"],
+        paper_bgcolor=theme["bg"],
+        font=dict(color=theme["text"]),
+        margin=dict(l=60, r=20, t=80, b=60),
+    )
+
+    fig.update_xaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"])
+    fig.update_yaxes(gridcolor=theme["grid"], showline=True, linewidth=1, linecolor=theme["grid"])
+
+    return fig
+
+
 # =============================================================================
 # GROUP ANALYSIS MAIN PIPELINE
 # =============================================================================
@@ -3705,6 +4229,7 @@ def _run_group_analysis(config: dict) -> tuple[list[ParticipantSectionResult], d
             - window_beats: int
             - overlap_percent: float
             - completeness_filter: bool
+            - selected_metrics: List of metric names to calculate
 
     Returns:
         Tuple of (results, missing, excluded)
@@ -3718,6 +4243,7 @@ def _run_group_analysis(config: dict) -> tuple[list[ParticipantSectionResult], d
 
     project_path = st.session_state.get("project_path")
     data_dir = st.session_state.get("data_dir")
+    selected_metrics = config.get("selected_metrics")
 
     group_participants = _collect_group_participants(config["selected_groups"])
 
@@ -3754,6 +4280,7 @@ def _run_group_analysis(config: dict) -> tuple[list[ParticipantSectionResult], d
                     config["use_overlapping_windows"],
                     config["window_beats"],
                     config["overlap_percent"],
+                    selected_metrics=selected_metrics,
                 )
 
                 results.append(ParticipantSectionResult(
@@ -3860,6 +4387,62 @@ Using overlapping windows improves the reliability of HRV estimates by providing
     # -------------------------------------------------------------------------
     st.markdown("### Step 3: Analysis Options")
 
+    # Metric preset selection
+    st.markdown("**HRV Metrics**")
+    preset_names = list(HRV_METRIC_PRESETS.keys())
+    preset_col1, preset_col2 = st.columns([1, 2])
+
+    with preset_col1:
+        selected_preset = st.selectbox(
+            "Metric preset",
+            options=preset_names,
+            index=1,  # Default to "Time + Frequency"
+            key="group_analysis_metric_preset",
+            help="Choose a preset or select 'Custom' to pick individual metrics",
+        )
+
+    # Show preset description
+    with preset_col2:
+        preset_info = HRV_METRIC_PRESETS[selected_preset]
+        st.caption(preset_info["description"])
+
+    # Custom metric selection
+    if selected_preset == "Custom":
+        # Organize by category for easier selection
+        st.markdown("**Select metrics:**")
+        metric_cols = st.columns(4)
+
+        selected_metrics = []
+        categories = [
+            ("Time (Basic)", "time_basic"),
+            ("Time (Extended)", "time_extended"),
+            ("Frequency", "frequency"),
+            ("Nonlinear", "nonlinear"),
+        ]
+
+        for i, (cat_label, cat_key) in enumerate(categories):
+            with metric_cols[i]:
+                st.markdown(f"*{cat_label}*")
+                for metric_name in HRV_METRICS_CATALOG[cat_key].keys():
+                    metric_info = HRV_METRICS_CATALOG[cat_key][metric_name]
+                    if st.checkbox(
+                        metric_info["label"],
+                        value=metric_name in ["RMSSD", "SDNN", "MeanHR"],  # Default selection
+                        key=f"group_metric_{metric_name}",
+                        help=metric_info["description"],
+                    ):
+                        selected_metrics.append(metric_name)
+    else:
+        selected_metrics = HRV_METRIC_PRESETS[selected_preset]["metrics"]
+
+    # Show selected metrics summary
+    if selected_metrics:
+        st.caption(f"**Selected:** {', '.join(selected_metrics[:8])}{'...' if len(selected_metrics) > 8 else ''} ({len(selected_metrics)} metrics)")
+    else:
+        st.warning("Please select at least one metric.")
+        return
+
+    st.markdown("**Analysis Settings**")
     col1, col2 = st.columns(2)
     with col1:
         use_overlapping = st.checkbox(
@@ -3914,6 +4497,7 @@ Using overlapping windows improves the reliability of HRV estimates by providing
             "window_beats": window_beats,
             "overlap_percent": overlap_pct,
             "completeness_filter": completeness_filter,
+            "selected_metrics": selected_metrics,
         }
 
         # Count total participants
@@ -4042,31 +4626,94 @@ Using overlapping windows improves the reliability of HRV estimates by providing
         )
 
     with tab_chart:
-        # Metric selector
-        available_metrics = ["RMSSD", "SDNN", "PNN50", "MEANNN", "MEANHR"]
-        if "lf" in long_df.columns and long_df["lf"].notna().any():
-            available_metrics.extend(["LF", "HF", "LF_HF"])
-
-        selected_metric = st.selectbox(
-            "Select metric to visualize",
-            options=available_metrics,
-            key="group_analysis_chart_metric",
+        # Visualization type selector
+        viz_type = st.radio(
+            "Visualization type",
+            options=["Bar Chart", "Box Plot", "Violin Plot", "Raincloud Plot", "SD1/SD2 Scatter"],
+            horizontal=True,
+            key="group_analysis_viz_type",
         )
 
-        # Section filter for chart
-        all_sections = sorted(long_df["section"].unique().tolist())
-        chart_sections = st.multiselect(
-            "Sections to include",
-            options=all_sections,
-            default=all_sections,
-            key="group_analysis_chart_sections",
+        # Build available metrics from actual data columns
+        available_metrics = []
+        for col in long_df.columns:
+            col_upper = col.upper()
+            if col_upper in ALL_HRV_METRICS and long_df[col].notna().any():
+                available_metrics.append(col_upper)
+
+        # Ensure basic metrics are first
+        priority_order = ["RMSSD", "SDNN", "PNN50", "MEANNN", "MEANHR", "LF", "HF", "LF_HF", "SD1", "SD2"]
+        available_metrics = sorted(
+            available_metrics,
+            key=lambda x: priority_order.index(x) if x in priority_order else 100
         )
 
-        if chart_sections:
-            fig = _create_group_bar_chart(stats_df, selected_metric, chart_sections)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+        if viz_type == "SD1/SD2 Scatter":
+            # Special handling for SD1/SD2 scatter
+            if "sd1" in long_df.columns and "sd2" in long_df.columns:
+                color_by = st.radio(
+                    "Color by",
+                    options=["group", "section"],
+                    horizontal=True,
+                    key="group_analysis_scatter_color",
+                )
+
+                fig = _create_sd1_sd2_scatter(long_df, color_by=color_by)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No SD1/SD2 data available. Select 'Poincaré Focus' or 'Full' preset to include these metrics.")
             else:
-                st.info(f"No data available for {selected_metric} in selected sections.")
+                st.info("SD1 and SD2 metrics not available. Run analysis with 'Poincaré Focus' or 'Full (with nonlinear)' preset.")
         else:
-            st.info("Select at least one section to display the chart.")
+            # Metric selector for other charts
+            if not available_metrics:
+                st.warning("No metrics available in the results.")
+            else:
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    selected_chart_metric = st.selectbox(
+                        "Select metric to visualize",
+                        options=available_metrics,
+                        key="group_analysis_chart_metric",
+                    )
+
+                # Section filter
+                all_sections = sorted(long_df["section"].unique().tolist())
+                chart_sections = st.multiselect(
+                    "Sections to include",
+                    options=all_sections,
+                    default=all_sections,
+                    key="group_analysis_chart_sections",
+                )
+
+                if not chart_sections:
+                    st.info("Select at least one section to display the chart.")
+                else:
+                    # Filter data for selected sections
+                    filtered_df = long_df[long_df["section"].isin(chart_sections)]
+
+                    if viz_type == "Bar Chart":
+                        fig = _create_group_bar_chart(stats_df, selected_chart_metric, chart_sections)
+                    elif viz_type == "Box Plot":
+                        fig = _create_box_violin_plot(
+                            filtered_df, selected_chart_metric,
+                            plot_type="box", group_by="group", color_by="section"
+                        )
+                    elif viz_type == "Violin Plot":
+                        fig = _create_box_violin_plot(
+                            filtered_df, selected_chart_metric,
+                            plot_type="violin", group_by="group", color_by="section"
+                        )
+                    elif viz_type == "Raincloud Plot":
+                        fig = _create_raincloud_plot(
+                            filtered_df, selected_chart_metric,
+                            group_by="group", color_by="section"
+                        )
+                    else:
+                        fig = None
+
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info(f"No data available for {selected_chart_metric} in selected sections.")
