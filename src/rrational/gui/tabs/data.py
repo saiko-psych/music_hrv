@@ -534,25 +534,21 @@ def _build_participants_csv() -> str:
             # HRV Logger has separate RR and Events CSV files
             files_str = f"{rr_count}RR/{ev_count}Ev"
 
-        playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
         group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
 
         group_data = st.session_state.groups.get(group_code, {})
         group_label = group_data.get("label", "") if isinstance(group_data, dict) else ""
         group_display = group_label if group_label else group_code
 
-        playlist_display = ""
-        if playlist_code:
-            playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
-            playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
-            playlist_display = playlist_label if playlist_label else playlist_code
         device_settings = st.session_state.get("default_device_settings", {})
         device_name = device_settings.get("device", "Unknown")
+
+        # VNS data doesn't have duplicate events
+        duplicate_events = 0 if source_app == "VNS Analyse" else summary.duplicate_events
 
         rows.append({
             "Participant": summary.participant_id,
             "Group": group_display,
-            "Playlist": playlist_display,
             "App": source_app,
             "Device": device_name,
             "Files": files_str,
@@ -563,6 +559,7 @@ def _build_participants_csv() -> str:
             "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
             "Duration (min)": f"{summary.duration_s / 60:.1f}",
             "Events": summary.events_detected,
+            "Duplicate Events": duplicate_events,
         })
 
     df = pd.DataFrame(rows)
@@ -570,8 +567,7 @@ def _build_participants_csv() -> str:
 
 
 @st.fragment
-def _render_participants_data_editor(group_display_options, group_label_to_code,
-                                      playlist_display_options, playlist_label_to_code):
+def _render_participants_data_editor(group_display_options, group_label_to_code):
     """Render the data editor as a fragment to allow consecutive edits.
 
     Using @st.fragment isolates this component - when changes are made,
@@ -621,8 +617,7 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
             device_settings = st.session_state.get("default_device_settings", {})
             device_name = device_settings.get("device", "Unknown")
 
-            # Get playlist assignment
-            playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
+            # Get group assignment
             group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
 
             # Get group label for display (show only label if defined, otherwise code)
@@ -630,28 +625,15 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
             group_label = group_data.get("label", "") if isinstance(group_data, dict) else ""
             group_display = group_label if group_label else group_code
 
-            # Get playlist label for display (show only label if defined, otherwise code)
-            playlist_display = ""
-            if playlist_code:
-                playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
-                playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
-                playlist_display = playlist_label if playlist_label else playlist_code
-
             # Get source app
             source_app = getattr(summary, 'source_app', 'Unknown')
 
-            # Check if participant has CSV data (group or playlist assigned)
+            # Check if participant has group assigned
             has_group_assigned = group_code != "Default"
-            has_playlist_assigned = bool(playlist_code)
-            csv_status = ""
-            if has_group_assigned and has_playlist_assigned:
-                csv_status = "**"  # Both
-            elif has_group_assigned:
-                csv_status = "G"  # Group only
-            elif has_playlist_assigned:
-                csv_status = "P"  # Playlist only
-            else:
-                csv_status = "—"  # None
+            csv_status = "G" if has_group_assigned else "—"
+
+            # VNS data doesn't have duplicate events (only if same file loaded twice)
+            duplicate_events = 0 if source_app == "VNS Analyse" else summary.duplicate_events
 
             participants_data.append({
                 "Participant": summary.participant_id,
@@ -663,15 +645,14 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
                 "Files": files_str,
                 "Date/Time": recording_dt_str,
                 "Group": group_display,
-                "Playlist": playlist_display,
                 "Total Beats": summary.total_beats,
                 "Retained": summary.retained_beats,
                 "Duplicates": summary.duplicate_rr_intervals,
                 "Artifacts (%)": f"{summary.artifact_ratio * 100:.1f}",
                 "Duration (min)": f"{summary.duration_s / 60:.1f}",
                 "Events": summary.events_detected,
-                "Total Events": summary.events_detected + summary.duplicate_events,
-                "Duplicate Events": summary.duplicate_events,
+                "Total Events": summary.events_detected + duplicate_events,
+                "Duplicate Events": duplicate_events,
                 "RR Range (ms)": f"{int(summary.rr_min_ms)}-{int(summary.rr_max_ms)}",
                 "Mean RR (ms)": f"{summary.rr_mean_ms:.0f}",
             })
@@ -687,7 +668,7 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
         column_config={
             "Participant": st.column_config.TextColumn("Participant", disabled=True, width="medium"),
             "CSV": st.column_config.TextColumn("CSV", disabled=True, width="small",
-                help="CSV import status: **=Both Group & Playlist, G=Group only, P=Playlist only, —=None"),
+                help="CSV import status: G=Group assigned, —=None"),
             "Quality": st.column_config.TextColumn("Quality", disabled=True, width="small",
                 help="Green=Good (<5% artifacts), Yellow=Moderate (5-15%), Red=Poor (>15%)"),
             "Saved": st.column_config.TextColumn("Saved", disabled=True, width="small"),
@@ -699,8 +680,6 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
                 help="HRV Logger: RR/Events CSV files. VNS Analyse: TXT files. * = multiple files merged"),
             "Group": st.column_config.SelectboxColumn("Group", options=group_display_options,
                 required=True, help="Select study group", width="small"),
-            "Playlist": st.column_config.SelectboxColumn("Playlist", options=playlist_display_options,
-                required=False, help="Select playlist/randomization", width="small"),
             "Total Beats": st.column_config.NumberColumn("Total Beats", disabled=True, format="%d"),
             "Retained": st.column_config.NumberColumn("Retained", disabled=True, format="%d"),
             "Artifacts (%)": st.column_config.TextColumn("Artifacts (%)", disabled=True, width="small"),
@@ -715,13 +694,8 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
                   "RR Range (ms)", "Mean RR (ms)"]
     )
 
-    # Auto-save group and playlist assignments when changed
+    # Auto-save group assignments when changed
     groups_changed = False
-    playlists_changed = False
-
-    # Initialize participant_playlists if not exists
-    if "participant_playlists" not in st.session_state:
-        st.session_state.participant_playlists = {}
 
     for idx, row in edited_df.iterrows():
         participant_id = row["Participant"]
@@ -734,22 +708,9 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
             st.session_state.participant_groups[participant_id] = new_group_code
             groups_changed = True
 
-        # Check playlist change - convert label to code using mapping
-        new_playlist_label = row["Playlist"]
-        new_playlist_code = playlist_label_to_code.get(new_playlist_label, new_playlist_label)
-        old_playlist_code = st.session_state.participant_playlists.get(participant_id, "")
-        if old_playlist_code != new_playlist_code:
-            st.session_state.participant_playlists[participant_id] = new_playlist_code
-            playlists_changed = True
-
-    if groups_changed or playlists_changed:
+    if groups_changed:
         save_participant_data()
-        msg = []
-        if groups_changed:
-            msg.append("Groups")
-        if playlists_changed:
-            msg.append("Playlists")
-        show_toast(f"{' & '.join(msg)} saved", icon="success")
+        show_toast("Groups saved", icon="success")
 
 
 def _render_participants_table():
@@ -800,18 +761,8 @@ def _render_participants_table():
         group_display_options.append(display)
         group_label_to_code[display] = gid
 
-    # Build playlist display options (show only label, map label→code)
-    playlist_display_options = [""]
-    playlist_label_to_code = {"": ""}  # Map label back to code for saving
-    for pid, pdata in st.session_state.get("playlist_groups", {}).items():
-        plabel = pdata.get("label", "") if isinstance(pdata, dict) else ""
-        display = plabel if plabel else pid
-        playlist_display_options.append(display)
-        playlist_label_to_code[display] = pid
-
     # Render the editable table as a fragment to prevent resets during consecutive edits
-    _render_participants_data_editor(group_display_options, group_label_to_code,
-                                      playlist_display_options, playlist_label_to_code)
+    _render_participants_data_editor(group_display_options, group_label_to_code)
 
     # Show warning if any participant has duplicate RR intervals (use session state directly)
     high_duplicates = [
