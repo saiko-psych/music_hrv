@@ -62,12 +62,12 @@ from rrational.gui.rrational_export import (  # noqa: E402
 # =============================================================================
 
 
-def generate_overlapping_windows(
+def generate_overlapping_windows_time(
     rr_intervals: list,
     window_duration_ms: float,
     step_size_ms: float,
-) -> list[tuple[int, int, list]]:
-    """Generate overlapping windows from a list of RR intervals.
+) -> list[tuple[int, float, list]]:
+    """Generate overlapping windows from a list of RR intervals (time-based).
 
     Args:
         rr_intervals: List of RR interval values in ms (or RRInterval objects with .rr_ms)
@@ -120,6 +120,64 @@ def generate_overlapping_windows(
             break
 
     return windows
+
+
+def generate_overlapping_windows_beats(
+    rr_intervals: list,
+    window_beats: int,
+    step_beats: int,
+) -> list[tuple[int, int, list]]:
+    """Generate overlapping windows from a list of RR intervals (beat-based).
+
+    Args:
+        rr_intervals: List of RR interval values in ms (or RRInterval objects with .rr_ms)
+        window_beats: Number of beats in each window
+        step_beats: Number of beats to step between window starts
+
+    Returns:
+        List of tuples: (window_idx, start_beat_idx, window_rr_list)
+        Each window_rr_list contains the RR values for that window.
+    """
+    if not rr_intervals:
+        return []
+
+    # Handle both raw values and RRInterval objects
+    if hasattr(rr_intervals[0], 'rr_ms'):
+        rr_values = [rr.rr_ms for rr in rr_intervals]
+    else:
+        rr_values = list(rr_intervals)
+
+    total_beats = len(rr_values)
+
+    # Generate windows
+    windows = []
+    window_idx = 0
+    start_beat = 0
+
+    while start_beat + window_beats <= total_beats:
+        end_beat = start_beat + window_beats
+        window_rr = rr_values[start_beat:end_beat]
+
+        windows.append((window_idx, start_beat, window_rr))
+        window_idx += 1
+
+        start_beat += step_beats
+
+        # Safety: stop if we've generated too many windows
+        if window_idx > 100:
+            break
+
+    return windows
+
+
+# Backwards compatibility alias
+def generate_overlapping_windows(
+    rr_intervals: list,
+    window_duration_ms: float,
+    step_size_ms: float,
+) -> list[tuple[int, float, list]]:
+    """Backwards-compatible alias for generate_overlapping_windows_time."""
+    return generate_overlapping_windows_time(rr_intervals, window_duration_ms, step_size_ms)
 
 
 def aggregate_hrv_results(window_results: list[pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -2037,49 +2095,93 @@ def _render_single_participant_analysis():
         # Overlapping window analysis options
         with st.expander("Overlapping Window Analysis", expanded=False):
             st.markdown("""
-            Split each section into **overlapping time windows** for more reliable HRV metrics.
+            Split each section into **overlapping windows** for more reliable HRV metrics.
             Results are averaged across all windows within each section.
-
-            **Recommended settings:**
-            - 5-minute windows with 50% overlap (2.5 min step)
-            - Ensures each segment meets frequency-domain requirements (≥2 min, ≥300 beats)
             """)
             use_overlapping_windows = st.checkbox(
                 "Enable overlapping window analysis",
                 value=False,
                 key="use_overlapping_windows",
-                help="Analyze each section using multiple overlapping time windows"
+                help="Analyze each section using multiple overlapping windows"
             )
 
             if use_overlapping_windows:
-                col1, col2 = st.columns(2)
-                with col1:
-                    window_duration_min = st.slider(
-                        "Window duration (minutes)",
-                        min_value=1,
-                        max_value=10,
-                        value=5,
-                        step=1,
-                        key="overlap_window_duration",
-                        help="Duration of each analysis window"
-                    )
-                with col2:
-                    overlap_percent = st.slider(
-                        "Overlap (%)",
-                        min_value=0,
-                        max_value=75,
-                        value=50,
-                        step=25,
-                        key="overlap_percent",
-                        help="Percentage overlap between consecutive windows"
-                    )
+                # Mode selection: time-based or beat-based
+                window_mode = st.radio(
+                    "Window mode",
+                    options=["time", "beats"],
+                    format_func=lambda x: "Time-based (minutes)" if x == "time" else "Beat-based (number of beats)",
+                    horizontal=True,
+                    key="overlap_window_mode",
+                    help="Choose whether to define windows by duration (time) or by number of beats"
+                )
 
-                # Show calculated step size
-                step_size_min = window_duration_min * (1 - overlap_percent / 100)
-                st.caption(f"Step size: {step_size_min:.1f} minutes between window starts")
+                if window_mode == "time":
+                    st.caption("**Recommended:** 5-minute windows with 50% overlap for frequency-domain metrics")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        window_duration_min = st.slider(
+                            "Window duration (minutes)",
+                            min_value=1,
+                            max_value=10,
+                            value=5,
+                            step=1,
+                            key="overlap_window_duration",
+                            help="Duration of each analysis window"
+                        )
+                    with col2:
+                        overlap_percent = st.slider(
+                            "Overlap (%)",
+                            min_value=0,
+                            max_value=75,
+                            value=50,
+                            step=25,
+                            key="overlap_percent",
+                            help="Percentage overlap between consecutive windows"
+                        )
+
+                    # Show calculated step size
+                    step_size_min = window_duration_min * (1 - overlap_percent / 100)
+                    st.caption(f"Step size: {step_size_min:.1f} minutes between window starts")
+                    # Set beat variables to None for time mode
+                    window_beats = None
+                    step_beats = None
+                else:
+                    st.caption("**Recommended:** 300 beats with 50% overlap (150-beat step) for frequency-domain metrics")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        window_beats = st.slider(
+                            "Window size (beats)",
+                            min_value=100,
+                            max_value=1000,
+                            value=300,
+                            step=50,
+                            key="overlap_window_beats",
+                            help="Number of beats in each analysis window (≥300 recommended for frequency metrics)"
+                        )
+                    with col2:
+                        overlap_beats_percent = st.slider(
+                            "Overlap (%)",
+                            min_value=0,
+                            max_value=75,
+                            value=50,
+                            step=25,
+                            key="overlap_beats_percent",
+                            help="Percentage overlap between consecutive windows"
+                        )
+
+                    # Calculate step size in beats
+                    step_beats = int(window_beats * (1 - overlap_beats_percent / 100))
+                    st.caption(f"Step size: {step_beats} beats between window starts")
+                    # Set time variables to None for beat mode
+                    window_duration_min = None
+                    overlap_percent = None
             else:
+                window_mode = "time"
                 window_duration_min = 5
                 overlap_percent = 50
+                window_beats = None
+                step_beats = None
 
     if st.button("Analyze HRV", key="analyze_single_btn", type="primary"):
         # Validate inputs
@@ -2137,8 +2239,101 @@ def _render_single_participant_analysis():
                             if quality_grade == "poor":
                                 st.warning(f"Section {sec_name} has poor quality - results may be unreliable")
 
-                            # Calculate HRV metrics
+                            # Calculate HRV metrics - with optional overlapping windows
                             st.write(f"  Computing HRV for {len(nn_intervals_ms)} NN intervals...")
+
+                            if use_overlapping_windows:
+                                # Generate overlapping windows based on mode
+                                if window_mode == "beats":
+                                    windows = generate_overlapping_windows_beats(
+                                        nn_intervals_ms, window_beats, step_beats
+                                    )
+                                    window_info_str = f"{window_beats} beats, {step_beats}-beat step"
+                                else:
+                                    window_duration_ms = window_duration_min * 60 * 1000
+                                    step_size_ms = window_duration_ms * (1 - overlap_percent / 100)
+                                    windows = generate_overlapping_windows_time(
+                                        nn_intervals_ms, window_duration_ms, step_size_ms
+                                    )
+                                    window_info_str = f"{window_duration_min}min, {overlap_percent}% overlap"
+
+                                if len(windows) >= 1:
+                                    st.write(f"    Analyzing {len(windows)} overlapping windows ({window_info_str})...")
+
+                                    window_hrv_results = []
+                                    window_details = []
+
+                                    for win_idx, win_start, win_rr in windows:
+                                        if len(win_rr) < 30:
+                                            continue
+
+                                        try:
+                                            win_peaks = nk.intervals_to_peaks(win_rr, sampling_rate=1000)
+                                            win_hrv_time = nk.hrv_time(win_peaks, sampling_rate=1000, show=False)
+                                            if meets_freq:
+                                                win_hrv_freq = nk.hrv_frequency(win_peaks, sampling_rate=1000, show=False)
+                                                win_hrv = pd.concat([win_hrv_time, win_hrv_freq], axis=1)
+                                            else:
+                                                win_hrv = win_hrv_time
+
+                                            window_hrv_results.append(win_hrv)
+                                            detail = {
+                                                "window_idx": win_idx,
+                                                "n_beats": len(win_rr),
+                                                "duration_s": sum(win_rr) / 1000,
+                                                "hrv_results": win_hrv,
+                                            }
+                                            if window_mode == "beats":
+                                                detail["start_beat"] = win_start
+                                            else:
+                                                detail["start_ms"] = win_start
+                                            window_details.append(detail)
+                                        except Exception as e:
+                                            st.write(f"      Window {win_idx + 1} failed: {e}")
+                                            continue
+
+                                    if window_hrv_results:
+                                        hrv_results, hrv_std = aggregate_hrv_results(window_hrv_results)
+                                        st.write(f"    ✓ Aggregated results from {len(window_hrv_results)} valid windows")
+
+                                        section_results[sec_name] = {
+                                            "hrv_results": hrv_results,
+                                            "hrv_std": hrv_std,
+                                            "rr_intervals": nn_intervals_ms,
+                                            "n_beats": len(nn_intervals_ms),
+                                            "label": sec_data.definition.label or sec_name,
+                                            "artifact_info": {
+                                                "total_artifacts": sec_data.final_artifacts.count,
+                                                "artifact_rate": sec_data.final_artifacts.rate,
+                                                "method": sec_data.artifact_detection.method if sec_data.artifact_detection else "manual",
+                                            },
+                                            "ready_file": str(selected_ready_file),
+                                            "quality_grade": quality_grade,
+                                            "quality": {
+                                                "meets_time_domain": meets_time,
+                                                "meets_freq_domain": meets_freq,
+                                                "usable_beats": sec_data.quality.usable_beats,
+                                                "usable_duration_s": sec_data.quality.usable_duration_s,
+                                            },
+                                            "overlapping_analysis": True,
+                                            "n_windows": len(window_hrv_results),
+                                            "window_mode": window_mode,
+                                            "window_duration_min": window_duration_min,
+                                            "overlap_percent": overlap_percent,
+                                            "window_beats": window_beats,
+                                            "step_beats": step_beats,
+                                            "window_details": window_details,
+                                            "version": "2.0",
+                                        }
+                                        # Update progress and continue to next section
+                                        progress.progress(10 + int(80 * (idx + 1) / total_sections))
+                                        continue
+                                    else:
+                                        st.warning(f"    No valid windows for section '{sec_name}', falling back to single analysis")
+                                else:
+                                    st.warning(f"    Section too short for overlapping windows, using single analysis")
+
+                            # Standard single analysis (fallback or when overlapping disabled)
                             peaks = nk.intervals_to_peaks(nn_intervals_ms, sampling_rate=1000)
                             hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
 
@@ -2227,15 +2422,6 @@ def _render_single_participant_analysis():
                         st.write(f"Using {len(clean_rr_ms)} clean beats ({len(artifact_indices)} artifacts removed)")
                         progress.progress(40)
 
-                        # Calculate HRV metrics
-                        st.write("Computing HRV metrics...")
-                        nk = get_neurokit()
-                        peaks = nk.intervals_to_peaks(clean_rr_ms, sampling_rate=1000)
-                        hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
-                        hrv_freq = nk.hrv_frequency(peaks, sampling_rate=1000, show=False)
-                        hrv_results = pd.concat([hrv_time, hrv_freq], axis=1)
-                        progress.progress(80)
-
                         # Get segment name
                         segment_name = "ready_file"
                         if ready_data.segment:
@@ -2243,6 +2429,106 @@ def _render_single_participant_analysis():
                                 segment_name = ready_data.segment.section_name
                             elif ready_data.segment.time_range:
                                 segment_name = ready_data.segment.time_range.get("label", "custom_range")
+
+                        # Calculate HRV metrics - with optional overlapping windows
+                        st.write("Computing HRV metrics...")
+                        nk = get_neurokit()
+
+                        if use_overlapping_windows:
+                            # Generate overlapping windows based on mode
+                            if window_mode == "beats":
+                                windows = generate_overlapping_windows_beats(
+                                    clean_rr_ms, window_beats, step_beats
+                                )
+                                window_info_str = f"{window_beats} beats, {step_beats}-beat step"
+                            else:
+                                window_duration_ms = window_duration_min * 60 * 1000
+                                step_size_ms = window_duration_ms * (1 - overlap_percent / 100)
+                                windows = generate_overlapping_windows_time(
+                                    clean_rr_ms, window_duration_ms, step_size_ms
+                                )
+                                window_info_str = f"{window_duration_min}min, {overlap_percent}% overlap"
+
+                            if len(windows) >= 1:
+                                st.write(f"  Analyzing {len(windows)} overlapping windows ({window_info_str})...")
+
+                                window_hrv_results = []
+                                window_details = []
+
+                                for win_idx, win_start, win_rr in windows:
+                                    if len(win_rr) < 30:
+                                        continue
+
+                                    try:
+                                        win_peaks = nk.intervals_to_peaks(win_rr, sampling_rate=1000)
+                                        win_hrv_time = nk.hrv_time(win_peaks, sampling_rate=1000, show=False)
+                                        win_hrv_freq = nk.hrv_frequency(win_peaks, sampling_rate=1000, show=False)
+                                        win_hrv = pd.concat([win_hrv_time, win_hrv_freq], axis=1)
+
+                                        window_hrv_results.append(win_hrv)
+                                        detail = {
+                                            "window_idx": win_idx,
+                                            "n_beats": len(win_rr),
+                                            "duration_s": sum(win_rr) / 1000,
+                                            "hrv_results": win_hrv,
+                                        }
+                                        if window_mode == "beats":
+                                            detail["start_beat"] = win_start
+                                        else:
+                                            detail["start_ms"] = win_start
+                                        window_details.append(detail)
+                                    except Exception as e:
+                                        st.write(f"    Window {win_idx + 1} failed: {e}")
+                                        continue
+
+                                if window_hrv_results:
+                                    hrv_results, hrv_std = aggregate_hrv_results(window_hrv_results)
+                                    st.write(f"  ✓ Aggregated results from {len(window_hrv_results)} valid windows")
+                                    progress.progress(80)
+
+                                    section_results = {
+                                        segment_name: {
+                                            "hrv_results": hrv_results,
+                                            "hrv_std": hrv_std,
+                                            "rr_intervals": clean_rr_ms,
+                                            "n_beats": len(clean_rr_ms),
+                                            "label": segment_name,
+                                            "artifact_info": {
+                                                "total_artifacts": len(artifact_indices),
+                                                "artifact_rate": ready_data.quality.artifact_rate_final,
+                                                "method": ready_data.artifact_detection.method if ready_data.artifact_detection else "manual",
+                                            },
+                                            "ready_file": str(selected_ready_file),
+                                            "quality_grade": ready_data.quality.quality_grade,
+                                            "audit_trail": ready_data.processing_steps,
+                                            "overlapping_analysis": True,
+                                            "n_windows": len(window_hrv_results),
+                                            "window_mode": window_mode,
+                                            "window_duration_min": window_duration_min,
+                                            "overlap_percent": overlap_percent,
+                                            "window_beats": window_beats,
+                                            "step_beats": step_beats,
+                                            "window_details": window_details,
+                                            "version": "1.0",
+                                        }
+                                    }
+
+                                    progress.progress(100)
+                                    st.session_state.analysis_results[selected_participant] = section_results
+                                    status.update(label="Analysis complete from ready file!", state="complete")
+                                    show_toast("Ready file analysis complete (overlapping windows)", icon="success")
+                                    return  # Exit early, skip standard analysis
+                                else:
+                                    st.warning("  No valid windows, falling back to single analysis")
+                            else:
+                                st.warning("  Data too short for overlapping windows, using single analysis")
+
+                        # Standard single analysis (fallback or when overlapping disabled)
+                        peaks = nk.intervals_to_peaks(clean_rr_ms, sampling_rate=1000)
+                        hrv_time = nk.hrv_time(peaks, sampling_rate=1000, show=False)
+                        hrv_freq = nk.hrv_frequency(peaks, sampling_rate=1000, show=False)
+                        hrv_results = pd.concat([hrv_time, hrv_freq], axis=1)
+                        progress.progress(80)
 
                         # Store results
                         section_results = {
@@ -2466,21 +2752,27 @@ def _render_single_participant_analysis():
 
                                 # Check if overlapping window analysis is enabled
                                 if use_overlapping_windows:
-                                    # Generate overlapping windows
-                                    window_duration_ms = window_duration_min * 60 * 1000
-                                    step_size_ms = window_duration_ms * (1 - overlap_percent / 100)
-
-                                    windows = generate_overlapping_windows(
-                                        rr_ms, window_duration_ms, step_size_ms
-                                    )
+                                    # Generate overlapping windows based on mode
+                                    if window_mode == "beats":
+                                        windows = generate_overlapping_windows_beats(
+                                            rr_ms, window_beats, step_beats
+                                        )
+                                        window_info_str = f"{window_beats} beats, {step_beats}-beat step"
+                                    else:
+                                        window_duration_ms = window_duration_min * 60 * 1000
+                                        step_size_ms = window_duration_ms * (1 - overlap_percent / 100)
+                                        windows = generate_overlapping_windows_time(
+                                            rr_ms, window_duration_ms, step_size_ms
+                                        )
+                                        window_info_str = f"{window_duration_min}min, {overlap_percent}% overlap"
 
                                     if len(windows) >= 1:
-                                        st.write(f"    Analyzing {len(windows)} overlapping windows ({window_duration_min}min, {overlap_percent}% overlap)...")
+                                        st.write(f"    Analyzing {len(windows)} overlapping windows ({window_info_str})...")
 
                                         window_hrv_results = []
                                         window_details = []
 
-                                        for win_idx, win_start_ms, win_rr in windows:
+                                        for win_idx, win_start, win_rr in windows:
                                             if len(win_rr) < 30:  # Skip windows with too few beats
                                                 continue
 
@@ -2491,13 +2783,17 @@ def _render_single_participant_analysis():
                                                 win_hrv = pd.concat([win_hrv_time, win_hrv_freq], axis=1)
 
                                                 window_hrv_results.append(win_hrv)
-                                                window_details.append({
+                                                detail = {
                                                     "window_idx": win_idx,
-                                                    "start_ms": win_start_ms,
                                                     "n_beats": len(win_rr),
                                                     "duration_s": sum(win_rr) / 1000,
                                                     "hrv_results": win_hrv,
-                                                })
+                                                }
+                                                if window_mode == "beats":
+                                                    detail["start_beat"] = win_start
+                                                else:
+                                                    detail["start_ms"] = win_start
+                                                window_details.append(detail)
                                             except Exception as e:
                                                 st.write(f"      Window {win_idx + 1} failed: {e}")
                                                 continue
@@ -2516,8 +2812,11 @@ def _render_single_participant_analysis():
                                                 "artifact_info": artifact_info,
                                                 "overlapping_analysis": True,
                                                 "n_windows": len(window_hrv_results),
+                                                "window_mode": window_mode,
                                                 "window_duration_min": window_duration_min,
                                                 "overlap_percent": overlap_percent,
+                                                "window_beats": window_beats,
+                                                "step_beats": step_beats,
                                                 "window_details": window_details,
                                             }
                                         else:
