@@ -181,16 +181,19 @@ def find_event_candidates(
                 index=idx,
             ))
 
-    # Sort by timestamp (handle mixed types from old saved data)
+    # Sort by timestamp (handle mixed types and timezone issues from old saved data)
     def get_sort_key(c):
         ts = c.timestamp
         if ts is None:
             return datetime.min
         if isinstance(ts, str):
             try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             except (ValueError, TypeError):
                 return datetime.min
+        # Convert to naive datetime to avoid offset-naive vs offset-aware comparison errors
+        if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+            ts = ts.replace(tzinfo=None)
         return ts
 
     candidates.sort(key=get_sort_key)
