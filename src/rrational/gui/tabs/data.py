@@ -421,8 +421,18 @@ def render_data_tab():
                     )
                     st.session_state.vns_use_corrected = vns_use_corrected
 
-                # Load button
-                if st.button("Load Selected Sources", type="primary", width='stretch'):
+                # Load buttons
+                col_load, col_refresh = st.columns([3, 1])
+                with col_load:
+                    load_clicked = st.button("Load Selected Sources", type="primary", use_container_width=True)
+                with col_refresh:
+                    if st.button("🔄 Refresh", help="Clear cache and reload data", use_container_width=True):
+                        cached_load_vns_preview.clear()
+                        cached_load_hrv_logger_preview.clear()
+                        st.session_state.pop("summaries", None)
+                        st.rerun()
+
+                if load_clicked:
                     with st.status("Loading recordings...", expanded=True) as status:
                         try:
                             all_summaries = []
@@ -512,9 +522,17 @@ def _build_participants_csv() -> str:
         if summary.recording_datetime:
             recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
 
+        source_app = getattr(summary, 'source_app', 'Unknown')
+
+        # Format files column based on source app
         rr_count = getattr(summary, 'rr_file_count', 1)
         ev_count = getattr(summary, 'events_file_count', 1 if summary.events_detected > 0 else 0)
-        files_str = f"{rr_count}RR/{ev_count}Ev"
+        if source_app == "VNS Analyse":
+            # VNS has single TXT files (not separate RR/Events)
+            files_str = f"{rr_count} TXT"
+        else:
+            # HRV Logger has separate RR and Events CSV files
+            files_str = f"{rr_count}RR/{ev_count}Ev"
 
         playlist_code = st.session_state.get("participant_playlists", {}).get(summary.participant_id, "")
         group_code = st.session_state.participant_groups.get(summary.participant_id, "Default")
@@ -528,8 +546,6 @@ def _build_participants_csv() -> str:
             playlist_data = st.session_state.get("playlist_groups", {}).get(playlist_code, {})
             playlist_label = playlist_data.get("label", "") if isinstance(playlist_data, dict) else ""
             playlist_display = playlist_label if playlist_label else playlist_code
-
-        source_app = getattr(summary, 'source_app', 'Unknown')
         device_settings = st.session_state.get("default_device_settings", {})
         device_name = device_settings.get("device", "Unknown")
 
@@ -584,12 +600,20 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
             if summary.recording_datetime:
                 recording_dt_str = summary.recording_datetime.strftime("%Y-%m-%d %H:%M")
 
-            # Show file counts
+            # Show file counts - format based on source app
+            source_app = getattr(summary, 'source_app', 'Unknown')
             rr_count = getattr(summary, 'rr_file_count', 1)
             ev_count = getattr(summary, 'events_file_count', 1 if summary.events_detected > 0 else 0)
-            files_str = f"{rr_count}RR/{ev_count}Ev"
-            if rr_count > 1 or ev_count > 1:
-                files_str = f"* {files_str}"
+            if source_app == "VNS Analyse":
+                # VNS has single TXT files (not separate RR/Events)
+                files_str = f"{rr_count} TXT"
+                if rr_count > 1:
+                    files_str = f"* {files_str}"
+            else:
+                # HRV Logger has separate RR and Events CSV files
+                files_str = f"{rr_count}RR/{ev_count}Ev"
+                if rr_count > 1 or ev_count > 1:
+                    files_str = f"* {files_str}"
 
             quality_badge = get_quality_badge(100, summary.artifact_ratio)
 
@@ -672,7 +696,7 @@ def _render_participants_data_editor(group_display_options, group_label_to_code,
             "Device": st.column_config.TextColumn("Device", disabled=True, width="small",
                 help="Recording device used (e.g., Polar H10)"),
             "Files": st.column_config.TextColumn("Files", disabled=True, width="small",
-                help="RR files / Events files. * indicates multiple files (merged)"),
+                help="HRV Logger: RR/Events CSV files. VNS Analyse: TXT files. * = multiple files merged"),
             "Group": st.column_config.SelectboxColumn("Group", options=group_display_options,
                 required=True, help="Select study group", width="small"),
             "Playlist": st.column_config.SelectboxColumn("Playlist", options=playlist_display_options,

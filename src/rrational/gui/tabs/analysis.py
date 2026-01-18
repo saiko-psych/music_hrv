@@ -50,7 +50,6 @@ from rrational.gui.help_text import ANALYSIS_HELP  # noqa: E402
 from rrational.gui.rrational_export import (  # noqa: E402
     find_rrational_files,
     load_rrational,
-    RRationalExport,
 )
 
 
@@ -1492,12 +1491,38 @@ def _render_music_section_analysis():
                 is_vns = (source_app == "VNS Analyse")
 
                 # Load recording
-                if is_vns and getattr(summary, 'vns_path', None):
-                    recording_data = cached_load_vns_recording(
-                        str(summary.vns_path),
-                        selected_participant,
-                        use_corrected=st.session_state.get("vns_use_corrected", False),
-                    )
+                if is_vns:
+                    vns_paths = getattr(summary, 'vns_paths', None)
+                    if vns_paths:
+                        recording_data = cached_load_vns_recording(
+                            tuple(str(p) for p in vns_paths),
+                            selected_participant,
+                            use_corrected=st.session_state.get("vns_use_corrected", False),
+                        )
+                    elif getattr(summary, 'vns_path', None):
+                        # Fallback: single path (old cached summary)
+                        recording_data = cached_load_vns_recording(
+                            (str(summary.vns_path),),
+                            selected_participant,
+                            use_corrected=st.session_state.get("vns_use_corrected", False),
+                        )
+                    else:
+                        # Re-discover VNS recordings
+                        from rrational.io.vns_analyse import discover_vns_recordings
+                        from pathlib import Path
+                        vns_bundles = discover_vns_recordings(
+                            Path(st.session_state.data_dir),
+                            pattern=st.session_state.id_pattern
+                        )
+                        vns_bundle = next((b for b in vns_bundles if b.participant_id == selected_participant), None)
+                        if not vns_bundle:
+                            st.error(f"No VNS recording found for {selected_participant}")
+                            return
+                        recording_data = cached_load_vns_recording(
+                            tuple(str(p) for p in vns_bundle.file_paths),
+                            selected_participant,
+                            use_corrected=st.session_state.get("vns_use_corrected", False),
+                        )
                 else:
                     bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)
                     bundle = next((b for b in bundles if b.participant_id == selected_participant), None)
@@ -1867,7 +1892,7 @@ def _render_single_participant_analysis():
 
         # ===== READY FILE ANALYSIS PATH =====
         if use_ready_file and selected_ready_file:
-            status_msg = f"Analyzing HRV from ready file..."
+            status_msg = "Analyzing HRV from ready file..."
             with st.status(status_msg, expanded=True) as status:
                 try:
                     st.write(f"Loading ready file: {selected_ready_file.name}")
@@ -1929,7 +1954,7 @@ def _render_single_participant_analysis():
 
                     progress.progress(100)
                     st.session_state.analysis_results[selected_participant] = section_results
-                    status.update(label=f"Analysis complete from ready file!", state="complete")
+                    status.update(label="Analysis complete from ready file!", state="complete")
                     show_toast("Ready file analysis complete", icon="success")
 
                 except Exception as e:
@@ -1951,13 +1976,38 @@ def _render_single_participant_analysis():
                     source_app = getattr(summary, 'source_app', 'HRV Logger') if summary else 'HRV Logger'
                     is_vns = (source_app == "VNS Analyse")
 
-                    if is_vns and getattr(summary, 'vns_path', None):
-                        # Load VNS recording
-                        recording_data = cached_load_vns_recording(
-                            str(summary.vns_path),
-                            selected_participant,
-                            use_corrected=st.session_state.get("vns_use_corrected", False),
-                        )
+                    if is_vns:
+                        vns_paths = getattr(summary, 'vns_paths', None)
+                        if vns_paths:
+                            recording_data = cached_load_vns_recording(
+                                tuple(str(p) for p in vns_paths),
+                                selected_participant,
+                                use_corrected=st.session_state.get("vns_use_corrected", False),
+                            )
+                        elif getattr(summary, 'vns_path', None):
+                            # Fallback: single path (old cached summary)
+                            recording_data = cached_load_vns_recording(
+                                (str(summary.vns_path),),
+                                selected_participant,
+                                use_corrected=st.session_state.get("vns_use_corrected", False),
+                            )
+                        else:
+                            # Re-discover VNS recordings
+                            from rrational.io.vns_analyse import discover_vns_recordings
+                            from pathlib import Path
+                            vns_bundles = discover_vns_recordings(
+                                Path(st.session_state.data_dir),
+                                pattern=st.session_state.id_pattern
+                            )
+                            vns_bundle = next((b for b in vns_bundles if b.participant_id == selected_participant), None)
+                            if not vns_bundle:
+                                st.error(f"No VNS recording found for {selected_participant}")
+                                return
+                            recording_data = cached_load_vns_recording(
+                                tuple(str(p) for p in vns_bundle.file_paths),
+                                selected_participant,
+                                use_corrected=st.session_state.get("vns_use_corrected", False),
+                            )
                     else:
                         # Load HRV Logger recording
                         bundles = cached_discover_recordings(st.session_state.data_dir, st.session_state.id_pattern)

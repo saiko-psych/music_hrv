@@ -35,6 +35,33 @@ VNS_CORRECTED_SECTION = "RR-Intervalle - Korrigierte Werte"
 # Regex to parse VNS filename: "dd.mm.yyyy hh.mm ..."
 VNS_FILENAME_PATTERN = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2})\.(\d{2})")
 
+# Pattern to extract participant ID from VNS filename after date/time
+# Format: "dd.mm.yyyy hh.mm <participant_id> xh xxmin.txt"
+# The participant ID is typically between the time and duration (e.g., "VP01", "P001", "SUB123")
+VNS_PARTICIPANT_PATTERN = re.compile(
+    r"\d{2}\.\d{2}\.\d{4}\s+\d{1,2}\.\d{2}\s+(?P<participant>[A-Za-z0-9_-]+?)(?:\s+\d+h|\s+\d+min|\.txt)",
+    re.IGNORECASE
+)
+
+
+def extract_vns_participant_id(filename: str, fallback_pattern: str = DEFAULT_ID_PATTERN) -> str:
+    """Extract participant ID from VNS filename.
+
+    VNS filename format: "dd.mm.yyyy hh.mm <participant_id> xh xxmin.txt"
+    Example: "05.12.2024 14.30 VP01 2h 15min.txt" -> "VP01"
+
+    Falls back to generic extraction if VNS-specific pattern fails.
+    """
+    # Try VNS-specific pattern first
+    match = VNS_PARTICIPANT_PATTERN.search(filename)
+    if match:
+        participant = match.group("participant")
+        if participant:
+            return participant
+
+    # Fallback to generic extraction
+    return extract_participant_id(filename, fallback_pattern)
+
 
 def parse_vns_filename_datetime(filename: str) -> datetime | None:
     """Parse recording date and time from VNS filename.
@@ -62,10 +89,53 @@ def parse_vns_filename_datetime(filename: str) -> datetime | None:
 
 @dataclass(slots=True)
 class VNSRecordingBundle:
-    """Single VNS file for one participant."""
+    """VNS files for one participant (supports multiple files from restarts)."""
 
     participant_id: str
+    file_paths: list[Path]  # All VNS files for this participant (sorted by timestamp)
+
+    @property
+    def file_path(self) -> Path:
+        """First file (for backward compatibility)."""
+        return self.file_paths[0] if self.file_paths else None
+
+    @property
+    def has_multiple_files(self) -> bool:
+        """Check if this participant has multiple VNS files."""
+        return len(self.file_paths) > 1
+
+
+@dataclass(slots=True)
+class VNSFileSegment:
+    """Information about a single VNS file segment."""
+
     file_path: Path
+    start_time: datetime | None  # Parsed from filename
+    end_time: datetime | None  # Calculated from start + duration
+    duration_ms: int  # Total duration in milliseconds
+    beat_count: int
+
+
+@dataclass(slots=True)
+class VNSRecordingGap:
+    """Gap between two VNS recording segments."""
+
+    after_file: Path  # File before the gap
+    before_file: Path  # File after the gap
+    gap_start: datetime
+    gap_end: datetime
+    gap_duration_s: float  # Duration in seconds
+
+
+@dataclass(slots=True)
+class VNSRecordingOverlap:
+    """Overlap between two VNS recording segments."""
+
+    file1: Path
+    file2: Path
+    overlap_start: datetime
+    overlap_end: datetime
+    overlap_duration_s: float  # Duration in seconds
 
 
 @dataclass(slots=True)
@@ -76,6 +146,10 @@ class VNSRecording:
     rr_intervals: list[RRInterval]
     events: list[EventMarker]
     header_info: dict[str, str]  # Key-value pairs from header section
+    # Multi-file metadata
+    file_segments: list[VNSFileSegment] | None = None
+    gaps: list[VNSRecordingGap] | None = None
+    overlaps: list[VNSRecordingOverlap] | None = None
 
 
 def discover_vns_recordings(
@@ -83,11 +157,11 @@ def discover_vns_recordings(
 ) -> list[VNSRecordingBundle]:
     """Discover VNS Analyse files under the provided root folder.
 
-    VNS files are typically .txt files with "VNS" in the name.
+    Supports multiple files per participant (e.g., from measurement restarts).
+    Files are sorted by parsed timestamp from filename.
     """
     root = root.expanduser().resolve()
-    bundles: list[VNSRecordingBundle] = []
-    seen_participants: dict[str, VNSRecordingBundle] = {}
+    file_index: dict[str, list[Path]] = {}
 
     # Look for .txt files (VNS Analyse exports)
     for file_path in sorted(root.rglob("*.txt")):
@@ -96,36 +170,38 @@ def discover_vns_recordings(
         if "rr_" in name or "_rr" in name or "events_" in name or "_events" in name:
             continue
 
-        participant = extract_participant_id(file_path.name, pattern)
-        if participant not in seen_participants:
-            bundle = VNSRecordingBundle(
+        # Use VNS-specific extraction which handles VNS filename format better
+        participant = extract_vns_participant_id(file_path.name, pattern)
+        file_index.setdefault(participant, []).append(file_path)
+
+    # Build bundles with all files per participant, sorted by timestamp
+    bundles: list[VNSRecordingBundle] = []
+    for participant, file_paths in sorted(file_index.items()):
+        # Sort files by parsed datetime from filename (earliest first)
+        sorted_paths = sorted(
+            file_paths,
+            key=lambda p: parse_vns_filename_datetime(p.name) or datetime.min,
+        )
+        bundles.append(
+            VNSRecordingBundle(
                 participant_id=participant,
-                file_path=file_path,
+                file_paths=sorted_paths,
             )
-            bundles.append(bundle)
-            seen_participants[participant] = bundle
+        )
 
     return bundles
 
 
-def load_vns_recording(
-    bundle: VNSRecordingBundle,
+def _load_single_vns_file(
+    path: Path,
     *,
     use_corrected: bool = False,
-) -> VNSRecording:
-    """Load a VNS Analyse file and return parsed data.
+) -> tuple[list[RRInterval], list[EventMarker], dict[str, str]]:
+    """Load a single VNS Analyse file.
 
-    VNS format:
-    - Header sections with tab-separated key-value pairs
-    - Two RR sections: Raw (Rohwerte) and Corrected (Korrigierte Werte)
-    - RR interval lines: "0.719<tab>" or "0.863<tab>Notiz: Ende Ruhe"
-    - RR values are in SECONDS (converted to ms internally)
-
-    Args:
-        bundle: VNS recording bundle with file path
-        use_corrected: If True, use corrected RR values. Default False (raw values).
+    Returns:
+        tuple: (rr_intervals, events, header_info)
     """
-    path = bundle.file_path
     text = path.read_text(encoding="utf-8", errors="ignore")
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
@@ -215,11 +291,117 @@ def load_vns_recording(
             except ValueError:
                 pass  # Not a valid RR line
 
+    return rr_intervals, events, header_info
+
+
+def load_vns_recording(
+    bundle: VNSRecordingBundle,
+    *,
+    use_corrected: bool = False,
+) -> VNSRecording:
+    """Load VNS Analyse file(s) and return parsed data.
+
+    Supports multiple files per participant (merges all files).
+    Data is sorted by timestamp after merging.
+    Detects gaps and overlaps between files.
+
+    VNS format:
+    - Header sections with tab-separated key-value pairs
+    - Two RR sections: Raw (Rohwerte) and Corrected (Korrigierte Werte)
+    - RR interval lines: "0.719<tab>" or "0.863<tab>Notiz: Ende Ruhe"
+    - RR values are in SECONDS (converted to ms internally)
+
+    Args:
+        bundle: VNS recording bundle with file path(s)
+        use_corrected: If True, use corrected RR values. Default False (raw values).
+    """
+    all_rr_intervals: list[RRInterval] = []
+    all_events: list[EventMarker] = []
+    merged_header: dict[str, str] = {}
+    file_segments: list[VNSFileSegment] = []
+
+    # Load all files and collect segment info
+    for path in bundle.file_paths:
+        rr_intervals, events, header_info = _load_single_vns_file(
+            path, use_corrected=use_corrected
+        )
+
+        # Calculate segment info
+        start_time = parse_vns_filename_datetime(path.name)
+        duration_ms = sum(rr.rr_ms for rr in rr_intervals)
+        end_time = None
+        if start_time and duration_ms > 0:
+            end_time = start_time + timedelta(milliseconds=duration_ms)
+
+        file_segments.append(VNSFileSegment(
+            file_path=path,
+            start_time=start_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            beat_count=len(rr_intervals),
+        ))
+
+        all_rr_intervals.extend(rr_intervals)
+        all_events.extend(events)
+        # Merge header info (later files overwrite earlier)
+        merged_header.update(header_info)
+
+    # Detect gaps and overlaps between segments
+    gaps: list[VNSRecordingGap] = []
+    overlaps: list[VNSRecordingOverlap] = []
+
+    if len(file_segments) > 1:
+        # Sort segments by start time
+        sorted_segments = sorted(
+            file_segments,
+            key=lambda s: s.start_time if s.start_time else datetime.min
+        )
+
+        for i in range(len(sorted_segments) - 1):
+            seg1 = sorted_segments[i]
+            seg2 = sorted_segments[i + 1]
+
+            if seg1.end_time and seg2.start_time:
+                if seg1.end_time < seg2.start_time:
+                    # Gap detected
+                    gap_duration = (seg2.start_time - seg1.end_time).total_seconds()
+                    gaps.append(VNSRecordingGap(
+                        after_file=seg1.file_path,
+                        before_file=seg2.file_path,
+                        gap_start=seg1.end_time,
+                        gap_end=seg2.start_time,
+                        gap_duration_s=gap_duration,
+                    ))
+                elif seg1.end_time > seg2.start_time:
+                    # Overlap detected
+                    overlap_end = min(seg1.end_time, seg2.end_time) if seg2.end_time else seg1.end_time
+                    overlap_duration = (overlap_end - seg2.start_time).total_seconds()
+                    overlaps.append(VNSRecordingOverlap(
+                        file1=seg1.file_path,
+                        file2=seg2.file_path,
+                        overlap_start=seg2.start_time,
+                        overlap_end=overlap_end,
+                        overlap_duration_s=overlap_duration,
+                    ))
+
+    # Sort RR intervals by timestamp (handles merged files from restarts)
+    all_rr_intervals.sort(
+        key=lambda x: x.timestamp if x.timestamp else datetime.min.replace(tzinfo=None)
+    )
+
+    # Sort events by timestamp
+    all_events.sort(
+        key=lambda x: x.timestamp if x.timestamp else datetime.min.replace(tzinfo=None)
+    )
+
     return VNSRecording(
         participant_id=bundle.participant_id,
-        rr_intervals=rr_intervals,
-        events=events,
-        header_info=header_info,
+        rr_intervals=all_rr_intervals,
+        events=all_events,
+        header_info=merged_header,
+        file_segments=file_segments if len(file_segments) > 1 else None,
+        gaps=gaps if gaps else None,
+        overlaps=overlaps if overlaps else None,
     )
 
 

@@ -53,7 +53,8 @@ class PreparationSummary:
     # File paths for reloading data in participant view
     rr_paths: list[Path] | None = None  # HRV Logger RR file paths
     events_paths: list[Path] | None = None  # HRV Logger Events file paths
-    vns_path: Path | None = None  # VNS Analyse file path
+    vns_path: Path | None = None  # VNS Analyse file path (first file, for backward compat)
+    vns_paths: list[Path] | None = None  # VNS Analyse file paths (all files)
 
     @property
     def has_multiple_files(self) -> bool:
@@ -88,6 +89,7 @@ def summarize_recording(
     rr_paths: list[Path] | None = None,
     events_paths: list[Path] | None = None,
     vns_path: Path | None = None,
+    vns_paths: list[Path] | None = None,
 ) -> PreparationSummary:
     """Clean one participant recording and collect descriptive stats."""
 
@@ -162,6 +164,7 @@ def summarize_recording(
         rr_paths=rr_paths,
         events_paths=events_paths,
         vns_path=vns_path,
+        vns_paths=vns_paths,
     )
 
 
@@ -232,10 +235,11 @@ def load_vns_preview(
                 duplicate_details=[],
                 config=config,
                 normalizer=normalizer,
-                rr_file_count=1,  # VNS always has one file per participant
+                rr_file_count=len(bundle.file_paths),  # Count of VNS files
                 events_file_count=1 if vns_recording.events else 0,
                 source_app="VNS Analyse",
-                vns_path=bundle.file_path,
+                vns_path=bundle.file_path,  # First file for backward compat
+                vns_paths=list(bundle.file_paths),  # All files
             )
         )
     return summaries

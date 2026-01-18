@@ -1159,18 +1159,70 @@ def cached_get_plot_data(timestamps_tuple, rr_values_tuple, participant_id: str,
 
 
 @st.cache_data(show_spinner=False, ttl=600)
-def cached_load_vns_recording(vns_path_str: str, participant_id: str, use_corrected: bool = False):
-    """Cache loaded VNS recording data for instant access."""
+def cached_load_vns_recording(vns_paths_tuple: tuple, participant_id: str, use_corrected: bool = False):
+    """Cache loaded VNS recording data for instant access.
+
+    Args:
+        vns_paths_tuple: Tuple of VNS file path strings (for cache key hashability)
+        participant_id: Participant identifier
+        use_corrected: Whether to use corrected RR values from VNS files
+    """
     from rrational.io.vns_analyse import VNSRecordingBundle, load_vns_recording
     bundle = VNSRecordingBundle(
         participant_id=participant_id,
-        file_path=Path(vns_path_str),
+        file_paths=[Path(p) for p in vns_paths_tuple],
     )
     recording = load_vns_recording(bundle, use_corrected=use_corrected)
+
+    # Serialize file segments for caching
+    file_segments = None
+    if recording.file_segments:
+        file_segments = [
+            {
+                'file_name': seg.file_path.name,
+                'start_time': seg.start_time,
+                'end_time': seg.end_time,
+                'duration_ms': seg.duration_ms,
+                'beat_count': seg.beat_count,
+            }
+            for seg in recording.file_segments
+        ]
+
+    # Serialize gaps
+    gaps = None
+    if recording.gaps:
+        gaps = [
+            {
+                'after_file': gap.after_file.name,
+                'before_file': gap.before_file.name,
+                'gap_start': gap.gap_start,
+                'gap_end': gap.gap_end,
+                'gap_duration_s': gap.gap_duration_s,
+            }
+            for gap in recording.gaps
+        ]
+
+    # Serialize overlaps
+    overlaps = None
+    if recording.overlaps:
+        overlaps = [
+            {
+                'file1': ov.file1.name,
+                'file2': ov.file2.name,
+                'overlap_start': ov.overlap_start,
+                'overlap_end': ov.overlap_end,
+                'overlap_duration_s': ov.overlap_duration_s,
+            }
+            for ov in recording.overlaps
+        ]
+
     return {
         'rr_intervals': [(rr.timestamp, rr.rr_ms, rr.elapsed_ms) for rr in recording.rr_intervals],
         'events': [(e.label, e.timestamp) for e in recording.events],
         'raw_events': [],  # VNS doesn't have duplicate tracking
+        'file_segments': file_segments,
+        'gaps': gaps,
+        'overlaps': overlaps,
     }
 
 

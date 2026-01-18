@@ -2015,18 +2015,70 @@ def cached_load_recording(rr_paths_tuple, events_paths_tuple, participant_id: st
 
 
 @st.cache_data(show_spinner=False, ttl=600)
-def cached_load_vns_recording(vns_path_str: str, participant_id: str, use_corrected: bool = False):
-    """Cache loaded VNS recording data for instant access."""
+def cached_load_vns_recording(vns_paths_tuple: tuple, participant_id: str, use_corrected: bool = False):
+    """Cache loaded VNS recording data for instant access.
+
+    Args:
+        vns_paths_tuple: Tuple of VNS file path strings (for cache key hashability)
+        participant_id: Participant identifier
+        use_corrected: Whether to use corrected RR values from VNS files
+    """
     from rrational.io.vns_analyse import VNSRecordingBundle, load_vns_recording
     bundle = VNSRecordingBundle(
         participant_id=participant_id,
-        file_path=Path(vns_path_str),
+        file_paths=[Path(p) for p in vns_paths_tuple],
     )
     recording = load_vns_recording(bundle, use_corrected=use_corrected)
+
+    # Serialize file segments for caching
+    file_segments = None
+    if recording.file_segments:
+        file_segments = [
+            {
+                'file_name': seg.file_path.name,
+                'start_time': seg.start_time,
+                'end_time': seg.end_time,
+                'duration_ms': seg.duration_ms,
+                'beat_count': seg.beat_count,
+            }
+            for seg in recording.file_segments
+        ]
+
+    # Serialize gaps
+    gaps = None
+    if recording.gaps:
+        gaps = [
+            {
+                'after_file': gap.after_file.name,
+                'before_file': gap.before_file.name,
+                'gap_start': gap.gap_start,
+                'gap_end': gap.gap_end,
+                'gap_duration_s': gap.gap_duration_s,
+            }
+            for gap in recording.gaps
+        ]
+
+    # Serialize overlaps
+    overlaps = None
+    if recording.overlaps:
+        overlaps = [
+            {
+                'file1': ov.file1.name,
+                'file2': ov.file2.name,
+                'overlap_start': ov.overlap_start,
+                'overlap_end': ov.overlap_end,
+                'overlap_duration_s': ov.overlap_duration_s,
+            }
+            for ov in recording.overlaps
+        ]
+
     return {
         'rr_intervals': [(rr.timestamp, rr.rr_ms, rr.elapsed_ms) for rr in recording.rr_intervals],
         'events': [(e.label, e.timestamp) for e in recording.events],
         'raw_events': [],  # VNS doesn't have duplicate tracking
+        'file_segments': file_segments,
+        'gaps': gaps,
+        'overlaps': overlaps,
     }
 
 
@@ -3826,13 +3878,19 @@ def render_rr_plot_fragment(participant_id: str):
         plot_data['timestamps'] = sequential_timestamps
         plot_data['original_timestamps'] = original_timestamps
 
-    # Show source info and clear any old gap data for VNS
+    # Check if VNS data has multiple files (enables gap detection between files)
+    vns_has_multiple_files = st.session_state.get(f"vns_multiple_files_{participant_id}", False)
+
+    # Show source info
     if is_vns_data:
-        st.info(f"**Data source: {source_app}** - Gap detection disabled (timestamps synthesized from RR intervals)")
-        # Force clear any old gap data for VNS participants
-        st.session_state[f"gaps_{participant_id}"] = {
-            "gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True
-        }
+        if vns_has_multiple_files:
+            st.info(f"**Data source: {source_app}** - Multiple files merged, gap detection enabled between recordings")
+        else:
+            st.info(f"**Data source: {source_app}** - Gap detection disabled (single file, timestamps synthesized)")
+            # Force clear any old gap data for single-file VNS
+            st.session_state[f"gaps_{participant_id}"] = {
+                "gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True
+            }
 
     # Keyboard shortcuts for inspection mode (I and R keys)
     from streamlit_shortcuts import shortcut_button, clear_shortcuts
@@ -4725,15 +4783,19 @@ def render_rr_plot_fragment(participant_id: str):
                                        key=f"frag_show_var_{participant_id}",
                                        help="Detect variance changepoints")
     with col_opt4:
+        # Enable gap detection for HRV Logger OR multi-file VNS data
+        vns_has_multiple_files = st.session_state.get(f"vns_multiple_files_{participant_id}", False)
+        disable_gap_controls = is_vns_data and not vns_has_multiple_files
+
         show_gaps = st.checkbox("Show time gaps", value=plot_defaults.get("show_gaps", True),
                                 key=f"frag_show_gaps_{participant_id}",
-                                disabled=is_vns_data)
+                                disabled=disable_gap_controls)
         gap_threshold = st.number_input(
             "Gap threshold (s)",
             min_value=1.0, max_value=60.0, value=float(plot_defaults.get("gap_threshold", 15.0)), step=1.0,
             key=f"frag_gap_thresh_{participant_id}",
             help="Threshold for detecting gaps in data",
-            disabled=is_vns_data
+            disabled=disable_gap_controls
         )
         # Only show Help button here if NOT in Signal Inspection mode
         # (Signal Inspection has its own dedicated Help section)
@@ -5049,8 +5111,12 @@ def render_rr_plot_fragment(participant_id: str):
     # This provides consistent gap info for both Add Events and Signal Inspection modes
     timestamps_list = plot_data['timestamps']
     rr_list = plot_data['rr_values']
-    if is_vns_data:
-        # VNS data doesn't have meaningful timestamp gaps
+
+    # Enable gap detection for: HRV Logger data, OR VNS data with multiple files
+    enable_gap_detection = not is_vns_data or vns_has_multiple_files
+
+    if not enable_gap_detection:
+        # Single-file VNS data doesn't have meaningful timestamp gaps
         gap_result = {"gaps": [], "total_gaps": 0, "total_gap_duration_s": 0.0, "gap_ratio": 0.0, "vns_note": True}
         gap_adjacent_indices = set()
     else:
@@ -5707,10 +5773,12 @@ def render_rr_plot_fragment(participant_id: str):
                         fillcolor=fill_color, line=dict(width=0), layer="below"
                     )
 
-    # Visualize gaps (skip for VNS data and Signal Inspection mode - timestamps are synthesized)
+    # Visualize gaps (skip for single-file VNS and Signal Inspection mode - timestamps are synthesized)
+    # Enable for multi-file VNS data where gaps between files are real
     # PERFORMANCE: Limit gaps shown to prevent plot slowdown
     MAX_GAPS_SHOWN = 50
-    if show_gaps and gap_result.get("gaps") and not is_vns_data and not use_sequential_timestamps:
+    enable_gap_visualization = not is_vns_data or vns_has_multiple_files
+    if show_gaps and gap_result.get("gaps") and enable_gap_visualization and not use_sequential_timestamps:
         gaps_to_show = gap_result["gaps"]
         total_gaps = len(gaps_to_show)
         if total_gaps > MAX_GAPS_SHOWN:
@@ -5737,7 +5805,7 @@ def render_rr_plot_fragment(participant_id: str):
     # In Signal Inspection mode, show gap markers at sequential positions
     # These mark where signal loss occurred in the original recording
     # Use the same gap_result from cached_gap_detection for consistency
-    if use_sequential_timestamps and show_gaps and not is_vns_data:
+    if use_sequential_timestamps and show_gaps and enable_gap_visualization:
         gaps_from_result = gap_result.get("gaps", [])
         MAX_GAPS_SHOWN = 50
         gaps_to_show = gaps_from_result[:MAX_GAPS_SHOWN]
@@ -6842,6 +6910,15 @@ def main():
                 if summary.recording_datetime:
                     st.info(f" Recording Date: {summary.recording_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
 
+                # Show VNS multi-file info (displayed early, before loading full data)
+                source_app_check = getattr(summary, 'source_app', 'HRV Logger')
+                if source_app_check == "VNS Analyse":
+                    vns_paths_check = getattr(summary, 'vns_paths', None) or (
+                        [getattr(summary, 'vns_path', None)] if getattr(summary, 'vns_path', None) else []
+                    )
+                    if len(vns_paths_check) > 1:
+                        st.info(f" Multiple VNS Files: {len(vns_paths_check)} recordings found")
+
                 # Check for saved .rrational files and artifact corrections
                 from rrational.gui.rrational_export import find_rrational_files
                 from rrational.gui.persistence import load_artifact_corrections
@@ -7016,13 +7093,40 @@ def main():
                     # Load recording data based on source app (HRV Logger or VNS)
                     source_app = getattr(summary, 'source_app', 'HRV Logger')
 
-                    if source_app == "VNS Analyse" and getattr(summary, 'vns_path', None):
-                        # Load VNS recording using stored path
-                        recording_data = cached_load_vns_recording(
-                            str(summary.vns_path),
-                            selected_participant,
-                            use_corrected=st.session_state.get("vns_use_corrected", False),
-                        )
+                    if source_app == "VNS Analyse":
+                        # Load VNS recording
+                        vns_paths = getattr(summary, 'vns_paths', None)
+                        if vns_paths:
+                            # Use stored paths (supports multiple files)
+                            recording_data = cached_load_vns_recording(
+                                tuple(str(p) for p in vns_paths),
+                                selected_participant,
+                                use_corrected=st.session_state.get("vns_use_corrected", False),
+                            )
+                        elif getattr(summary, 'vns_path', None):
+                            # Fallback: single path (old cached summary)
+                            recording_data = cached_load_vns_recording(
+                                (str(summary.vns_path),),
+                                selected_participant,
+                                use_corrected=st.session_state.get("vns_use_corrected", False),
+                            )
+                        else:
+                            # Re-discover VNS recordings
+                            from rrational.io.vns_analyse import discover_vns_recordings
+                            vns_bundles = discover_vns_recordings(
+                                Path(st.session_state.data_dir),
+                                pattern=st.session_state.id_pattern
+                            )
+                            vns_bundle = next((b for b in vns_bundles if b.participant_id == selected_participant), None)
+                            if vns_bundle:
+                                recording_data = cached_load_vns_recording(
+                                    tuple(str(p) for p in vns_bundle.file_paths),
+                                    selected_participant,
+                                    use_corrected=st.session_state.get("vns_use_corrected", False),
+                                )
+                            else:
+                                st.error(f"No VNS recording found for {selected_participant}")
+                                recording_data = {'rr_intervals': [], 'events': [], 'raw_events': []}
                     elif getattr(summary, 'rr_paths', None):
                         # Load HRV Logger recording using stored paths
                         events_paths = getattr(summary, 'events_paths', []) or []
@@ -7040,6 +7144,45 @@ def main():
                             tuple(str(p) for p in bundle.events_paths),
                             selected_participant
                         )
+
+                    # Display VNS multi-file info (gaps/overlaps) after loading
+                    if source_app == "VNS Analyse" and recording_data:
+                        file_segments = recording_data.get('file_segments')
+                        gaps = recording_data.get('gaps')
+                        overlaps = recording_data.get('overlaps')
+
+                        # Store VNS multi-file info for gap detection in plot
+                        vns_has_multiple_files = file_segments and len(file_segments) > 1
+                        st.session_state[f"vns_multiple_files_{selected_participant}"] = vns_has_multiple_files
+
+                        if file_segments and len(file_segments) > 1:
+                            with st.expander(f"Recording Segments ({len(file_segments)} files)", expanded=False):
+                                for i, seg in enumerate(file_segments, 1):
+                                    duration_min = seg['duration_ms'] / 60000
+                                    start_str = seg['start_time'].strftime('%Y-%m-%d %H:%M:%S') if seg['start_time'] else 'Unknown'
+                                    end_str = seg['end_time'].strftime('%H:%M:%S') if seg['end_time'] else 'Unknown'
+                                    st.markdown(
+                                        f"**File {i}:** {seg['file_name']}  \n"
+                                        f"Start: {start_str} | End: {end_str} | "
+                                        f"Duration: {duration_min:.1f} min | Beats: {seg['beat_count']}"
+                                    )
+
+                        if gaps:
+                            for gap in gaps:
+                                gap_min = gap['gap_duration_s'] / 60
+                                st.warning(
+                                    f"**Gap detected:** {gap_min:.1f} min gap between recordings  \n"
+                                    f"From {gap['gap_start'].strftime('%H:%M:%S')} to {gap['gap_end'].strftime('%H:%M:%S')}"
+                                )
+
+                        if overlaps:
+                            for ov in overlaps:
+                                ov_sec = ov['overlap_duration_s']
+                                st.error(
+                                    f"**Overlap detected:** {ov_sec:.1f} sec overlap between files  \n"
+                                    f"{ov['file1']} and {ov['file2']}  \n"
+                                    f"Data integrity may be compromised - review recordings!"
+                                )
 
                     # Initialize session state for event management (needed for plot)
                     if "participant_events" not in st.session_state:
