@@ -6004,112 +6004,13 @@ def render_rr_plot_fragment(participant_id: str):
             if saved_scope:
                 scope_offset = saved_scope.get("offset", 0)
 
-            # Artifact file doesn't store corrected_rr - try to load from NN file
-            # This prevents the bug where re-saving from restored state overwrites NN with original values
-            saved_corrected_rr = None
-            corrected_rr_source = None
-
-            # Try to load corrected values from saved NN intervals
-            # NOTE: This reconstruction is only needed for the "re-save" protection
-            # The visualization loads directly from NN files, so this doesn't affect display
-            try:
-                from rrational.gui.persistence import load_nn_intervals, load_section_validations
-                import bisect
-
-                nn_data = load_nn_intervals(
-                    participant_id,
-                    section_name=None,
-                    data_dir=st.session_state.get("data_dir"),
-                    project_path=st.session_state.get("project_path"),
-                )
-                section_vals = load_section_validations(
-                    participant_id,
-                    data_dir=st.session_state.get("data_dir"),
-                    project_path=st.session_state.get("project_path"),
-                )
-
-                if nn_data and nn_data.get("sections") and section_vals and section_vals.get("sections"):
-                    # Pre-compute timestamp ms list ONCE for fast lookup (O(n) instead of O(n*m))
-                    plot_ms_list = []
-                    for ts in timestamps_list:
-                        if hasattr(ts, 'timestamp'):
-                            plot_ms_list.append(ts.timestamp() * 1000)
-                        else:
-                            plot_ms_list.append(None)
-
-                    # Create sorted index for binary search
-                    valid_indices = [(ms, i) for i, ms in enumerate(plot_ms_list) if ms is not None]
-                    valid_indices.sort(key=lambda x: x[0])
-                    sorted_ms = [x[0] for x in valid_indices]
-                    sorted_idx = [x[1] for x in valid_indices]
-
-                    # Reconstruct corrected_rr from saved NN intervals
-                    reconstructed_rr = list(rr_list)
-
-                    for section_name, nn_section in nn_data["sections"].items():
-                        val_section = section_vals["sections"].get(section_name)
-                        if not val_section:
-                            continue
-
-                        start_event = val_section.get("start_event", {})
-                        start_ts_str = start_event.get("timestamp")
-                        if not start_ts_str:
-                            continue
-
-                        # Parse section start timestamp
-                        from datetime import datetime as dt_parse
-                        try:
-                            section_start = dt_parse.fromisoformat(start_ts_str.replace('Z', '+00:00'))
-                        except Exception:
-                            continue
-
-                        section_start_ms = section_start.timestamp() * 1000
-
-                        # Get NN intervals for this section
-                        nn_intervals = nn_section.get("intervals", [])
-                        if not nn_intervals:
-                            continue
-
-                        # Match NN values using binary search (O(m log n) instead of O(m*n))
-                        for entry in nn_intervals:
-                            if len(entry) < 2:
-                                continue
-                            rel_ts_ms = entry[0]
-                            nn_ms = entry[1]
-                            abs_ts_ms = section_start_ms + rel_ts_ms
-
-                            # Binary search for closest timestamp
-                            pos = bisect.bisect_left(sorted_ms, abs_ts_ms)
-
-                            # Check neighbors for closest match within tolerance
-                            best_idx = None
-                            best_diff = 50  # 50ms tolerance
-
-                            for check_pos in [pos - 1, pos, pos + 1]:
-                                if 0 <= check_pos < len(sorted_ms):
-                                    diff = abs(sorted_ms[check_pos] - abs_ts_ms)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_idx = sorted_idx[check_pos]
-
-                            if best_idx is not None:
-                                reconstructed_rr[best_idx] = nn_ms
-
-                    saved_corrected_rr = reconstructed_rr
-                    corrected_rr_source = "nn_file"
-            except Exception:
-                pass  # Continue without reconstructed corrected_rr
-
-            # Fallback to original RR if no NN data available
-            if saved_corrected_rr is None:
-                scoped_timestamps = timestamps_list
-                scoped_rr = rr_list
-                saved_corrected_rr = scoped_rr
-                corrected_rr_source = "original_fallback"
-            else:
-                # Use full recording scope since we reconstructed from NN
-                scoped_timestamps = timestamps_list
-                scoped_rr = rr_list
+            # Artifact file doesn't store corrected_rr (only indices are saved)
+            # We mark this state so we can prevent re-saving NN with wrong values
+            # The visualization loads NN directly from files, so display is correct
+            scoped_timestamps = timestamps_list
+            scoped_rr = rr_list
+            saved_corrected_rr = None  # Explicitly None - no fresh correction available
+            corrected_rr_source = "restored_from_save"
 
             artifact_result = {
                 "artifact_indices": saved_artifact_data.get("artifact_indices", []),
@@ -6525,21 +6426,6 @@ def render_rr_plot_fragment(participant_id: str):
 
                         plot_datetimes = [parse_ts(ts) for ts in original_timestamps]
 
-                        # Convert plot timestamps to ms since epoch for fast lookup
-                        import bisect
-                        plot_ms_list = []
-                        for dt_obj in plot_datetimes:
-                            if dt_obj:
-                                plot_ms_list.append(dt_obj.timestamp() * 1000)
-                            else:
-                                plot_ms_list.append(None)
-
-                        # Create sorted index for O(log n) binary search lookup
-                        valid_pairs = [(ms, i) for i, ms in enumerate(plot_ms_list) if ms is not None]
-                        valid_pairs.sort(key=lambda x: x[0])
-                        sorted_ms = [x[0] for x in valid_pairs]
-                        sorted_idx = [x[1] for x in valid_pairs]
-
                         # Start with original RR values
                         nn_values = list(rr_list)
                         n_corrected_total = 0
@@ -6570,43 +6456,43 @@ def render_rr_plot_fragment(participant_id: str):
                             if not section_start or not section_end:
                                 continue
 
-                            # Get section start time in ms
-                            section_start_ms = section_start.timestamp() * 1000
+                            # Normalize for timezone comparison
+                            if section_start.tzinfo is not None:
+                                section_start = section_start.replace(tzinfo=None)
+                                section_end = section_end.replace(tzinfo=None)
 
-                            # Get NN intervals for this section
-                            # Format: [rel_timestamp_ms, nn_ms, was_corrected]
+                            # Find plot indices within this section's time range
+                            section_plot_indices = []
+                            for i, dt_obj in enumerate(plot_datetimes):
+                                if dt_obj is None:
+                                    continue
+                                dt_naive = dt_obj.replace(tzinfo=None) if dt_obj.tzinfo else dt_obj
+                                if section_start <= dt_naive <= section_end:
+                                    section_plot_indices.append(i)
+
+                            if not section_plot_indices:
+                                continue
+
+                            # Get NN intervals for this section (sequential: beat 0, 1, 2...)
                             nn_intervals = nn_section_data.get("intervals", [])
                             if not nn_intervals:
                                 continue
 
-                            # For each NN entry, find the plot beat using binary search (O(log n))
-                            for entry in nn_intervals:
+                            # Map NN intervals to plot indices by position
+                            # NN[0] → first plot beat in section, NN[1] → second, etc.
+                            for nn_idx, entry in enumerate(nn_intervals):
+                                if nn_idx >= len(section_plot_indices):
+                                    break  # More NN entries than plot points
+
                                 if len(entry) < 2:
                                     continue
 
-                                rel_ts_ms = entry[0]  # Relative ms from section start
                                 nn_ms = entry[1]
                                 was_corrected = entry[2] if len(entry) > 2 else False
 
-                                # Calculate absolute timestamp for this NN beat
-                                abs_ts_ms = section_start_ms + rel_ts_ms
-
-                                # Binary search for closest timestamp (O(log n) instead of O(n))
-                                pos = bisect.bisect_left(sorted_ms, abs_ts_ms)
-
-                                # Check neighbors for closest match within 50ms tolerance
-                                best_idx = None
-                                best_diff = 50
-
-                                for check_pos in [pos - 1, pos, pos + 1]:
-                                    if 0 <= check_pos < len(sorted_ms):
-                                        diff = abs(sorted_ms[check_pos] - abs_ts_ms)
-                                        if diff < best_diff:
-                                            best_diff = diff
-                                            best_idx = sorted_idx[check_pos]
-
-                                if best_idx is not None and best_idx < len(nn_values):
-                                    nn_values[best_idx] = nn_ms
+                                plot_idx = section_plot_indices[nn_idx]
+                                if plot_idx < len(nn_values):
+                                    nn_values[plot_idx] = nn_ms
                                     n_matched_beats += 1
                                     if was_corrected:
                                         n_corrected_total += 1
