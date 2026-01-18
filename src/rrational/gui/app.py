@@ -5836,6 +5836,16 @@ def render_rr_plot_fragment(participant_id: str):
                             total_artifacts_all += sec_result.get("total_artifacts", 0)
                             total_beats_all += len(sec_rr)
 
+                    # Build full recording corrected_rr by merging section corrections
+                    full_corrected_rr = list(rr_list)  # Start with original
+                    for sec_name, sec_result in all_sections_results.items():
+                        sec_corrected = sec_result.get("corrected_rr")
+                        sec_offset = sec_result.get("offset", 0)
+                        if sec_corrected:
+                            sec_end = sec_offset + len(sec_corrected)
+                            if sec_end <= len(full_corrected_rr):
+                                full_corrected_rr[sec_offset:sec_end] = sec_corrected
+
                     # Build merged artifact_result for display
                     artifact_result = {
                         "artifact_indices": sorted(set(all_artifact_indices)),
@@ -5850,6 +5860,7 @@ def render_rr_plot_fragment(participant_id: str):
                         "sections_results": all_sections_results,  # Per-section results for saving
                         "segment_beats": segment_beats,
                         "by_type": {},  # Aggregated type info would be complex, skip for now
+                        "corrected_rr": full_corrected_rr,  # Merged from all sections
                     }
 
                     # Collect all diagnostic plots from all sections
@@ -5932,7 +5943,16 @@ def render_rr_plot_fragment(participant_id: str):
                     # Rebuild timestamps and RR from full recording indices
                     artifact_result["artifact_timestamps"] = [timestamps_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(timestamps_list)]
                     artifact_result["artifact_rr"] = [rr_list[i] for i in artifact_result["artifact_indices"] if 0 <= i < len(rr_list)]
-                    # Note: corrected_rr is for the scope only, not full recording
+
+                    # Expand corrected_rr to full recording length for visualization
+                    # Start with original RR, replace scope portion with corrected values
+                    scope_corrected = artifact_result.get("corrected_rr")
+                    if scope_corrected and len(scope_corrected) == len(rr_for_detection):
+                        full_corrected = list(rr_list)  # Start with original
+                        scope_end = offset + len(scope_corrected)
+                        if scope_end <= len(full_corrected):
+                            full_corrected[offset:scope_end] = scope_corrected
+                            artifact_result["corrected_rr"] = full_corrected
 
                 # Store scope info and detection parameters in result
                 artifact_result["scope"] = scope_info
