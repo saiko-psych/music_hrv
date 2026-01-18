@@ -6393,7 +6393,9 @@ def render_rr_plot_fragment(participant_id: str):
 
                 # Try to load saved NN intervals from disk
                 try:
-                    from rrational.gui.persistence import load_nn_intervals
+                    from rrational.gui.persistence import load_nn_intervals, load_section_validations
+                    from datetime import datetime as dt_parser
+
                     saved_nn = load_nn_intervals(
                         participant_id,
                         section_name=None,  # Load all sections
@@ -6401,84 +6403,117 @@ def render_rr_plot_fragment(participant_id: str):
                         project_path=st.session_state.get("project_path"),
                     )
 
-                    if saved_nn and saved_nn.get("sections"):
-                        # Build NN line from saved data
-                        # Create a mapping from timestamp to NN value
-                        nn_by_timestamp = {}
-                        n_corrected_total = 0
+                    # Also load section validations to get section time boundaries
+                    section_vals = load_section_validations(
+                        participant_id,
+                        data_dir=st.session_state.get("data_dir"),
+                        project_path=st.session_state.get("project_path"),
+                    )
 
-                        for section_name, section_data in saved_nn["sections"].items():
-                            intervals = section_data.get("intervals", [])
-                            for entry in intervals:
-                                # Format: [timestamp_ms, nn_ms, was_corrected]
-                                if len(entry) >= 2:
-                                    ts_ms = entry[0]
+                    if saved_nn and saved_nn.get("sections") and section_vals and section_vals.get("sections"):
+                        # Get original timestamps for matching
+                        original_timestamps = plot_data.get('original_timestamps', timestamps_list)
+
+                        # Convert plot timestamps to datetime objects for comparison
+                        def parse_ts(ts):
+                            """Parse timestamp to datetime object."""
+                            if hasattr(ts, 'timestamp'):
+                                return ts
+                            if isinstance(ts, str):
+                                try:
+                                    # Handle ISO format with or without timezone
+                                    ts_clean = ts.replace('Z', '+00:00')
+                                    return dt_parser.fromisoformat(ts_clean)
+                                except Exception:
+                                    return None
+                            return None
+
+                        plot_datetimes = [parse_ts(ts) for ts in original_timestamps]
+
+                        # Start with original RR values
+                        nn_values = list(rr_list)
+                        n_corrected_total = 0
+                        n_matched_sections = 0
+
+                        # Process each section that has both NN data and validation info
+                        for section_name, nn_section_data in saved_nn["sections"].items():
+                            # Get section validation info (contains start/end timestamps)
+                            val_section = section_vals["sections"].get(section_name)
+                            if not val_section:
+                                continue
+
+                            # Get section start/end timestamps
+                            start_event = val_section.get("start_event", {})
+                            end_event = val_section.get("end_event", {})
+
+                            start_ts_str = start_event.get("timestamp")
+                            end_ts_str = end_event.get("timestamp")
+
+                            if not start_ts_str or not end_ts_str:
+                                continue
+
+                            # Parse section timestamps
+                            section_start = parse_ts(start_ts_str)
+                            section_end = parse_ts(end_ts_str)
+
+                            if not section_start or not section_end:
+                                continue
+
+                            # Make both naive for comparison if needed
+                            if section_start.tzinfo is not None and plot_datetimes[0] and plot_datetimes[0].tzinfo is None:
+                                section_start = section_start.replace(tzinfo=None)
+                                section_end = section_end.replace(tzinfo=None)
+                            elif section_start.tzinfo is None and plot_datetimes[0] and plot_datetimes[0].tzinfo is not None:
+                                section_start = section_start.replace(tzinfo=plot_datetimes[0].tzinfo)
+                                section_end = section_end.replace(tzinfo=plot_datetimes[0].tzinfo)
+
+                            # Find plot indices that fall within this section
+                            section_plot_indices = []
+                            for i, dt_obj in enumerate(plot_datetimes):
+                                if dt_obj and section_start <= dt_obj <= section_end:
+                                    section_plot_indices.append(i)
+
+                            if not section_plot_indices:
+                                continue
+
+                            # Get NN intervals for this section (in order: beat 0, 1, 2...)
+                            nn_intervals = nn_section_data.get("intervals", [])
+                            if not nn_intervals:
+                                continue
+
+                            # Map NN intervals to plot indices
+                            # NN[0] → first beat in section, NN[1] → second beat, etc.
+                            for nn_idx, entry in enumerate(nn_intervals):
+                                if nn_idx >= len(section_plot_indices):
+                                    break  # More NN intervals than plot points in section
+
+                                plot_idx = section_plot_indices[nn_idx]
+                                if plot_idx < len(nn_values) and len(entry) >= 2:
                                     nn_ms = entry[1]
                                     was_corrected = entry[2] if len(entry) > 2 else False
-                                    nn_by_timestamp[ts_ms] = nn_ms
+                                    nn_values[plot_idx] = nn_ms
                                     if was_corrected:
                                         n_corrected_total += 1
 
-                        if nn_by_timestamp:
-                            # Match saved NN values to plot timestamps
-                            # Get original timestamps in ms for matching
-                            original_timestamps = plot_data.get('original_timestamps', timestamps_list)
-                            nn_values = []
-                            matched_count = 0
+                            n_matched_sections += 1
 
-                            for i, ts in enumerate(original_timestamps):
-                                # Convert timestamp to ms for lookup
-                                if hasattr(ts, 'timestamp'):
-                                    ts_ms = int(ts.timestamp() * 1000)
-                                else:
-                                    # Try parsing as datetime string
-                                    try:
-                                        from datetime import datetime
-                                        if isinstance(ts, str):
-                                            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                                            ts_ms = int(dt.timestamp() * 1000)
-                                        else:
-                                            ts_ms = int(ts)
-                                    except Exception:
-                                        ts_ms = None
-
-                                # Look for matching NN value (allow small tolerance)
-                                nn_val = None
-                                if ts_ms is not None:
-                                    # Direct match
-                                    if ts_ms in nn_by_timestamp:
-                                        nn_val = nn_by_timestamp[ts_ms]
-                                        matched_count += 1
-                                    else:
-                                        # Try with small tolerance (±10ms)
-                                        for offset in range(-10, 11):
-                                            if ts_ms + offset in nn_by_timestamp:
-                                                nn_val = nn_by_timestamp[ts_ms + offset]
-                                                matched_count += 1
-                                                break
-
-                                # Use matched NN or fallback to original RR
-                                if nn_val is not None:
-                                    nn_values.append(nn_val)
-                                else:
-                                    nn_values.append(rr_list[i] if i < len(rr_list) else None)
-
-                            if matched_count > 0:
-                                fig.add_trace(ScatterType(
-                                    x=timestamps_list,
-                                    y=nn_values,
-                                    mode='lines',
-                                    name='Saved NN',
-                                    line=dict(width=2, color='green', dash='dot'),
-                                    opacity=0.7,
-                                    hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
-                                ))
-                                nn_displayed = True
-                                nn_source = "saved"
-                                st.success(f"Showing **saved NN intervals**: {matched_count} beats matched, {n_corrected_total} were corrected")
+                        if n_matched_sections > 0:
+                            fig.add_trace(ScatterType(
+                                x=timestamps_list,
+                                y=nn_values,
+                                mode='lines',
+                                name='Saved NN',
+                                line=dict(width=2, color='green', dash='dot'),
+                                opacity=0.7,
+                                hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
+                            ))
+                            nn_displayed = True
+                            nn_source = "saved"
+                            st.success(f"Showing **saved NN intervals**: {n_matched_sections} section(s), {n_corrected_total} beats corrected")
                 except Exception as e:
                     # Log error but continue to fallback
-                    pass
+                    import traceback
+                    st.warning(f"Could not load saved NN: {e}")
 
                 # Fallback to computed corrected_rr if no saved data
                 if not nn_displayed and algo_count > 0:
