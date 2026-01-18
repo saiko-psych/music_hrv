@@ -423,11 +423,30 @@ def save_full_section_validations(participant_id: str):
     else:
         sections_to_validate = sections_config
 
+    # Get RR intervals for beat count and duration calculation
+    rr_intervals = None
+    full_rr_key = f"full_rr_data_{participant_id}"
+    full_rr_data = st.session_state.get(full_rr_key, {})
+    if full_rr_data:
+        # Full RR data contains 'rr_with_timestamps' list of tuples (timestamp, rr_ms)
+        rr_with_ts = full_rr_data.get("rr_with_timestamps", [])
+        if rr_with_ts:
+            # Convert to simple objects for validation
+            from dataclasses import dataclass
+
+            @dataclass
+            class RRPoint:
+                timestamp: object
+                rr_ms: float
+
+            rr_intervals = [RRPoint(timestamp=ts, rr_ms=rr) for ts, rr in rr_with_ts]
+
     # Get validation results for this participant
     validation_results = get_validated_sections_for_participant(
         participant_id,
         sections_to_validate,
         normalizer,
+        rr_intervals=rr_intervals,
     )
 
     # Build explicit section validation state
