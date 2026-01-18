@@ -2015,7 +2015,7 @@ def _render_single_participant_analysis():
                         selected_v2_sections = st.multiselect(
                             "Select section(s) to analyze",
                             options=available_sections,
-                            default=available_sections[:1] if available_sections else [],
+                            default=available_sections,  # Select all sections by default
                             key="analysis_v2_sections",
                         )
 
