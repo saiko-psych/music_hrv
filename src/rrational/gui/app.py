@@ -5916,47 +5916,47 @@ def render_rr_plot_fragment(participant_id: str):
                     section_key = "_full"
                 artifact_result["section_key"] = section_key
 
-            # Generate diagnostic plots if requested
-            if st.session_state.get(f"show_diagnostic_plots_{participant_id}", False):
-                # Use Lipponen methods for diagnostic plots (threshold method doesn't have NK2 diagnostics)
-                if artifact_method in ("kubios", "lipponen2019", "kubios_segmented", "lipponen2019_segmented"):
-                    with st.spinner("Generating diagnostic plots..."):
-                        try:
-                            # Check if we have gap-separated segments
-                            gap_segments = artifact_result.get("gap_segments", [])
-                            if gap_segments and len(gap_segments) > 1:
-                                # Generate one diagnostic plot per gap-segment
-                                diag_plots = []
-                                for seg_idx, (seg_start, seg_end) in enumerate(gap_segments):
-                                    seg_rr = rr_for_detection[seg_start:seg_end]
-                                    if len(seg_rr) >= 10:
-                                        seg_diag = generate_artifact_diagnostic_plots(seg_rr)
-                                        if seg_diag:
-                                            diag_plots.append({
-                                                "segment": seg_idx + 1,
-                                                "start": seg_start,
-                                                "end": seg_end,
-                                                "image": seg_diag,
-                                            })
-                                if diag_plots:
-                                    st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_plots
-                                    st.success(f"Diagnostic plots generated for {len(diag_plots)} gap-segments")
+                # Generate diagnostic plots if requested (for normal single-scope detection)
+                if st.session_state.get(f"show_diagnostic_plots_{participant_id}", False):
+                    # Use Lipponen methods for diagnostic plots (threshold method doesn't have NK2 diagnostics)
+                    if artifact_method in ("kubios", "lipponen2019", "kubios_segmented", "lipponen2019_segmented"):
+                        with st.spinner("Generating diagnostic plots..."):
+                            try:
+                                # Check if we have gap-separated segments
+                                gap_segments = artifact_result.get("gap_segments", [])
+                                if gap_segments and len(gap_segments) > 1:
+                                    # Generate one diagnostic plot per gap-segment
+                                    diag_plots = []
+                                    for seg_idx, (seg_start, seg_end) in enumerate(gap_segments):
+                                        seg_rr = rr_for_detection[seg_start:seg_end]
+                                        if len(seg_rr) >= 10:
+                                            seg_diag = generate_artifact_diagnostic_plots(seg_rr)
+                                            if seg_diag:
+                                                diag_plots.append({
+                                                    "segment": seg_idx + 1,
+                                                    "start": seg_start,
+                                                    "end": seg_end,
+                                                    "image": seg_diag,
+                                                })
+                                    if diag_plots:
+                                        st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_plots
+                                        st.success(f"Diagnostic plots generated for {len(diag_plots)} gap-segments")
+                                    else:
+                                        st.warning("No diagnostic plots could be generated (segments too small)")
                                 else:
-                                    st.warning("No diagnostic plots could be generated (segments too small)")
-                            else:
-                                # Single diagnostic plot for entire scope
-                                diag_result = generate_artifact_diagnostic_plots(rr_for_detection)
-                                if diag_result is not None:
-                                    st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_result
-                                    st.success(f"Diagnostic plots generated: {len(diag_result)} bytes")
-                                else:
-                                    st.warning("Diagnostic plots could not be generated (function returned None)")
-                        except Exception as e:
-                            st.error(f"Error generating diagnostic plots: {e}")
-                            import traceback
-                            st.code(traceback.format_exc())
-                else:
-                    st.info(f"Diagnostic plots not available for method '{artifact_method}' (only Lipponen/Kubios methods)")
+                                    # Single diagnostic plot for entire scope
+                                    diag_result = generate_artifact_diagnostic_plots(rr_for_detection)
+                                    if diag_result is not None:
+                                        st.session_state[f"artifact_diagnostic_fig_{participant_id}"] = diag_result
+                                        st.success(f"Diagnostic plots generated: {len(diag_result)} bytes")
+                                    else:
+                                        st.warning("Diagnostic plots could not be generated (function returned None)")
+                            except Exception as e:
+                                st.error(f"Error generating diagnostic plots: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                    else:
+                        st.info(f"Diagnostic plots not available for method '{artifact_method}' (only Lipponen/Kubios methods)")
 
             # Clear the force_redetect flag
             if force_redetect and f"artifacts_{participant_id}" in st.session_state:
