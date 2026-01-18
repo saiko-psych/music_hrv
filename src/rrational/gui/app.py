@@ -6526,12 +6526,19 @@ def render_rr_plot_fragment(participant_id: str):
                         plot_datetimes = [parse_ts(ts) for ts in original_timestamps]
 
                         # Convert plot timestamps to ms since epoch for fast lookup
+                        import bisect
                         plot_ms_list = []
                         for dt_obj in plot_datetimes:
                             if dt_obj:
                                 plot_ms_list.append(dt_obj.timestamp() * 1000)
                             else:
                                 plot_ms_list.append(None)
+
+                        # Create sorted index for O(log n) binary search lookup
+                        valid_pairs = [(ms, i) for i, ms in enumerate(plot_ms_list) if ms is not None]
+                        valid_pairs.sort(key=lambda x: x[0])
+                        sorted_ms = [x[0] for x in valid_pairs]
+                        sorted_idx = [x[1] for x in valid_pairs]
 
                         # Start with original RR values
                         nn_values = list(rr_list)
@@ -6572,7 +6579,7 @@ def render_rr_plot_fragment(participant_id: str):
                             if not nn_intervals:
                                 continue
 
-                            # For each NN entry, find the plot beat by matching timestamps
+                            # For each NN entry, find the plot beat using binary search (O(log n))
                             for entry in nn_intervals:
                                 if len(entry) < 2:
                                     continue
@@ -6584,17 +6591,19 @@ def render_rr_plot_fragment(participant_id: str):
                                 # Calculate absolute timestamp for this NN beat
                                 abs_ts_ms = section_start_ms + rel_ts_ms
 
-                                # Find the closest plot beat (within 50ms tolerance)
-                                best_idx = None
-                                best_diff = 50  # Max tolerance in ms
+                                # Binary search for closest timestamp (O(log n) instead of O(n))
+                                pos = bisect.bisect_left(sorted_ms, abs_ts_ms)
 
-                                for i, plot_ms in enumerate(plot_ms_list):
-                                    if plot_ms is None:
-                                        continue
-                                    diff = abs(plot_ms - abs_ts_ms)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_idx = i
+                                # Check neighbors for closest match within 50ms tolerance
+                                best_idx = None
+                                best_diff = 50
+
+                                for check_pos in [pos - 1, pos, pos + 1]:
+                                    if 0 <= check_pos < len(sorted_ms):
+                                        diff = abs(sorted_ms[check_pos] - abs_ts_ms)
+                                        if diff < best_diff:
+                                            best_diff = diff
+                                            best_idx = sorted_idx[check_pos]
 
                                 if best_idx is not None and best_idx < len(nn_values):
                                     nn_values[best_idx] = nn_ms
