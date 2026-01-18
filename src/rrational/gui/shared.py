@@ -181,8 +181,19 @@ def find_event_candidates(
                 index=idx,
             ))
 
-    # Sort by timestamp
-    candidates.sort(key=lambda c: c.timestamp)
+    # Sort by timestamp (handle mixed types from old saved data)
+    def get_sort_key(c):
+        ts = c.timestamp
+        if ts is None:
+            return datetime.min
+        if isinstance(ts, str):
+            try:
+                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return datetime.min
+        return ts
+
+    candidates.sort(key=get_sort_key)
     return candidates
 
 
