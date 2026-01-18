@@ -5750,6 +5750,7 @@ def render_rr_plot_fragment(participant_id: str):
                 "indices_by_type": saved_artifact_data.get("indices_by_type", {}),
                 "scope": saved_scope,
                 "section_key": saved_artifact_data.get("section_key", "_full"),
+                "auto_split_to_sections": saved_artifact_data.get("auto_split_to_sections", False),
                 "segment_beats": saved_artifact_data.get("segment_beats"),
                 "corrected_rr": saved_corrected_rr,
                 "corrected_timestamps": scoped_timestamps,
