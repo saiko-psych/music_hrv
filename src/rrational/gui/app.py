@@ -8767,7 +8767,8 @@ def main():
 
                     # Section Validation - validates sections defined in Sections tab
                     with st.expander("Section Validation", expanded=True):
-                        st.caption("Validates that all defined sections have required events and expected durations.")
+                        st.caption("Validates sections and saves disambiguation choices. "
+                                   "Data is stored in `{participant}_section_validations.yml`.")
 
                         # Get participant's events from session state
                         participant_events_data = st.session_state.participant_events.get(selected_participant, {})
@@ -8917,6 +8918,7 @@ def main():
                                                 format_func=lambda i: start_options[i],
                                                 index=current_start_idx,
                                                 key=f"section_start_{selected_participant}_{section_code}",
+                                                help="Select which event marks the start of this section",
                                             )
 
                                         with col2:
@@ -8932,6 +8934,7 @@ def main():
                                                 format_func=lambda i: end_options[i],
                                                 index=current_end_idx,
                                                 key=f"section_end_{selected_participant}_{section_code}",
+                                                help="Select which event marks the end of this section",
                                             )
 
                                         # Update if selection changed
@@ -9016,7 +9019,9 @@ def main():
 
                             with col_save:
                                 if st.button("Save", key=f"save_section_validations_{selected_participant}",
-                                           help="Save section validations to disk"):
+                                           help="Save section validations to project folder. "
+                                                "Stores: group, events, timestamps, duration, beat count, "
+                                                "and disambiguation choices."):
                                     save_full_section_validations(selected_participant)
                                     auto_save_config()
                                     show_toast("Section validations saved", icon="success")
