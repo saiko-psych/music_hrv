@@ -1716,62 +1716,7 @@ if "data_dir" not in st.session_state:
         st.session_state.data_dir = saved_folder if saved_folder else None
 if "summaries" not in st.session_state:
     st.session_state.summaries = []
-    # Auto-load data in test mode OR if auto_load setting is enabled
-    auto_load_enabled = st.session_state.app_settings.get("auto_load", False)
-    should_auto_load = (TEST_MODE or auto_load_enabled) and st.session_state.data_dir
-    if should_auto_load:
-        from rrational.gui.shared import cached_load_hrv_logger_preview, cached_load_vns_preview
-        config_dict = {"rr_min_ms": 200, "rr_max_ms": 2000, "sudden_change_pct": 100}
-        summaries = []
-        data_path = Path(st.session_state.data_dir)
-
-        # Determine folders to scan: check for known subfolders, otherwise use root
-        folders_to_scan = []
-        hrv_subfolder = data_path / "hrv_logger"
-        vns_subfolder = data_path / "vns"
-
-        if hrv_subfolder.exists():
-            folders_to_scan.append(("hrv", str(hrv_subfolder)))
-        if vns_subfolder.exists():
-            folders_to_scan.append(("vns", str(vns_subfolder)))
-
-        # If no known subfolders, scan root directory with both formats
-        if not folders_to_scan:
-            folders_to_scan.append(("hrv", str(data_path)))
-            folders_to_scan.append(("vns", str(data_path)))
-
-        for format_type, folder_path in folders_to_scan:
-            try:
-                if format_type == "hrv":
-                    folder_summaries = cached_load_hrv_logger_preview(
-                        folder_path,
-                        pattern=DEFAULT_ID_PATTERN,
-                        config_dict=config_dict,
-                        gui_events_dict={},
-                    )
-                else:  # vns
-                    folder_summaries = cached_load_vns_preview(
-                        folder_path,
-                        pattern=DEFAULT_ID_PATTERN,
-                        config_dict=config_dict,
-                        gui_events_dict={},
-                        use_corrected=False,
-                    )
-                # Only add summaries that aren't already loaded (by participant_id)
-                existing_ids = {s.participant_id for s in summaries}
-                for s in folder_summaries:
-                    if s.participant_id not in existing_ids:
-                        summaries.append(s)
-            except Exception:
-                pass
-
-        if summaries:
-            st.session_state.summaries = summaries
-            # Auto-assign to Default group
-            for s in summaries:
-                if "participant_groups" not in st.session_state:
-                    st.session_state.participant_groups = {}
-                st.session_state.participant_groups[s.participant_id] = "Default"
+    # Auto-load is deferred until after all_events is initialized (see below)
 if "participant_events" not in st.session_state:
     st.session_state.participant_events = {}
 if "id_pattern" not in st.session_state:
@@ -1863,6 +1808,77 @@ _events_hash = hash(frozenset((k, tuple(v)) for k, v in st.session_state.all_eve
 if "normalizer" not in st.session_state or st.session_state.get("_events_hash") != _events_hash:
     st.session_state.normalizer = create_gui_normalizer(st.session_state.all_events)
     st.session_state._events_hash = _events_hash
+
+# Auto-load data if enabled (AFTER all_events is initialized for proper event normalization)
+# This runs only once when summaries list is empty and auto-load is enabled
+if not st.session_state.summaries:
+    auto_load_enabled = st.session_state.app_settings.get("auto_load", False)
+    should_auto_load = (TEST_MODE or auto_load_enabled) and st.session_state.data_dir
+    if should_auto_load:
+        from rrational.gui.shared import cached_load_hrv_logger_preview, cached_load_vns_preview
+        from rrational.gui.tabs.data import RECORDING_APP_DETECTION
+
+        config_dict = {"rr_min_ms": 200, "rr_max_ms": 2000, "sudden_change_pct": 100}
+        # Use properly initialized all_events for event normalization
+        gui_events_dict = st.session_state.all_events
+        summaries = []
+        data_path = Path(st.session_state.data_dir)
+
+        # Use same folder detection logic as manual loading (data.py)
+        # This ensures consistent behavior across platforms (including Mac)
+        folders_to_scan = []
+
+        if data_path.exists():
+            # Check for known app-specific subfolders (case-insensitive matching)
+            for item in data_path.iterdir():
+                if item.is_dir():
+                    folder_name = item.name.lower()
+                    for pattern, info in RECORDING_APP_DETECTION.items():
+                        if folder_name == pattern or folder_name.startswith(pattern):
+                            app_type = "vns" if info["name"] == "VNS Analyse" else "hrv"
+                            folders_to_scan.append((app_type, str(item)))
+                            break
+
+            # If no known subfolders found, scan root directory with both formats
+            if not folders_to_scan:
+                folders_to_scan.append(("hrv", str(data_path)))
+                folders_to_scan.append(("vns", str(data_path)))
+
+        for format_type, folder_path in folders_to_scan:
+            try:
+                if format_type == "hrv":
+                    folder_summaries = cached_load_hrv_logger_preview(
+                        folder_path,
+                        pattern=st.session_state.get("id_pattern", DEFAULT_ID_PATTERN),
+                        config_dict=config_dict,
+                        gui_events_dict=gui_events_dict,
+                    )
+                else:  # vns
+                    folder_summaries = cached_load_vns_preview(
+                        folder_path,
+                        pattern=st.session_state.get("id_pattern", DEFAULT_ID_PATTERN),
+                        config_dict=config_dict,
+                        gui_events_dict=gui_events_dict,
+                        use_corrected=st.session_state.get("vns_use_corrected", False),
+                    )
+                # Only add summaries that aren't already loaded (by participant_id)
+                existing_ids = {s.participant_id for s in summaries}
+                for s in folder_summaries:
+                    if s.participant_id not in existing_ids:
+                        summaries.append(s)
+            except Exception as e:
+                # Log error but continue - don't let one folder failure stop all loading
+                import logging
+                logging.warning(f"Auto-load: Failed to load from {folder_path}: {e}")
+
+        if summaries:
+            st.session_state.summaries = summaries
+            # Auto-assign to Default group
+            if "participant_groups" not in st.session_state:
+                st.session_state.participant_groups = {}
+            for s in summaries:
+                if s.participant_id not in st.session_state.participant_groups:
+                    st.session_state.participant_groups[s.participant_id] = "Default"
 
 # Load participant-specific data (groups, playlists, labels, event orders, manual events)
 if "participant_groups" not in st.session_state or "event_order" not in st.session_state:
