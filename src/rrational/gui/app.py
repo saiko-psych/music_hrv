@@ -1918,12 +1918,8 @@ if "participant_groups" not in st.session_state or "event_order" not in st.sessi
             for pid, data in loaded_participants.items()
             if not pid.startswith("_")
         }
-        # Load section selections (user disambiguation choices for section boundaries)
-        for pid, data in loaded_participants.items():
-            if not pid.startswith("_"):
-                section_selections = data.get("section_selections", {})
-                if section_selections:
-                    st.session_state[f"section_selections_{pid}"] = section_selections
+        # Note: section_selections are now stored in dedicated {participant_id}_section_validations.yml
+        # and loaded via load_and_restore_section_validations() when participant is selected
     else:
         st.session_state.participant_groups = {}
         st.session_state.participant_randomizations = {}

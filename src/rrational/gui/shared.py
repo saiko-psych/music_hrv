@@ -727,11 +727,8 @@ def init_session_state():
                 pid: data.get("manual_events", [])
                 for pid, data in loaded_participants.items()
             }
-            # Load section selections (user disambiguation choices for section boundaries)
-            for pid, data in loaded_participants.items():
-                section_selections = data.get("section_selections", {})
-                if section_selections:
-                    st.session_state[f"section_selections_{pid}"] = section_selections
+            # Note: section_selections are now stored in dedicated {participant_id}_section_validations.yml
+            # and loaded via load_and_restore_section_validations() when participant is selected
         else:
             st.session_state.participant_groups = {}
             st.session_state.event_order = {}
@@ -749,7 +746,11 @@ def save_all_config():
 
 
 def save_participant_data():
-    """Save participant-specific data (groups, playlists, labels, event orders, manual events, section selections)."""
+    """Save participant-specific data (groups, playlists, labels, event orders, manual events).
+
+    Note: Section selections are stored separately in {participant_id}_section_validations.yml
+    via save_full_section_validations().
+    """
     project_path = st.session_state.get("current_project")
     participants_data = {}
 
@@ -762,24 +763,13 @@ def save_participant_data():
         list(st.session_state.manual_events.keys())
     )
 
-    # Also include any participants with section selections
-    for key in st.session_state.keys():
-        if key.startswith("section_selections_"):
-            pid = key[len("section_selections_"):]
-            all_participant_ids.add(pid)
-
     for pid in all_participant_ids:
-        # Get section selections for this participant
-        section_selections_key = f"section_selections_{pid}"
-        section_selections = st.session_state.get(section_selections_key, {})
-
         participants_data[pid] = {
             "group": st.session_state.participant_groups.get(pid, "Default"),
             "playlist": st.session_state.get("participant_playlists", {}).get(pid, ""),
             "label": st.session_state.get("participant_labels", {}).get(pid, ""),
             "event_order": st.session_state.event_order.get(pid, []),
             "manual_events": st.session_state.manual_events.get(pid, []),
-            "section_selections": section_selections,  # User-selected section boundaries
         }
 
     save_participants(participants_data, project_path)
