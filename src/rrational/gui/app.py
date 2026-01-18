@@ -6385,26 +6385,124 @@ def render_rr_plot_fragment(participant_id: str):
                 if 0 <= plot_idx < len(rr_list):
                     manual_artifact_indices.append(plot_idx)
 
-            # Show corrected preview using NeuroKit2's signal_fixpeaks correction
-            # Note: Manual artifacts are not included in the NeuroKit2 correction
+            # Show corrected NN intervals - prefer saved data, fallback to computed
             algo_count = len(artifact_result["artifact_indices"])
-            if show_corrected and algo_count > 0:
-                corrected_rr = artifact_result.get("corrected_rr", rr_list)
-                if corrected_rr and len(corrected_rr) == len(timestamps_list):
-                    fig.add_trace(ScatterType(
-                        x=timestamps_list,
-                        y=corrected_rr,
-                        mode='lines',
-                        name='Corrected (NN)',
-                        line=dict(width=2, color='green', dash='dot'),
-                        opacity=0.7,
-                        hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
-                    ))
-                    manual_count = len(manual_artifact_indices)
-                    if manual_count > 0:
-                        st.success(f"Correction preview: {algo_count} algorithm artifacts corrected (NeuroKit2 Kubios). {manual_count} manual artifacts marked but not in correction.")
-                    else:
-                        st.success(f"Correction preview: {algo_count} artifacts corrected (NeuroKit2 Kubios algorithm)")
+            if show_corrected:
+                nn_displayed = False
+                nn_source = None
+
+                # Try to load saved NN intervals from disk
+                try:
+                    from rrational.gui.persistence import load_nn_intervals
+                    saved_nn = load_nn_intervals(
+                        participant_id,
+                        section_name=None,  # Load all sections
+                        data_dir=st.session_state.get("data_dir"),
+                        project_path=st.session_state.get("project_path"),
+                    )
+
+                    if saved_nn and saved_nn.get("sections"):
+                        # Build NN line from saved data
+                        # Create a mapping from timestamp to NN value
+                        nn_by_timestamp = {}
+                        n_corrected_total = 0
+
+                        for section_name, section_data in saved_nn["sections"].items():
+                            intervals = section_data.get("intervals", [])
+                            for entry in intervals:
+                                # Format: [timestamp_ms, nn_ms, was_corrected]
+                                if len(entry) >= 2:
+                                    ts_ms = entry[0]
+                                    nn_ms = entry[1]
+                                    was_corrected = entry[2] if len(entry) > 2 else False
+                                    nn_by_timestamp[ts_ms] = nn_ms
+                                    if was_corrected:
+                                        n_corrected_total += 1
+
+                        if nn_by_timestamp:
+                            # Match saved NN values to plot timestamps
+                            # Get original timestamps in ms for matching
+                            original_timestamps = plot_data.get('original_timestamps', timestamps_list)
+                            nn_values = []
+                            matched_count = 0
+
+                            for i, ts in enumerate(original_timestamps):
+                                # Convert timestamp to ms for lookup
+                                if hasattr(ts, 'timestamp'):
+                                    ts_ms = int(ts.timestamp() * 1000)
+                                else:
+                                    # Try parsing as datetime string
+                                    try:
+                                        from datetime import datetime
+                                        if isinstance(ts, str):
+                                            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                            ts_ms = int(dt.timestamp() * 1000)
+                                        else:
+                                            ts_ms = int(ts)
+                                    except Exception:
+                                        ts_ms = None
+
+                                # Look for matching NN value (allow small tolerance)
+                                nn_val = None
+                                if ts_ms is not None:
+                                    # Direct match
+                                    if ts_ms in nn_by_timestamp:
+                                        nn_val = nn_by_timestamp[ts_ms]
+                                        matched_count += 1
+                                    else:
+                                        # Try with small tolerance (±10ms)
+                                        for offset in range(-10, 11):
+                                            if ts_ms + offset in nn_by_timestamp:
+                                                nn_val = nn_by_timestamp[ts_ms + offset]
+                                                matched_count += 1
+                                                break
+
+                                # Use matched NN or fallback to original RR
+                                if nn_val is not None:
+                                    nn_values.append(nn_val)
+                                else:
+                                    nn_values.append(rr_list[i] if i < len(rr_list) else None)
+
+                            if matched_count > 0:
+                                fig.add_trace(ScatterType(
+                                    x=timestamps_list,
+                                    y=nn_values,
+                                    mode='lines',
+                                    name='Saved NN',
+                                    line=dict(width=2, color='green', dash='dot'),
+                                    opacity=0.7,
+                                    hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
+                                ))
+                                nn_displayed = True
+                                nn_source = "saved"
+                                st.success(f"Showing **saved NN intervals**: {matched_count} beats matched, {n_corrected_total} were corrected")
+                except Exception as e:
+                    # Log error but continue to fallback
+                    pass
+
+                # Fallback to computed corrected_rr if no saved data
+                if not nn_displayed and algo_count > 0:
+                    corrected_rr = artifact_result.get("corrected_rr", rr_list)
+                    if corrected_rr and len(corrected_rr) == len(timestamps_list):
+                        fig.add_trace(ScatterType(
+                            x=timestamps_list,
+                            y=corrected_rr,
+                            mode='lines',
+                            name='Corrected (NN)',
+                            line=dict(width=2, color='green', dash='dot'),
+                            opacity=0.7,
+                            hovertemplate='Time: %{x}<br>NN: %{y:.0f} ms<extra></extra>'
+                        ))
+                        nn_displayed = True
+                        nn_source = "computed"
+                        manual_count = len(manual_artifact_indices)
+                        if manual_count > 0:
+                            st.info(f"Correction preview (not saved): {algo_count} algorithm artifacts. {manual_count} manual artifacts marked.")
+                        else:
+                            st.info(f"Correction preview (not saved): {algo_count} artifacts corrected")
+
+                if not nn_displayed and algo_count == 0:
+                    st.info("No artifacts detected - NN line would be identical to RR line.")
         elif artifact_result.get("no_detection_yet"):
             # No detection has been run yet - show instructions
             st.info("No artifact detection yet. Use **Detect New Artifacts** to run detection.")
