@@ -6004,13 +6004,23 @@ def render_rr_plot_fragment(participant_id: str):
             if saved_scope:
                 scope_offset = saved_scope.get("offset", 0)
 
-            # Artifact file doesn't store corrected_rr (only indices are saved)
-            # We mark this state so we can prevent re-saving NN with wrong values
-            # The visualization loads NN directly from files, so display is correct
+            # Check if we have corrected_rr from fresh detection (stored in session state)
+            # vs. restored from disk (which doesn't include corrected_rr)
             scoped_timestamps = timestamps_list
             scoped_rr = rr_list
-            saved_corrected_rr = None  # Explicitly None - no fresh correction available
-            corrected_rr_source = "restored_from_save"
+
+            # Preserve corrected_rr if it exists from fresh detection
+            saved_corrected_rr = saved_artifact_data.get("corrected_rr")
+            is_from_disk = saved_artifact_data.get("restored_from_save", False)
+
+            if saved_corrected_rr is not None:
+                # Fresh detection data still in session state
+                corrected_rr_source = "fresh_detection"
+                is_restored = False
+            else:
+                # No corrected_rr means this was loaded from disk
+                corrected_rr_source = "restored_from_save"
+                is_restored = True
 
             artifact_result = {
                 "artifact_indices": saved_artifact_data.get("artifact_indices", []),
@@ -6030,7 +6040,7 @@ def render_rr_plot_fragment(participant_id: str):
                 "corrected_rr_source": corrected_rr_source,  # Track where corrected values came from
                 "corrected_timestamps": scoped_timestamps,
                 "original_rr": scoped_rr,
-                "restored_from_save": True,
+                "restored_from_save": is_restored,
             }
         else:
             # No saved artifacts and no detection requested - empty result
