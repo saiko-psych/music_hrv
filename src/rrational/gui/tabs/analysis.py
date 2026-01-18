@@ -3086,6 +3086,46 @@ def _display_single_participant_results(selected_participant: str):
             doc.add_hrv_results(section_name, hrv_results)
 
         with st.expander(f"{section_label} ({n_beats} beats, {recording_duration_sec/60:.1f} min)", expanded=True):
+            # Show overlapping window analysis info if used
+            if result_data.get("overlapping_analysis"):
+                n_windows = result_data.get("n_windows", 0)
+                window_mode = result_data.get("window_mode", "time")
+                hrv_std = result_data.get("hrv_std")
+
+                if window_mode == "beats":
+                    window_beats = result_data.get("window_beats", 300)
+                    step_beats = result_data.get("step_beats", 150)
+                    window_info = f"{window_beats} beats, {step_beats}-beat step"
+                else:
+                    window_duration = result_data.get("window_duration_min", 5)
+                    overlap_pct = result_data.get("overlap_percent", 50)
+                    window_info = f"{window_duration}min, {overlap_pct}% overlap"
+
+                # Get segment info from analysis_segments if available
+                analysis_segments = result_data.get("analysis_segments", [])
+                gap_segments = len([s for s in analysis_segments if s.get("type") == "usable"])
+                exclusion_segments = len([s for s in analysis_segments if s.get("type") == "exclusion"])
+
+                st.info(f"**Overlapping Window Analysis:** {n_windows} windows analyzed ({window_info})")
+                if analysis_segments:
+                    st.caption(f"Based on {gap_segments} usable segment(s)" +
+                              (f", {exclusion_segments} exclusion zone(s)" if exclusion_segments else ""))
+
+                # Show std values if available
+                if hrv_std is not None and not hrv_std.empty:
+                    with st.expander("Window Variability (Std Dev)", expanded=False):
+                        st.caption("Standard deviation across overlapping windows:")
+                        # Show key metrics with std
+                        key_metrics = ["HRV_MeanNN", "HRV_SDNN", "HRV_RMSSD", "HRV_pNN50", "HRV_LF", "HRV_HF"]
+                        std_display = {}
+                        for m in key_metrics:
+                            if m in hrv_std.columns:
+                                std_display[m.replace("HRV_", "")] = f"±{hrv_std[m].values[0]:.2f}"
+                        if std_display:
+                            cols = st.columns(len(std_display))
+                            for i, (name, val) in enumerate(std_display.items()):
+                                cols[i].metric(name, val)
+
             # Show ready file info if this came from a .rrational file
             ready_file_path = result_data.get("ready_file")
             quality_grade = result_data.get("quality_grade")
