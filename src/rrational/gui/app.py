@@ -4119,6 +4119,58 @@ def render_rr_plot_fragment(participant_id: str):
                         indices_by_type=indices_by_type_save,
                     )
 
+                    # Also save corrected NN intervals if available
+                    from rrational.gui.persistence import save_nn_intervals
+                    corrected_rr = artifact_data_save.get('corrected_rr')
+                    plot_data_for_nn = st.session_state.get(f"plot_data_{participant_id}", {})
+                    timestamps_for_nn = plot_data_for_nn.get('timestamps', [])
+                    rr_values_for_nn = plot_data_for_nn.get('rr_values', [])
+
+                    if corrected_rr is not None and len(corrected_rr) == len(rr_values_for_nn):
+                        # Determine which intervals were corrected
+                        all_artifact_indices = (set(algo_indices_save) |
+                                               set(art.get('plot_idx', -1) for art in manual_artifacts_save)) - \
+                                               (artifact_exclusions_save if artifact_exclusions_save else set())
+
+                        # Build NN intervals data
+                        nn_intervals_data = []
+                        corrections_list = []
+                        for i, (ts, rr_orig, rr_corr) in enumerate(zip(timestamps_for_nn, rr_values_for_nn, corrected_rr)):
+                            was_corrected = i in all_artifact_indices and abs(rr_orig - rr_corr) > 1
+                            # Compact format: [timestamp_ms, nn_ms, was_corrected]
+                            ts_ms = int((ts - timestamps_for_nn[0]).total_seconds() * 1000) if hasattr(ts, 'total_seconds') or hasattr(timestamps_for_nn[0], 'total_seconds') else 0
+                            if hasattr(ts, 'timestamp') and hasattr(timestamps_for_nn[0], 'timestamp'):
+                                ts_ms = int((ts.timestamp() - timestamps_for_nn[0].timestamp()) * 1000)
+                            nn_intervals_data.append([ts_ms, round(rr_corr, 1), was_corrected])
+
+                            if was_corrected:
+                                corrections_list.append({
+                                    'nn_idx': i,
+                                    'original_rr_ms': round(rr_orig, 1),
+                                    'corrected_nn_ms': round(rr_corr, 1),
+                                })
+
+                        nn_data = {
+                            'correction_method': 'kubios' if algo_method else 'manual',
+                            'corrected_at': datetime.now().isoformat(),
+                            'original_beat_count': len(rr_values_for_nn),
+                            'artifacts_removed': len(all_artifact_indices),
+                            'intervals_corrected': len(corrections_list),
+                            'final_nn_count': len(nn_intervals_data),
+                            'intervals': nn_intervals_data,
+                            'corrections': corrections_list,
+                        }
+
+                        # Use section_key as section name, or '_full' for full recording
+                        section_for_nn = section_key_save if section_key_save != '_full' else '_full'
+                        save_nn_intervals(
+                            participant_id,
+                            section_for_nn,
+                            nn_data,
+                            data_dir=data_dir_save,
+                            project_path=project_path_save,
+                        )
+
                     # Update loaded_info to reflect current saved state
                     from datetime import datetime
                     st.session_state[f"artifacts_loaded_info_{participant_id}"] = {
@@ -4130,7 +4182,7 @@ def render_rr_plot_fragment(participant_id: str):
                         "n_excluded": n_excluded_save,
                     }
 
-                    st.success(f"✓ Saved to {save_path.name}")
+                    st.success(f"Saved artifacts + NN intervals")
             elif has_saved_corrections:
                 st.success("Artifact corrections saved")
             else:
@@ -4228,155 +4280,84 @@ def render_rr_plot_fragment(participant_id: str):
                 help="Include interpolated NN intervals (artifact-corrected)"
             )
 
-            if st.button("Save (.rrational)", key=f"frag_save_btn_{participant_id}",
-                        help="Export data with audit trail for analysis"):
-                # Import the export module
+            if st.button("Export for Analysis", key=f"frag_save_btn_{participant_id}",
+                        type="primary",
+                        help="Export v2.0 .rrational file with corrected NN intervals"):
+                # Import the v2.0 export module
                 from rrational.gui.rrational_export import (
-                    RRationalExport, RRIntervalExport, SegmentDefinition,
-                    ArtifactDetection, ManualArtifact, QualityMetrics, ProcessingStep, save_rrational,
-                    build_export_filename, get_quality_grade, get_quigley_recommendation
+                    build_rrational_v2, save_rrational_v2,
+                    get_quality_grade, get_quigley_recommendation
+                )
+                from rrational.gui.persistence import (
+                    load_section_validations, load_nn_intervals, get_processed_dir
                 )
                 from datetime import datetime
+                from pathlib import Path
 
-                # Get current artifact state
-                artifacts_key = f"artifacts_{participant_id}"
-                manual_artifacts_key = f"manual_artifacts_{participant_id}"
-                exclusions_key = f"artifact_exclusions_{participant_id}"
-
-                artifacts_data = st.session_state.get(artifacts_key, {})
-                manual_artifacts_list = st.session_state.get(manual_artifacts_key, [])
-                excluded_indices = list(st.session_state.get(exclusions_key, set()))
-
-                # Get RR data from plot_data
-                rr_values = plot_data.get('rr_values', [])
-                timestamps = plot_data.get('timestamps', [])
-
-                # Determine segment info
-                segment_name = None
-                if save_section != "Full Recording":
-                    # Find the section key from the label
-                    for name, s in sections.items():
-                        if s.get("label", name) == save_section:
-                            segment_name = name
-                            break
-
-                # Build export data
-                now = datetime.now().isoformat()
-
-                # Get source info from summary
-                summary = get_summary_dict().get(participant_id)
-                source_app = "HRV Logger"
-                source_paths = []
-                recording_dt = None
-                if summary:
-                    source_app = getattr(summary, 'source_app', 'HRV Logger')
-                    source_paths = getattr(summary, 'rr_paths', []) or []
-                    recording_dt = getattr(summary, 'recording_datetime', None)
-                    if recording_dt:
-                        recording_dt = recording_dt.isoformat() if hasattr(recording_dt, 'isoformat') else str(recording_dt)
-
-                # Build RR interval exports
-                rr_exports = []
-                for i, (ts, rr) in enumerate(zip(timestamps, rr_values)):
-                    ts_str = ts.isoformat() if hasattr(ts, 'isoformat') else str(ts)
-                    rr_exports.append(RRIntervalExport(
-                        timestamp=ts_str,
-                        rr_ms=int(rr),
-                        original_idx=i
-                    ))
-
-                # Build artifact detection info
-                artifact_detection = None
-                if artifacts_data:
-                    artifact_detection = ArtifactDetection(
-                        method=artifacts_data.get('method', 'threshold'),
-                        total=artifacts_data.get('total_artifacts', 0),
-                        by_type=artifacts_data.get('by_type', {}),
-                        indices=artifacts_data.get('artifact_indices', [])
-                    )
-
-                # Build manual artifacts
-                manual_exports = []
-                for ma in manual_artifacts_list:
-                    ts_str = ma.get('timestamp', '')
-                    if hasattr(ts_str, 'isoformat'):
-                        ts_str = ts_str.isoformat()
-                    manual_exports.append(ManualArtifact(
-                        original_idx=ma.get('original_idx', 0),
-                        timestamp=ts_str,
-                        rr_value=ma.get('rr_value', 0),
-                        marked_at=now
-                    ))
-
-                # Calculate final artifact indices
-                detected_indices = set(artifacts_data.get('artifact_indices', []))
-                manual_indices = set(ma.get('original_idx', 0) for ma in manual_artifacts_list)
-                excluded_set = set(excluded_indices)
-                final_artifacts = list((detected_indices | manual_indices) - excluded_set)
-
-                # Build quality metrics
-                artifact_rate = len(final_artifacts) / len(rr_values) if rr_values else 0
-                quality = QualityMetrics(
-                    artifact_rate_raw=artifacts_data.get('artifact_ratio', 0),
-                    artifact_rate_final=artifact_rate,
-                    beats_after_cleaning=len(rr_values),
-                    quality_grade=get_quality_grade(artifact_rate),
-                    quigley_recommendation=get_quigley_recommendation(artifact_rate, len(rr_values))
-                )
-
-                # Build segment definition
-                segment_def = SegmentDefinition(
-                    type="section" if segment_name else "full_recording",
-                    section_name=segment_name,
-                )
-
-                # Build audit trail
-                steps = [
-                    ProcessingStep(step=1, action="export_ready_for_analysis",
-                                  timestamp=now, details=f"Exported {len(rr_values)} beats")
-                ]
-
-                # Get software versions
-                import neurokit2 as nk
-                import sys
-                software_versions = {
-                    "rrational": "0.7.0",
-                    "neurokit2": getattr(nk, '__version__', 'unknown'),
-                    "python": sys.version.split()[0]
-                }
-
-                # Create export object
-                export_data = RRationalExport(
-                    participant_id=participant_id,
-                    export_timestamp=now,
-                    exported_by="RRational v0.7.0",
-                    source_app=source_app,
-                    source_file_paths=[str(p) for p in source_paths],
-                    recording_datetime=recording_dt,
-                    segment=segment_def,
-                    n_beats=len(rr_exports),
-                    rr_intervals=rr_exports,
-                    artifact_detection=artifact_detection,
-                    manual_artifacts=manual_exports,
-                    excluded_detected_indices=excluded_indices,
-                    final_artifact_indices=final_artifacts,
-                    include_corrected=include_corrected,
-                    quality=quality,
-                    processing_steps=steps,
-                    software_versions=software_versions
-                )
-
-                # Save to processed folder
                 data_dir = st.session_state.get("data_dir")
-                if data_dir:
-                    from pathlib import Path
-                    processed_dir = Path(data_dir).parent / "processed"
-                    filename = build_export_filename(participant_id, segment_name)
-                    filepath = processed_dir / filename
-                    save_rrational(export_data, filepath)
-                    st.success(f"Saved: {filepath}")
+                project_path = st.session_state.get("current_project")
+
+                if not data_dir and not project_path:
+                    st.error("No data directory or project set - cannot save")
                 else:
-                    st.error("No data directory set - cannot save")
+                    # Determine which sections to export
+                    sections_to_export = []
+                    if save_section == "Full Recording":
+                        # Export all validated sections
+                        validations = load_section_validations(participant_id, data_dir, project_path)
+                        if validations and validations.get("sections"):
+                            for sec_name, sec_data in validations["sections"].items():
+                                if sec_data.get("is_valid"):
+                                    sections_to_export.append(sec_name)
+                        if not sections_to_export:
+                            st.warning("No validated sections found. Please validate sections first in the Sections tab.")
+                    else:
+                        # Find the section key from the label
+                        for name, s in sections.items():
+                            if s.get("label", name) == save_section:
+                                sections_to_export.append(name)
+                                break
+
+                    if sections_to_export:
+                        # Check if NN intervals exist for the sections
+                        nn_data = load_nn_intervals(participant_id, data_dir=data_dir, project_path=project_path)
+                        nn_sections = nn_data.get("sections", {}) if nn_data else {}
+
+                        missing_nn = [s for s in sections_to_export if s not in nn_sections and s != "_full"]
+                        if missing_nn and not include_corrected:
+                            st.warning(f"Sections without NN intervals: {', '.join(missing_nn)}. "
+                                      "Save artifact corrections first to generate NN intervals.")
+
+                        # Build v2.0 export
+                        with st.spinner("Building export..."):
+                            export, warnings = build_rrational_v2(
+                                participant_id,
+                                sections_to_export,
+                                data_dir=data_dir,
+                                project_path=project_path,
+                            )
+
+                        # Show warnings
+                        for warn in warnings:
+                            st.warning(warn)
+
+                        if export.sections:
+                            # Save to processed folder
+                            processed_dir = get_processed_dir(data_dir=data_dir, project_path=project_path)
+                            filename = f"{participant_id}.rrational"
+                            filepath = processed_dir / filename
+
+                            # Save with incremental update (preserve existing sections)
+                            save_rrational_v2(export, filepath, incremental=True)
+
+                            # Summary
+                            total_nn = sum(
+                                len(s.nn_intervals.data)
+                                for s in export.sections.values()
+                            )
+                            st.success(f"Exported {len(export.sections)} section(s) with {total_nn} NN intervals to {filename}")
+                        else:
+                            st.error("No sections could be exported. Check that sections are validated and have NN intervals.")
 
     # Plot display options - use saved defaults
     plot_defaults = st.session_state.get("app_settings", {}).get("plot_options", {})
