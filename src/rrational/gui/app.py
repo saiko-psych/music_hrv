@@ -34,6 +34,23 @@ from rrational.gui.help_text import (
     VNS_DATA_HELP,
 )
 
+# Helper function to normalize timestamps for safe comparison
+# Handles mixed timezone-aware and timezone-naive datetimes from old saved data
+def _normalize_ts(ts):
+    """Normalize a timestamp to naive datetime for safe comparison."""
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        from datetime import datetime
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+    if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+        ts = ts.replace(tzinfo=None)
+    return ts
+
+
 # Lazy imports for heavy modules (saves ~0.5s+ on startup)
 _pd = None
 _render_setup_tab = None
@@ -5041,12 +5058,14 @@ def render_rr_plot_fragment(participant_id: str):
                     )
 
                     if start_ts and end_ts and full_timestamps:
-                        # Count beats in section
-                        section_beats = sum(1 for ts in full_timestamps if start_ts <= ts <= end_ts)
+                        # Count beats in section (normalize timestamps for safe comparison)
+                        start_norm = _normalize_ts(start_ts)
+                        end_norm = _normalize_ts(end_ts)
+                        section_beats = sum(1 for ts in full_timestamps if start_norm and end_norm and start_norm <= _normalize_ts(ts) <= end_norm)
                         if section_beats > 0:
                             n_beats_scoped = section_beats
                             # Calculate actual duration from timestamps
-                            scoped_duration_min = (end_ts - start_ts).total_seconds() / 60
+                            scoped_duration_min = (end_norm - start_norm).total_seconds() / 60 if start_norm and end_norm else 0
                             # Show the actual time range being used
                             start_str = start_ts.strftime("%H:%M:%S") if start_ts else "?"
                             end_str = end_ts.strftime("%H:%M:%S") if end_ts else "?"
@@ -5072,7 +5091,10 @@ def render_rr_plot_fragment(participant_id: str):
                             recording_start = full_timestamps[0]
                             start_dt = recording_start + start_offset
                             end_dt = recording_start + end_offset
-                            custom_beats = sum(1 for ts in full_timestamps if start_dt <= ts <= end_dt)
+                            # Normalize for safe comparison (handle timezone-aware/naive mix)
+                            start_dt_norm = _normalize_ts(start_dt)
+                            end_dt_norm = _normalize_ts(end_dt)
+                            custom_beats = sum(1 for ts in full_timestamps if start_dt_norm <= _normalize_ts(ts) <= end_dt_norm)
                             if custom_beats > 0:
                                 n_beats_scoped = custom_beats
                                 scope_label = f"range {custom_start_time}-{custom_end_time}"
@@ -5602,10 +5624,13 @@ def render_rr_plot_fragment(participant_id: str):
                 )
 
                 if start_ts and end_ts:
-                    # Filter timestamps and RR values to section range
+                    # Filter timestamps and RR values to section range (normalize for safe comparison)
+                    start_norm = _normalize_ts(start_ts)
+                    end_norm = _normalize_ts(end_ts)
                     filtered_data = []
                     for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
-                        if start_ts <= ts <= end_ts:
+                        ts_norm = _normalize_ts(ts)
+                        if start_norm and end_norm and ts_norm and start_norm <= ts_norm <= end_norm:
                             if not filtered_data:
                                 scope_offset = idx
                             filtered_data.append((ts, rr))
@@ -5642,11 +5667,15 @@ def render_rr_plot_fragment(participant_id: str):
                         recording_start = timestamps_list[0]
                         start_dt = recording_start + start_offset
                         end_dt = recording_start + end_offset
+                        # Normalize for safe comparison (handle timezone-aware/naive mix)
+                        start_dt_norm = _normalize_ts(start_dt)
+                        end_dt_norm = _normalize_ts(end_dt)
 
                         # Filter timestamps and RR values
                         filtered_data = []
                         for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
-                            if start_dt <= ts <= end_dt:
+                            ts_norm = _normalize_ts(ts)
+                            if ts_norm and start_dt_norm <= ts_norm <= end_dt_norm:
                                 if not filtered_data:
                                     scope_offset = idx  # First match is the offset
                                 filtered_data.append((ts, rr))
@@ -5704,11 +5733,14 @@ def render_rr_plot_fragment(participant_id: str):
                                 st.warning(f"Could not find boundaries for section '{sec_name}', skipping.")
                                 continue
 
-                            # Filter data for this section
+                            # Filter data for this section (normalize timestamps for safe comparison)
+                            start_norm = _normalize_ts(start_ts)
+                            end_norm = _normalize_ts(end_ts)
                             sec_filtered = []
                             sec_offset = 0
                             for idx, (ts, rr) in enumerate(zip(timestamps_list, rr_list)):
-                                if start_ts <= ts <= end_ts:
+                                ts_norm = _normalize_ts(ts)
+                                if start_norm and end_norm and ts_norm and start_norm <= ts_norm <= end_norm:
                                     if not sec_filtered:
                                         sec_offset = idx
                                     sec_filtered.append((ts, rr))
@@ -8413,10 +8445,12 @@ def main():
                         )
 
                         if start_time and end_time:
-                            # Calculate section stats
+                            # Calculate section stats (normalize for safe subtraction)
                             section_start_str = start_time.strftime('%H:%M:%S') if hasattr(start_time, 'strftime') else str(start_time)
                             section_end_str = end_time.strftime('%H:%M:%S') if hasattr(end_time, 'strftime') else str(end_time)
-                            section_duration = (end_time - start_time).total_seconds() if hasattr(end_time, 'total_seconds') or hasattr(start_time, '__sub__') else 0
+                            start_norm = _normalize_ts(start_time)
+                            end_norm = _normalize_ts(end_time)
+                            section_duration = (end_norm - start_norm).total_seconds() if start_norm and end_norm else 0
 
                             # Store for plot fragment to use
                             st.session_state[f"inspection_section_range_{selected_participant}"] = (start_time, end_time)
@@ -9083,7 +9117,10 @@ def main():
                         # Preview
                         st.markdown("**Preview:**")
                         if start_time and end_time:
-                            duration_min = (end_time - start_time).total_seconds() / 60
+                            # Normalize for safe subtraction (handle timezone-aware/naive mix)
+                            start_norm = _normalize_ts(start_time)
+                            end_norm = _normalize_ts(end_time)
+                            duration_min = (end_norm - start_norm).total_seconds() / 60 if start_norm and end_norm else 0
                             num_segments = int(duration_min / event_interval_min)
                             st.write(f"Cycle: {' → '.join(condition_label_list)} → (repeat)")
                             st.caption(f"Duration: {duration_min:.1f} min → ~{num_segments} segments of {event_interval_min} min each")
@@ -9091,8 +9128,10 @@ def main():
                             st.write(f"Cycle: {' → '.join(condition_label_list)} → (repeat)")
                             st.caption("Select start and end times above")
 
-                        # Generate button
-                        can_generate = start_time is not None and end_time is not None and start_time < end_time
+                        # Generate button (normalize for safe comparison)
+                        start_ts_norm = _normalize_ts(start_time) if start_time else None
+                        end_ts_norm = _normalize_ts(end_time) if end_time else None
+                        can_generate = start_ts_norm is not None and end_ts_norm is not None and start_ts_norm < end_ts_norm
                         if st.button("Generate Events", key=f"gen_events_{selected_participant}", disabled=not can_generate):
                             from rrational.prep.summaries import EventStatus
                             from datetime import timedelta
@@ -9369,9 +9408,11 @@ def main():
                                         existing.raw_label.lower() == label.lower() or
                                         (existing.canonical and existing.canonical == canonical)
                                     )
-                                    # Check if timestamp within 1 second
+                                    # Check if timestamp within 1 second (normalize to handle timezone mix)
                                     if same_label and existing.first_timestamp:
-                                        time_diff = abs((existing.first_timestamp - event_timestamp).total_seconds())
+                                        existing_ts_norm = _normalize_ts(existing.first_timestamp)
+                                        event_ts_norm = _normalize_ts(event_timestamp)
+                                        time_diff = abs((existing_ts_norm - event_ts_norm).total_seconds()) if existing_ts_norm and event_ts_norm else float('inf')
                                         if time_diff < 1:
                                             show_toast(f"Event '{label}' already exists at this time", icon="warning")
                                             return
@@ -9590,8 +9631,8 @@ def main():
                                     start_ts = current_start_ts
                                     end_ts = current_end_ts
 
-                                # Validate start < end after user selection
-                                if start_ts and end_ts and start_ts >= end_ts:
+                                # Validate start < end after user selection (normalize for timezone compatibility)
+                                if start_ts and end_ts and normalize_ts(start_ts) >= normalize_ts(end_ts):
                                     st.error(f"Start event ({start_ts.strftime('%H:%M:%S')}) must be before end event ({end_ts.strftime('%H:%M:%S')})")
                                     issue_count += 1
                                     continue
@@ -9703,7 +9744,9 @@ def main():
 
                             # Get event-based duration (first to last event)
                             if event_timestamps:
-                                all_ts = [ts for ts in event_timestamps.values() if ts]
+                                # Normalize all timestamps for safe comparison/subtraction
+                                all_ts = [_normalize_ts(ts) for ts in event_timestamps.values() if ts]
+                                all_ts = [ts for ts in all_ts if ts]  # Filter out None values
                                 if len(all_ts) >= 2:
                                     first_event = min(all_ts)
                                     last_event = max(all_ts)
